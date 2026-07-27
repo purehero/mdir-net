@@ -18,6 +18,20 @@
 
 없습니다. Python 3.9 이상이면 그대로 실행됩니다. 표준 라이브러리만 씁니다.
 
+**macOS · Linux**
+```bash
+./run.sh
+```
+
+**Windows**
+```bat
+run.bat
+```
+
+런처는 자기가 놓인 폴더를 스스로 찾아 모듈 경로로 잡습니다. 어느 위치에서 호출해도
+되고, 인자는 그대로 전달됩니다 (`./run.sh --name 거실PC --root ~/Downloads`).
+
+런처 없이 직접 실행하려면 프로젝트 폴더 안에서 해야 합니다.
 ```bash
 python3 -m mdirnet
 ```
