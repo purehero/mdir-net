@@ -40,6 +40,7 @@ FG_GRAY = "\x1b[90m"
 UP, DOWN, LEFT, RIGHT = "UP", "DOWN", "LEFT", "RIGHT"
 ENTER, ESC, TAB, SPACE, BACKSPACE = "ENTER", "ESC", "TAB", "SPACE", "BACKSPACE"
 HOME_KEY, END_KEY, PGUP, PGDN = "HOME", "END", "PGUP", "PGDN"
+INSERT, DELETE = "INSERT", "DELETE"
 
 # POSIX 터미널이 보내는 이스케이프 시퀀스 → 키 이름
 _CSI_KEYS = {
@@ -50,6 +51,8 @@ _CSI_KEYS = {
     "H": HOME_KEY,
     "F": END_KEY,
     "1~": HOME_KEY,
+    "2~": INSERT,
+    "3~": DELETE,
     "4~": END_KEY,
     "5~": PGUP,
     "6~": PGDN,
@@ -77,6 +80,8 @@ _WIN_EXT = {
     "O": END_KEY,
     "I": PGUP,
     "Q": PGDN,
+    "R": INSERT,
+    "S": DELETE,
     ";": "F1",
     "<": "F2",
     "=": "F3",

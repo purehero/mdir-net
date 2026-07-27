@@ -218,6 +218,22 @@ class Session:
     def remote_tree(self, path):
         return self.request("tree", path=path)["files"]
 
+    def remote_head(self, path, limit):
+        """뷰어용. 파일 앞부분만 받아온다."""
+        req_id, box = self._open_box()
+        try:
+            self._send_q({"t": "head", "id": req_id, "path": path, "limit": limit})
+            header, blob = self._await(box)
+            return blob or b"", header.get("size", 0)
+        finally:
+            self._close_box(self._outgoing, req_id)
+
+    def remote_mkdir(self, path):
+        self.request("mkdir", path=path)
+
+    def remote_delete(self, path):
+        self.request("delete", path=path)
+
     # --- 전송: 상대 → 나 ---
 
     def pull_file(self, remote_path, dest, on_progress=None):
@@ -331,6 +347,34 @@ class Session:
         path = self._safe(header["path"])
         self._send({"t": "tree.ok", "id": req_id, "files": fsops.walk_tree(path)})
 
+    def _on_head(self, req_id, header, blob, box):
+        path = self._safe(header["path"])
+        if not path.is_file():
+            raise ValueError("파일이 아닙니다: %s" % path.name)
+
+        limit = min(int(header.get("limit") or 0), config.MAX_VIEW_BYTES)
+        self._send(
+            {"t": "head.ok", "id": req_id, "size": path.stat().st_size},
+            fsops.read_head(path, limit),
+        )
+
+    def _on_mkdir(self, req_id, header, blob, box):
+        path = self._safe(header["path"])
+        path.mkdir(parents=False, exist_ok=False)
+        self._send({"t": "mkdir.ok", "id": req_id})
+
+    def _on_delete(self, req_id, header, blob, box):
+        """원격 삭제. 공유 루트 자체는 절대 지울 수 없게 막는다."""
+        path = self._safe(header["path"])
+        if path == self._root:
+            raise ValueError("공유 폴더 자체는 지울 수 없습니다")
+        if not path.exists() and not path.is_symlink():
+            raise ValueError("없는 항목입니다: %s" % path.name)
+
+        fsops.remove_tree(path)
+        self._send({"t": "delete.ok", "id": req_id})
+        self._events.put(("remote_changed", str(path.parent)))
+
     def _on_pull(self, req_id, header, blob, box):
         path = self._safe(header["path"])
         if not path.is_file():
@@ -379,6 +423,9 @@ _REQUESTS = {
     "list": Session._on_list,
     "stat": Session._on_stat,
     "tree": Session._on_tree,
+    "head": Session._on_head,
+    "mkdir": Session._on_mkdir,
+    "delete": Session._on_delete,
     "pull": Session._on_pull,
     "push.begin": Session._on_push_begin,
 }
