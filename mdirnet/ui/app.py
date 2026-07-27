@@ -326,50 +326,128 @@ class MessageDialog(Dialog):
 
 
 class ConfirmDialog(Dialog):
-    """예/아니오 확인. 결정되면 on_decide(bool) 을 부른다."""
+    """예/아니오 확인. 결정되면 on_decide(bool) 을 부른다.
+
+    승인 다이얼로그와 같은 이유로 방향키 선택도 함께 받는다.
+    되돌릴 수 없는 작업(삭제)이 있으므로 커서는 취소에서 시작한다.
+    """
 
     def __init__(self, title, body, on_decide):
         self.title = title
         self._body = body if isinstance(body, list) else [body]
         self._on_decide = on_decide
+        self.proceed = False
 
     def lines(self, inner_width):
-        return self._body + ["", term.BOLD + "진행(Y)      취소(N)" + term.RESET]
+        def button(text, chosen):
+            style = term.REVERSE if chosen else term.FG_GRAY
+            return style + "  %s  " % text + term.RESET
+
+        return self._body + [
+            "",
+            button("진행(Y)", self.proceed) + "   " + button("취소(N)", not self.proceed),
+            "",
+            term.FG_GRAY + "← → 선택   Enter 확정   Esc 취소" + term.RESET,
+        ]
 
     def key(self, key):
         if key in ("y", "Y"):
             self._on_decide(True)
             return True
-        if key in ("n", "N", term.ESC, "q"):
+        if key in ("n", "N", term.ESC):
             self._on_decide(False)
+            return True
+
+        if key in (term.LEFT, term.RIGHT, term.TAB, term.SPACE, "h", "l"):
+            self.proceed = not self.proceed
+            return False
+        if key == term.ENTER:
+            self._on_decide(self.proceed)
             return True
         return False
 
 
 class ApprovalDialog(Dialog):
-    """상대가 보낸 연결 요청. 사용자가 직접 수락/거부를 고른다."""
+    """상대가 보낸 연결 요청. 사용자가 직접 수락/거부를 고른다.
+
+    글자 단축키에만 의존하면 안 된다. 한글 입력이 켜져 있으면 y/n 이 'ㅛ'/'ㅜ' 로
+    들어와 아무 반응이 없어서, 사용자는 다이얼로그가 먹통이라고 느낀다.
+    그래서 방향키·Tab·Space 로 고르고 Enter 로 확정하는 길을 함께 둔다.
+    """
 
     title = "연결 요청"
 
     def __init__(self, request):
         self.request = request
+        self.accept = True  # 커서가 놓인 버튼. 흔한 경우가 수락이므로 여기서 시작한다
 
     def lines(self, inner_width):
+        def button(text, chosen):
+            style = term.REVERSE if chosen else term.FG_GRAY
+            return style + "  %s  " % text + term.RESET
+
         return [
             term.BOLD + self.request.name + term.RESET,
             term.FG_GRAY + "%s · %s" % (self.request.host, self.request.platform) + term.RESET,
             "",
             "이 PC 의 공유 폴더를 열어줍니다.",
             "",
-            term.BOLD + "수락(Y)      거부(N)" + term.RESET,
+            button("수락(Y)", self.accept) + "   " + button("거부(N)", not self.accept),
+            "",
+            term.FG_GRAY + "← → 선택   Enter 확정   Esc 거부" + term.RESET,
         ]
 
     def key(self, key):
-        if key in ("y", "Y", term.ENTER):
+        if key in ("y", "Y"):
             self.request.decide(True)
             return True
-        if key in ("n", "N", term.ESC, "q"):
+        if key in ("n", "N", term.ESC):
             self.request.decide(False)
+            return True
+
+        # 글자 키 없이도 고를 수 있어야 한다
+        if key in (term.LEFT, term.RIGHT, term.TAB, term.SPACE, "h", "l"):
+            self.accept = not self.accept
+            return False
+        if key == term.ENTER:
+            self.request.decide(self.accept)
+            return True
+        return False
+
+
+class DriveDialog(Dialog):
+    """드라이브(볼륨) 선택. Windows 에서 D: 로 넘어가는 유일한 통로다."""
+
+    title = "드라이브 선택"
+
+    def __init__(self, drives, on_choose):
+        self.drives = drives
+        self.cursor = 0
+        self._on_choose = on_choose
+
+    def lines(self, inner):
+        if not self.drives:
+            return [term.FG_GRAY + "고를 수 있는 드라이브가 없습니다." + term.RESET]
+
+        self.cursor = max(0, min(self.cursor, len(self.drives) - 1))
+        out = []
+        for index, drive in enumerate(self.drives):
+            kind = (" · %s" % drive["kind"]) if drive["kind"] else ""
+            label = screen.pad("  %-4s %s%s" % (drive["label"], drive["path"], kind), inner)
+            out.append(term.REVERSE + label + term.RESET if index == self.cursor else label)
+
+        out += ["", term.FG_GRAY + "Enter 이동   Esc 취소" + term.RESET]
+        return out
+
+    def key(self, key):
+        if key in (term.UP, "k"):
+            self.cursor = max(0, self.cursor - 1)
+        elif key in (term.DOWN, "j"):
+            self.cursor = min(len(self.drives) - 1, self.cursor + 1) if self.drives else 0
+        elif key == term.ENTER and self.drives:
+            self._on_choose(self.drives[self.cursor]["path"])
+            return True
+        elif key in (term.ESC, "q"):
             return True
         return False
 
@@ -386,7 +464,9 @@ class FolderDialog(Dialog):
     title = "공유할 폴더 선택"
     VISIBLE = 10  # 한 번에 보여줄 폴더 수
 
-    def __init__(self, start, on_choose, on_cancel, cancel_hint="Esc 취소"):
+    DRIVE_ROW = "[드라이브]"
+
+    def __init__(self, start, on_choose, on_cancel, cancel_hint="Esc 취소", on_drives=None):
         self.path = Path(start)
         self.cursor = 0
         self.offset = 0
@@ -395,6 +475,9 @@ class FolderDialog(Dialog):
         self.cancel_hint = cancel_hint
         self._on_choose = on_choose
         self._on_cancel = on_cancel
+        # 드라이브 루트(C:\)에서는 '..' 이 없다. 여기서 D: 로 갈 길을 열어주지
+        # 않으면 다른 드라이브의 폴더를 공유할 방법이 아예 없다
+        self._on_drives = on_drives
         self._load()
 
     def _load(self):
@@ -409,8 +492,10 @@ class FolderDialog(Dialog):
         self.offset = 0
 
     def rows(self):
-        up = [".."] if self.path != self.path.parent else []
-        return up + self.entries
+        if not fsops.is_filesystem_root(self.path):
+            return [".."] + self.entries
+        # 최상위에서는 '..' 대신 드라이브 목록으로 나가는 문을 둔다
+        return ([self.DRIVE_ROW] if self._on_drives else []) + self.entries
 
     def lines(self, inner):
         rows = self.rows()
@@ -429,9 +514,12 @@ class FolderDialog(Dialog):
             out.append(term.FG_GRAY + "  (하위 폴더가 없습니다)" + term.RESET)
         for index in range(self.offset, min(self.offset + self.VISIBLE, len(rows))):
             name = rows[index]
-            label = screen.pad("  " + (name if name == ".." else name + "/"), inner)
+            plain = name in ("..", self.DRIVE_ROW)
+            label = screen.pad("  " + (name if plain else name + "/"), inner)
             if index == self.cursor:
                 out.append(term.REVERSE + label + term.RESET)
+            elif name == self.DRIVE_ROW:
+                out.append(term.FG_YELLOW + label + term.RESET)
             else:
                 out.append(term.FG_CYAN + label + term.RESET)
 
@@ -451,10 +539,13 @@ class FolderDialog(Dialog):
             else " " * inner
         )
 
+        drive_hint = "   \\ 드라이브" if self._on_drives else ""
         out += [
             "",
             term.BOLD + "Ctrl-D 이 폴더로 결정" + term.RESET
-            + term.FG_GRAY + "   Enter 열기   ← 상위   " + self.cancel_hint + term.RESET,
+            + term.FG_GRAY
+            + "   Enter 열기   ← 상위%s   %s" % (drive_hint, self.cancel_hint)
+            + term.RESET,
         ]
         return out
 
@@ -476,6 +567,9 @@ class FolderDialog(Dialog):
         elif key == "CTRL-D":
             self._on_choose(self.path)
             return True
+        elif key == "\\" and self._on_drives:
+            self._on_drives()
+            return False  # 드라이브 창이 이 창을 대신한다
         elif key in (term.ESC, "q"):
             self._on_cancel()
             return True
@@ -487,6 +581,10 @@ class FolderDialog(Dialog):
         name = rows[self.cursor]
         if name == "..":
             self._go_up()
+            return
+        if name == self.DRIVE_ROW:
+            if self._on_drives:
+                self._on_drives()
             return
         self.path = self.path / name
         self._load()
@@ -617,12 +715,7 @@ class App:
     def run(self):
         if self.pick_root_at_start:
             # 공유 폴더가 정해지기 전에는 서버를 열지 않는다. 취소하면 종료한다
-            self.modal = FolderDialog(
-                self.root,
-                on_choose=self._choose_root_and_start,
-                on_cancel=self._quit,
-                cancel_hint="Esc 종료",
-            )
+            self._show_root_picker(self.root, on_cancel=self._quit, cancel_hint="Esc 종료")
         else:
             self.start_services()
 
@@ -670,9 +763,43 @@ class App:
         상태가 되므로 아예 허용하지 않는다.
         """
         if self.session:
-            self.status = "연결 중에는 바꿀 수 없습니다. F3 으로 끊고 다시 시도하세요"
+            self.status = "연결 중에는 바꿀 수 없습니다. F6 으로 끊고 다시 시도하세요"
             return
-        self.modal = FolderDialog(self.root, on_choose=self.set_root, on_cancel=lambda: None)
+        self._show_root_picker(self.root, on_cancel=lambda: None)
+
+    def _show_root_picker(self, start, on_cancel, cancel_hint="Esc 취소"):
+        """공유 폴더 선택상자를 띄운다. 드라이브 창으로 오갈 수 있게 엮어둔다."""
+
+        def open_drives():
+            # 드라이브를 고르면 그 루트에서 선택상자를 다시 연다
+            self.modal = DriveDialog(
+                fsops.list_drives(),
+                lambda path: self._show_root_picker(path, on_cancel, cancel_hint),
+            )
+
+        self.modal = FolderDialog(
+            start,
+            on_choose=self._choose_root_and_start if not self._services_started else self.set_root,
+            on_cancel=on_cancel,
+            cancel_hint=cancel_hint,
+            on_drives=open_drives,
+        )
+
+    def _open_drive_picker(self):
+        """`\\` 키. 내 PC 패널을 다른 드라이브로 옮긴다.
+
+        상대 패널에는 쓸 수 없다. 상대는 공유 루트 안에 갇혀 있어서 다른
+        드라이브로 옮겨가도 곧바로 거부당한다. 헛되게 열지 않고 이유를 알린다.
+        """
+        if self.focus is self.remote:
+            self.status = "상대 쪽은 공유 폴더 안으로 제한됩니다. 드라이브를 바꿀 수 없습니다"
+            return
+
+        drives = fsops.list_drives()
+        if len(drives) <= 1:
+            self.status = "옮겨갈 드라이브가 없습니다"
+            return
+        self.modal = DriveDialog(drives, self.local.navigate)
 
     def shutdown(self):
         if self.session:
@@ -806,11 +933,20 @@ class App:
 
     # --- 키 처리 ---
 
-    def _on_key(self, key):
+    def _on_key(self, raw_key):
+        # 한글 입력이 켜진 채로 y/n 을 누르면 'ㅛ'/'ㅜ' 가 들어와 단축키가 먹지 않는다.
+        # 명령으로 쓸 때만 되돌린다. 입력창은 한글을 그대로 받아야 하므로 예외다
         if self.modal is not None:
-            if self.modal.key(key):
+            active = self.modal
+            key = raw_key if isinstance(active, InputDialog) else term.command_key(raw_key)
+            closed = active.key(key)
+            # 다이얼로그가 콜백에서 다른 다이얼로그를 띄웠을 수 있다 (드라이브 →
+            # 폴더 선택). 그때 None 을 덮어쓰면 방금 띄운 창이 사라진다
+            if closed and self.modal is active:
                 self.modal = None
             return
+
+        key = term.command_key(raw_key)
 
         if key in ("q", "F10", "CTRL-C"):
             self.running = False
@@ -834,6 +970,8 @@ class App:
             self._enter()
         elif key in (term.LEFT, "h"):
             self._go_up(self.focus)
+        elif key == "\\":
+            self._open_drive_picker()
         elif key in ("+", "="):
             self._ask_mask(add=True)
         elif key in ("-", "_"):
@@ -1242,7 +1380,12 @@ class App:
         if pane.selected:
             total = sum(e["size"] for e in pane.entries if e["name"] in pane.selected)
             return "%d개 선택 · %s" % (len(pane.selected), fsops.human_size(total))
-        return "%d개 항목" % len(pane.entries)
+
+        count = "%d개 항목" % len(pane.entries)
+        # C:\ 에서는 '..' 이 없어 더 올라갈 곳이 안 보인다. 나갈 길을 알려준다
+        if not pane.is_remote and fsops.is_filesystem_root(pane.path):
+            return count + "   \\ 드라이브 선택"
+        return count
 
     def _status(self, cols):
         return screen.pad(" " + self.status, cols)
@@ -1335,6 +1478,7 @@ _HELP_LINES = [
     "← h           상위 디렉터리",
     "Space, Insert 선택 토글",
     "+  -          마스크로 한꺼번에 선택 / 해제  (예: *.txt)",
+    "\\             드라이브 / 볼륨 바꾸기 (내 PC 쪽만)",
     "",
     "F1  도움말             F2  연결할 PC 찾기",
     "F3  파일 보기 (v)      F4  공유 폴더 바꾸기 (o)",
@@ -1344,6 +1488,7 @@ _HELP_LINES = [
     "r             새로고침",
     "",
     "정렬은 이름 → 확장자 → 크기 → 날짜 순으로 돌아갑니다.",
+    "Windows 에서 C:\\ 위로는 못 올라가므로 \\ 로 드라이브를 고릅니다.",
     "복사와 삭제는 선택한 항목이 없으면 커서에 있는 것 하나를 씁니다.",
     "상대가 연결을 요청하면 승인 창이 자동으로 뜹니다.",
 ]
