@@ -81,8 +81,8 @@ class Session:
 
         try:
             self._send({"t": "bye"})
-        except OSError:
-            pass
+        except SessionError:
+            pass  # 이미 끊긴 뒤라면 인사를 못 보내도 상관없다
         try:
             self._sock.shutdown(socket.SHUT_RDWR)
         except OSError:
@@ -107,7 +107,13 @@ class Session:
     def _send(self, header, blob=None):
         # 여러 스레드가 같은 소켓에 쓴다. 프레임이 쪼개져 섞이지 않도록 직렬화한다
         with self._send_lock:
-            protocol.send_frame(self._sock, header, blob)
+            try:
+                protocol.send_frame(self._sock, header, blob)
+            except OSError as exc:
+                # 전송 중 연결이 끊기면 닫힌 소켓에 쓰다 OSError 가 난다. 이걸
+                # 그대로 올려보내면 워커 스레드에서 트레이스백이 터져 나온다.
+                # 호출하는 쪽이 한 종류만 잡으면 되도록 여기서 바꿔준다
+                raise SessionError("연결이 끊어졌습니다: %s" % exc) from exc
 
     def _send_q(self, header, blob=None):
         """내가 시작한 대화의 프레임. 'q' 를 붙여 상대가 구분할 수 있게 한다."""
@@ -287,8 +293,8 @@ class Session:
     def _reply_err(self, req_id, msg):
         try:
             self._send({"t": "err", "id": req_id, "msg": msg})
-        except OSError:
-            pass
+        except SessionError:
+            pass  # 오류를 알려주려는 순간 연결이 끊겼다면 더 할 수 있는 게 없다
 
     def _safe(self, raw_path):
         """원격이 보낸 경로를 공유 루트 안쪽으로 제한한다."""

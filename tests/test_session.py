@@ -211,6 +211,40 @@ class TestTransfers(SessionPairTestCase):
         self.assertEqual(a_dest.read_bytes(), b"U" * 900_000)
 
 
+class TestClosedSession(SessionPairTestCase):
+    def test_request_after_close_raises_session_error_not_oserror(self):
+        """닫힌 소켓에 쓰면 OSError 가 난다. 그대로 새어나가면 워커 스레드에서
+        트레이스백이 터져 TUI 화면을 뭉갠다. SessionError 로 바뀌어야 한다."""
+        self.a.close("테스트")
+        with self.assertRaises(session.SessionError):
+            self.a.remote_list("/")
+
+    def test_pull_after_close_raises_session_error(self):
+        self.a.close("테스트")
+        with self.assertRaises(session.SessionError):
+            self.a.pull_file("/whatever", self.root_a / "x")
+
+    def test_push_after_close_raises_session_error(self):
+        src = self.root_a / "p.txt"
+        src.write_bytes(b"p")
+        self.a.close("테스트")
+        with self.assertRaises(session.SessionError):
+            self.a.push_file(src, str(self.root_b / "p.txt"))
+
+    def test_close_is_idempotent(self):
+        self.a.close("한번")
+        self.a.close("두번")
+        self.assertTrue(self.a.closed)
+
+    def test_close_reports_disconnect_event_once(self):
+        self.a.close("사유")
+        self.a.close("또 사유")
+        kinds = []
+        while not self.events_a.empty():
+            kinds.append(self.events_a.get_nowait())
+        self.assertEqual([k for k, *_ in kinds].count("disconnected"), 1)
+
+
 class TestApprovalHandshake(unittest.TestCase):
     """실제 TCP 로 Server 를 띄워 요청 → 승인/거부 흐름을 확인한다."""
 

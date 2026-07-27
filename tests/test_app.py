@@ -1,0 +1,301 @@
+# 터미널 없이 App 을 세워 화면 구성과 키 처리를 확인하는 테스트
+
+import queue
+import tempfile
+import unittest
+from pathlib import Path
+
+from mdirnet import session
+from mdirnet.ui import app as app_module
+from mdirnet.ui import screen, term
+
+
+class AppTestCase(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name).resolve()
+
+        (self.root / "문서").mkdir()
+        (self.root / "보고서.txt").write_bytes(b"x" * 2048)
+        (self.root / "photo.jpg").write_bytes(b"y" * 500)
+
+        # 포트 0 으로 커널에 맡기고, 발견 기능은 꺼서 브로드캐스트를 쏘지 않는다
+        self.app = app_module.App(
+            my_name="test-node",
+            root=self.root,
+            tcp_port=0,
+            udp_port=0,
+            platform_name="testos",
+            use_discovery=False,
+        )
+        self.addCleanup(self.app.shutdown)
+        self.app.local.refresh()
+
+    def compose(self, size=(100, 30)):
+        return self.app._compose(size), size
+
+
+class TestLayout(AppTestCase):
+    def test_every_line_is_exactly_terminal_width(self):
+        """한 칸이라도 넘치면 줄바꿈이 생겨 화면 전체가 밀린다."""
+        for size in ((80, 24), (100, 30), (40, 10), (200, 60)):
+            lines, _ = self.compose(size)
+            for index, line in enumerate(lines):
+                self.assertEqual(
+                    screen.width(line), size[0], "size=%s line %d: %r" % (size, index, line)
+                )
+
+    def test_line_count_matches_terminal_height(self):
+        for size in ((80, 24), (40, 10), (120, 50)):
+            lines, _ = self.compose(size)
+            self.assertEqual(len(lines), size[1], "size=%s" % (size,))
+
+    def test_local_entries_are_listed(self):
+        lines, _ = self.compose()
+        body = "\n".join(lines)
+        self.assertIn("문서", body)
+        self.assertIn("보고서.txt", body)
+        self.assertIn("2.0 KB", body)
+
+    def test_disconnected_pane_invites_connection(self):
+        self.assertIn("연결되지 않음", "\n".join(self.compose()[0]))
+
+    def test_hangul_filenames_keep_the_border_aligned(self):
+        (self.root / "아주아주긴한글파일이름입니다.bin").write_bytes(b"z")
+        self.app.local.refresh()
+
+        lines, size = self.compose((80, 24))
+        for line in lines:
+            self.assertEqual(screen.width(line), size[0])
+
+
+class TestNavigation(AppTestCase):
+    def test_cursor_moves_and_clamps(self):
+        self.app._on_key(term.DOWN)
+        self.assertEqual(self.app.local.cursor, 1)
+
+        for _ in range(50):
+            self.app._on_key(term.DOWN)
+        self.assertEqual(self.app.local.cursor, len(self.app.local.rows()) - 1)
+
+        for _ in range(50):
+            self.app._on_key(term.UP)
+        self.assertEqual(self.app.local.cursor, 0)
+
+    def test_enter_descends_into_directory(self):
+        rows = self.app.local.rows()
+        index = next(i for i, e in enumerate(rows) if e["name"] == "문서")
+        self.app.local.cursor = index
+
+        self.app._on_key(term.ENTER)
+        self.assertEqual(self.app.local.path, self.root / "문서")
+
+    def test_dotdot_goes_up(self):
+        self.app.local.navigate(self.root / "문서")
+        self.app.local.cursor = 0  # '..'
+        self.assertTrue(self.app.local.current_item()["up"])
+
+        self.app._on_key(term.ENTER)
+        self.assertEqual(self.app.local.path, self.root)
+
+    def test_space_selects_and_advances(self):
+        rows = self.app.local.rows()
+        index = next(i for i, e in enumerate(rows) if e["name"] == "photo.jpg")
+        self.app.local.cursor = index
+
+        self.app._on_key(term.SPACE)
+        self.assertIn("photo.jpg", self.app.local.selected)
+        self.assertEqual(self.app.local.cursor, index + 1)
+
+        self.app.local.cursor = index
+        self.app._on_key(term.SPACE)
+        self.assertNotIn("photo.jpg", self.app.local.selected)
+
+    def test_dotdot_is_never_selectable(self):
+        self.app.local.navigate(self.root / "문서")
+        self.app.local.cursor = 0
+        self.app._on_key(term.SPACE)
+        self.assertEqual(self.app.local.selected, set())
+
+    def test_tab_does_not_focus_remote_while_disconnected(self):
+        self.app._on_key(term.TAB)
+        self.assertIs(self.app.focus, self.app.local)
+
+    def test_q_quits(self):
+        self.app._on_key("q")
+        self.assertFalse(self.app.running)
+
+
+class TestCopyGuards(AppTestCase):
+    def test_copy_without_connection_is_refused(self):
+        self.app._on_key("F5")
+        self.assertIsNone(self.app.modal)
+        self.assertIn("연결", self.app.status)
+
+    def test_copy_asks_for_confirmation_when_connected(self):
+        self.app.session = _StubSession()
+        self.app.local.cursor = next(
+            i for i, e in enumerate(self.app.local.rows()) if e["name"] == "photo.jpg"
+        )
+
+        self.app._on_key("F5")
+        self.assertIsInstance(self.app.modal, app_module.ConfirmDialog)
+        self.assertIn("덮어씁니다", "\n".join(self.app.modal.lines(60)))
+
+    def test_disconnect_without_session_reports_it(self):
+        self.app._on_key("F3")
+        self.assertIn("연결된 상대가 없습니다", self.app.status)
+
+
+class TestDialogs(AppTestCase):
+    def test_help_opens_and_any_key_closes(self):
+        self.app._on_key("F1")
+        self.assertIsInstance(self.app.modal, app_module.MessageDialog)
+
+        self.app._on_key("x")
+        self.assertIsNone(self.app.modal)
+
+    def test_modal_overlay_keeps_line_widths(self):
+        self.app._on_key("F1")
+        lines, size = self.compose((80, 24))
+        for line in lines:
+            self.assertEqual(screen.width(line), size[0])
+
+    def test_incoming_approval_shows_dialog_and_yes_accepts(self):
+        request = session.ApprovalRequest("other-pc", "192.168.0.9", "windows")
+        self.app.events.put(("approval", request))
+        self.app._drain_events()
+
+        self.assertIsInstance(self.app.modal, app_module.ApprovalDialog)
+        rendered = "\n".join(self.app.modal.lines(60))
+        self.assertIn("other-pc", rendered)
+        self.assertIn("192.168.0.9", rendered)
+
+        self.app._on_key("y")
+        self.assertIsNone(self.app.modal)
+        self.assertTrue(request.wait(0.1))
+
+    def test_approval_n_rejects(self):
+        request = session.ApprovalRequest("other-pc", "10.0.0.2", "linux")
+        self.app.events.put(("approval", request))
+        self.app._drain_events()
+
+        self.app._on_key("n")
+        self.assertFalse(request.wait(0.1))
+
+    def test_approval_is_auto_rejected_while_already_connected(self):
+        self.app.session = _StubSession()
+        request = session.ApprovalRequest("third-pc", "10.0.0.3", "linux")
+        self.app.events.put(("approval", request))
+        self.app._drain_events()
+
+        self.assertIsNone(self.app.modal)
+        self.assertFalse(request.wait(0.1))
+        self.assertIn("거절", self.app.status)
+
+    def test_peer_dialog_reports_empty_network(self):
+        self.app._on_key("F2")
+        self.assertIsInstance(self.app.modal, app_module.PeerDialog)
+        self.assertIn("찾지 못했습니다", "\n".join(self.app.modal.lines(60)))
+
+    def test_progress_dialog_renders_ratio(self):
+        transfer = app_module.Transfer("2개 항목", 1000)
+        transfer.done = 250
+        transfer.current = "sub/파일.bin"
+
+        rendered = "\n".join(app_module.ProgressDialog(transfer).lines(50))
+        self.assertIn("25%", rendered)
+        self.assertIn("sub/파일.bin", rendered)
+
+    def test_progress_ratio_never_exceeds_one(self):
+        transfer = app_module.Transfer("x", 100)
+        transfer.done = 9999
+        self.assertEqual(transfer.ratio, 1.0)
+
+    def test_progress_ratio_with_zero_total(self):
+        self.assertEqual(app_module.Transfer("x", 0).ratio, 0.0)
+
+
+class TestPlan(AppTestCase):
+    def test_plan_expands_directories_recursively(self):
+        deep = self.root / "문서" / "안쪽"
+        deep.mkdir(parents=True)
+        (self.root / "문서" / "a.txt").write_bytes(b"1")
+        (deep / "b.txt").write_bytes(b"22")
+        self.app.local.refresh()
+
+        items = [e for e in self.app.local.entries if e["name"] == "문서"]
+        plan = self.app._build_plan(self.app.local, items, None)
+
+        self.assertEqual(
+            {rel for rel, _, _ in plan},
+            {"문서/a.txt", "문서/안쪽/b.txt"},
+        )
+        self.assertEqual(sum(size for _, _, size in plan), 3)
+
+    def test_plan_of_a_single_file(self):
+        items = [e for e in self.app.local.entries if e["name"] == "photo.jpg"]
+        plan = self.app._build_plan(self.app.local, items, None)
+        self.assertEqual(plan, [("photo.jpg", self.root / "photo.jpg", 500)])
+
+    def test_targets_prefers_selection_over_cursor(self):
+        self.app.local.selected = {"photo.jpg", "보고서.txt"}
+        self.app.local.cursor = 0
+        names = {t["name"] for t in self.app.local.targets()}
+        self.assertEqual(names, {"photo.jpg", "보고서.txt"})
+
+
+class TestSessionLifecycle(AppTestCase):
+    def test_disconnect_event_clears_remote_state(self):
+        self.app.session = _StubSession()
+        self.app.remote.entries = [{"name": "x", "is_dir": False, "size": 1, "mtime": 0}]
+        self.app.focus = self.app.remote
+
+        self.app.events.put(("disconnected", "상대가 종료했습니다"))
+        self.app._drain_events()
+
+        self.assertIsNone(self.app.session)
+        self.assertEqual(self.app.remote.entries, [])
+        self.assertIs(self.app.focus, self.app.local)
+        self.assertIn("상대가 종료했습니다", self.app.status)
+
+    def test_stale_listing_is_discarded(self):
+        """디렉터리를 바꾼 뒤 도착한 낡은 응답이 화면을 되돌리면 안 된다."""
+        pane = self.app.remote
+        pane._generation = 5
+        pane.apply_listing(3, "/old", [{"name": "stale", "is_dir": False, "size": 0, "mtime": 0}])
+        self.assertEqual(pane.entries, [])
+
+        pane.apply_listing(5, str(self.root), [])
+        self.assertEqual(pane.path, self.root)
+
+    def test_copy_done_with_errors_opens_message(self):
+        self.app.transfer = app_module.Transfer("x", 1)
+        self.app.events.put(("copy_done", 2, ["a.txt — 권한 없음"]))
+        self.app._drain_events()
+
+        self.assertIsInstance(self.app.modal, app_module.MessageDialog)
+        self.assertIsNone(self.app.transfer)
+
+    def test_copy_done_clean_sets_status(self):
+        self.app.transfer = app_module.Transfer("x", 1)
+        self.app.events.put(("copy_done", 3, []))
+        self.app._drain_events()
+
+        self.assertIsNone(self.app.modal)
+        self.assertIn("3개", self.app.status)
+
+
+class _StubSession:
+    """연결된 것처럼 보이게 하는 최소 대역. 네트워크는 건드리지 않는다."""
+
+    peer_name = "stub-pc"
+    peer_host = "127.0.0.1"
+
+    def close(self, reason=None):
+        pass
+
+
+if __name__ == "__main__":
+    unittest.main()
