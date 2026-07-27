@@ -1,5 +1,6 @@
 # 듀얼 패널 상태 기계, 키 바인딩, 다이얼로그를 담은 UI 본체
 
+import fnmatch
 import os
 import queue
 import threading
@@ -45,14 +46,16 @@ class Pane:
         self.offset = 0
         self.selected = set()
         self.message = ""
+        self.sort_mode = fsops.SORT_NAME
         self._generation = 0  # 늦게 도착한 조회 결과를 버리기 위한 세대 번호
 
     @property
     def title(self):
+        # 왼쪽은 늘 내 PC, 오른쪽은 늘 상대다. 자리가 바뀌는 일은 없다
         if not self.is_remote:
-            return "로컬  %s" % self.path
+            return "내 PC  %s" % self.path
         if not self.app.session:
-            return "원격  (연결되지 않음)"
+            return "상대  (연결되지 않음)"
         return "%s  %s" % (self.app.session.peer_name, self.path)
 
     @property
@@ -100,7 +103,7 @@ class Pane:
 
         if not self.is_remote:
             try:
-                self.entries = fsops.list_dir(self.path)
+                self.entries = fsops.sort_entries(fsops.list_dir(self.path), self.sort_mode)
                 self.message = ""
             except OSError as exc:
                 self.entries = []
@@ -124,7 +127,7 @@ class Pane:
         if generation != self._generation:
             return  # 그 사이 다른 디렉터리로 옮겨갔다. 낡은 결과는 버린다
         self.path = Path(path)
-        self.entries = entries
+        self.entries = fsops.sort_entries(entries, self.sort_mode)
         self.message = ""
         self._clamp()
 
@@ -145,6 +148,27 @@ class Pane:
             return
         self.cursor = max(0, min(self.cursor + delta * page, len(rows) - 1))
 
+    def cycle_sort(self):
+        """MDir 처럼 키 하나로 정렬 기준을 돌린다."""
+        order = fsops.SORT_ORDER
+        self.sort_mode = order[(order.index(self.sort_mode) + 1) % len(order)]
+        self.entries = fsops.sort_entries(self.entries, self.sort_mode)
+        self._clamp()
+        return fsops.SORT_LABELS[self.sort_mode]
+
+    def select_mask(self, pattern, add=True):
+        """`*.txt` 같은 패턴으로 한꺼번에 고르거나 푼다.
+
+        대소문자를 가리지 않는다. `*.TXT` 로도 .txt 가 잡히는 편이 자연스럽다.
+        """
+        lowered = pattern.lower()
+        hit = [e["name"] for e in self.entries if fnmatch.fnmatch(e["name"].lower(), lowered)]
+        if add:
+            self.selected.update(hit)
+        else:
+            self.selected.difference_update(hit)
+        return len(hit)
+
     def toggle_select(self):
         item = self.current_item()
         if not item or item.get("up"):
@@ -164,12 +188,122 @@ class Dialog:
     """모달 다이얼로그의 공통 껍데기. lines() 를 그리고 key() 로 입력을 받는다."""
 
     title = ""
+    max_body = None  # 그릴 수 있는 최대 줄 수. 화면을 그리기 직전에 앱이 채워준다
 
     def lines(self, inner_width):
         return []
 
     def key(self, key):
         """True 를 돌려주면 다이얼로그를 닫는다."""
+        return False
+
+
+class InputDialog(Dialog):
+    """한 줄 입력을 받는다. 선택 마스크와 폴더 만들기가 함께 쓴다."""
+
+    def __init__(self, title, prompt, on_submit, initial=""):
+        self.title = title
+        self.text = initial
+        self._prompt = prompt if isinstance(prompt, list) else [prompt]
+        self._on_submit = on_submit
+
+    def lines(self, inner):
+        return (
+            self._prompt
+            + ["", term.BOLD + screen.pad(self.text + "▌", inner) + term.RESET, ""]
+            + [term.FG_GRAY + "Enter 확인   Esc 취소" + term.RESET]
+        )
+
+    def key(self, key):
+        # q 도 입력해야 하므로 취소는 Esc 뿐이다
+        if key == term.ENTER:
+            if self.text:
+                self._on_submit(self.text)
+            return True
+        if key == term.ESC:
+            return True
+        if key == term.BACKSPACE:
+            self.text = self.text[:-1]
+        elif key == term.SPACE:
+            self.text += " "
+        elif len(key) == 1 and key.isprintable():
+            self.text += key
+        return False
+
+
+class ViewerDialog(Dialog):
+    """MDir 의 파일 보기. 텍스트는 그대로, 바이너리는 16진수로 보여준다."""
+
+    BYTES_PER_ROW = 16
+
+    def __init__(self, name, data, total_size):
+        self.title = "보기: %s" % name
+        self.offset = 0
+        self.total_size = total_size
+        self.shown_bytes = len(data)
+        self.binary = fsops.looks_binary(data)
+        self.body = (
+            self._hex_rows(data)
+            if self.binary
+            else (data.decode("utf-8", "replace").splitlines() or [""])
+        )
+
+    def _hex_rows(self, data):
+        rows = []
+        for start in range(0, len(data), self.BYTES_PER_ROW):
+            chunk = data[start : start + self.BYTES_PER_ROW]
+            hexed = " ".join("%02x" % b for b in chunk)
+            # 출력 가능한 문자만 그대로, 나머지는 점으로
+            ascii_part = "".join(chr(b) if 32 <= b < 127 else "." for b in chunk)
+            rows.append("%08x  %-47s  %s" % (start, hexed, ascii_part))
+        return rows
+
+    def _height(self):
+        return max((self.max_body or 18) - 4, 5)
+
+    def lines(self, inner):
+        height = self._height()
+        self.offset = max(0, min(self.offset, max(len(self.body) - height, 0)))
+
+        out = []
+        for index in range(self.offset, min(self.offset + height, len(self.body))):
+            number = term.FG_GRAY + "%5d " % (index + 1) + term.RESET
+            out.append(number + screen.fit(self.body[index].rstrip("\r"), inner - 6))
+        while len(out) < height:
+            out.append("")
+
+        note = "%s · %s" % (
+            "16진수" if self.binary else "텍스트",
+            fsops.human_size(self.total_size),
+        )
+        if self.shown_bytes < self.total_size:
+            note += " (앞 %s 만)" % fsops.human_size(self.shown_bytes)
+
+        out += [
+            term.FG_GRAY + BOX_H * inner + term.RESET,
+            term.FG_GRAY
+            + screen.pad("%s   %d/%d 줄   ↑↓ PgUp/PgDn 스크롤   q 닫기" % (
+                note, min(self.offset + height, len(self.body)), len(self.body)), inner)
+            + term.RESET,
+        ]
+        return out
+
+    def key(self, key):
+        height = self._height()
+        if key in (term.UP, "k"):
+            self.offset -= 1
+        elif key in (term.DOWN, "j"):
+            self.offset += 1
+        elif key == term.PGUP:
+            self.offset -= height
+        elif key == term.PGDN:
+            self.offset += height
+        elif key == term.HOME_KEY:
+            self.offset = 0
+        elif key == term.END_KEY:
+            self.offset = len(self.body)
+        elif key in (term.ESC, "q", term.ENTER, "F3", "v"):
+            return True
         return False
 
 
@@ -602,6 +736,20 @@ class App:
             if self.session:
                 self.remote.refresh()
 
+        elif kind == "view":
+            name, data, size = payload
+            self.status = ""
+            self.modal = ViewerDialog(name, data, size)
+
+        elif kind == "op_done":
+            self.status = payload[0]
+            self.focus.refresh()
+
+        elif kind == "remote_changed":
+            # 상대가 내 쪽 파일을 지웠다. 왼쪽 패널을 다시 읽어 반영한다
+            if Path(payload[0]) == self.local.path:
+                self.local.refresh()
+
         elif kind == "error":
             self.modal = MessageDialog("오류", payload[0], term.FG_RED)
 
@@ -664,7 +812,7 @@ class App:
                 self.modal = None
             return
 
-        if key in ("q", "CTRL-C"):
+        if key in ("q", "F10", "CTRL-C"):
             self.running = False
         elif key == term.TAB:
             self._toggle_focus()
@@ -680,21 +828,33 @@ class App:
             self.focus.cursor = 0
         elif key == term.END_KEY:
             self.focus.cursor = max(len(self.focus.rows()) - 1, 0)
-        elif key == term.SPACE:
+        elif key in (term.SPACE, term.INSERT):
             self.focus.toggle_select()
         elif key == term.ENTER:
             self._enter()
         elif key in (term.LEFT, "h"):
             self._go_up(self.focus)
+        elif key in ("+", "="):
+            self._ask_mask(add=True)
+        elif key in ("-", "_"):
+            self._ask_mask(add=False)
         elif key in ("F5", "c"):
             self._start_copy()
         elif key in ("F2", "n"):
             self.modal = PeerDialog(self)
-        elif key in ("F3", "d"):
-            self._disconnect()
+        elif key in ("F3", "v"):
+            self._view_file()
         elif key in ("F4", "o"):
             self._open_root_picker()
-        elif key in ("F6", "r"):
+        elif key in ("F6", "d"):
+            self._disconnect()
+        elif key in ("F7", "m"):
+            self._ask_mkdir()
+        elif key in ("F8", term.DELETE):
+            self._ask_delete()
+        elif key in ("F9", "s"):
+            self.status = "정렬: %s 기준" % self.focus.cycle_sort()
+        elif key == "r":
             self.focus.refresh()
         elif key in ("F1", "?"):
             self.modal = MessageDialog("도움말", _HELP_LINES)
@@ -725,6 +885,169 @@ class App:
             self.status = "연결된 상대가 없습니다"
             return
         self.session.close("연결을 끊었습니다")
+
+    # --- 마스크 선택 ---
+
+    def _ask_mask(self, add):
+        pane = self.focus
+        if not pane.active:
+            return
+
+        def apply(pattern):
+            count = pane.select_mask(pattern, add=add)
+            verb = "선택" if add else "해제"
+            self.status = (
+                "%s — %d개 %s" % (pattern, count, verb) if count else "%s — 맞는 항목이 없습니다" % pattern
+            )
+
+        self.modal = InputDialog(
+            "선택 마스크" if add else "선택 해제 마스크",
+            [
+                "패턴에 맞는 항목을 한꺼번에 %s합니다." % ("선택" if add else "해제"),
+                term.FG_GRAY + "예) *.txt   보고서*   *.jp*g" + term.RESET,
+            ],
+            apply,
+            initial="*.",
+        )
+
+    # --- 원격 작업 공통 ---
+
+    def _run_remote(self, work, on_done):
+        """원격 요청은 응답을 기다리므로 반드시 워커 스레드에서 돌린다."""
+        active = self.session
+
+        def runner():
+            try:
+                work(active)
+                self.events.put(("op_done", on_done))
+            except (session.SessionError, OSError) as exc:
+                self.events.put(("error", str(exc)))
+
+        threading.Thread(target=runner, name="remote-op", daemon=True).start()
+
+    # --- 파일 보기 (F3) ---
+
+    def _view_file(self):
+        pane = self.focus
+        item = pane.current_item()
+        if not item or item.get("up"):
+            return
+        if item["is_dir"]:
+            self.status = "폴더는 볼 수 없습니다. Enter 로 들어가세요"
+            return
+
+        path = pane.path / item["name"]
+        limit = config.MAX_VIEW_BYTES
+
+        if not pane.is_remote:
+            try:
+                data = fsops.read_head(path, limit)
+            except OSError as exc:
+                self.modal = MessageDialog("열 수 없습니다", str(exc), term.FG_RED)
+                return
+            self.modal = ViewerDialog(item["name"], data, item["size"])
+            return
+
+        # 원격 파일은 앞부분만 받아온다. 통째로 내려받지 않는다
+        self.status = "%s 를 불러오는 중…" % item["name"]
+        active = self.session
+
+        def work():
+            try:
+                data, size = active.remote_head(str(path), limit)
+                self.events.put(("view", item["name"], data, size))
+            except session.SessionError as exc:
+                self.events.put(("error", str(exc)))
+
+        threading.Thread(target=work, name="view", daemon=True).start()
+
+    # --- 폴더 만들기 (F7) ---
+
+    def _ask_mkdir(self):
+        pane = self.focus
+        if not pane.active:
+            return
+
+        def create(name):
+            if "/" in name or "\\" in name:
+                self.modal = MessageDialog("이름이 잘못되었습니다", "경로 구분자는 쓸 수 없습니다", term.FG_RED)
+                return
+
+            target = pane.path / name
+            if pane.is_remote:
+                self._run_remote(
+                    lambda s: s.remote_mkdir(str(target)), "폴더를 만들었습니다: %s" % name
+                )
+                return
+            try:
+                target.mkdir()
+                self.status = "폴더를 만들었습니다: %s" % name
+                pane.refresh()
+            except OSError as exc:
+                self.modal = MessageDialog("만들 수 없습니다", str(exc), term.FG_RED)
+
+        self.modal = InputDialog(
+            "폴더 만들기",
+            ["%s 안에 새 폴더를 만듭니다." % screen.fit(str(pane.path), 46), "", "이름을 입력하세요."],
+            create,
+        )
+
+    # --- 삭제 (F8) ---
+
+    def _ask_delete(self):
+        pane = self.focus
+        if not pane.active:
+            return
+
+        items = pane.targets()
+        if not items:
+            self.status = "지울 항목을 고르세요 (Space 로 선택)"
+            return
+
+        where = self.session.peer_name if pane.is_remote else "내 PC"
+        names = [i["name"] + ("/" if i["is_dir"] else "") for i in items]
+        has_dir = any(i["is_dir"] for i in items)
+
+        body = [
+            term.BOLD + "%s 에서 %d개 항목을 지웁니다." % (where, len(items)) + term.RESET,
+            "",
+        ]
+        body += [term.FG_YELLOW + "  " + n + term.RESET for n in names[:6]]
+        if len(names) > 6:
+            body.append(term.FG_GRAY + "  … 외 %d개" % (len(names) - 6) + term.RESET)
+        body += [""]
+        if has_dir:
+            body.append(term.FG_RED + "폴더는 안에 든 것까지 함께 지워집니다." + term.RESET)
+        body.append(term.FG_RED + "되돌릴 수 없습니다." + term.RESET)
+
+        self.modal = ConfirmDialog(
+            "삭제", body, lambda ok: self._do_delete(pane, items) if ok else None
+        )
+
+    def _do_delete(self, pane, items):
+        paths = [pane.path / i["name"] for i in items]
+
+        if pane.is_remote:
+            def work(active):
+                for path in paths:
+                    active.remote_delete(str(path))
+
+            self._run_remote(work, "%d개 항목을 지웠습니다" % len(paths))
+            return
+
+        failed = []
+        for path in paths:
+            try:
+                fsops.remove_tree(path)
+            except OSError as exc:
+                failed.append("%s — %s" % (path.name, exc))
+
+        pane.selected.clear()
+        pane.refresh()
+        if failed:
+            self.modal = MessageDialog("일부를 지우지 못했습니다", failed[:8], term.FG_YELLOW)
+        else:
+            self.status = "%d개 항목을 지웠습니다" % len(paths)
 
     # --- 복사 ---
 
@@ -824,7 +1147,7 @@ class App:
         lines = [self._header(cols)]
         lines += self._panes(cols, pane_height)
         lines.append(self._status(cols))
-        lines.append(self._hints(cols))
+        lines.append(self._fkey_bar(cols))
 
         if self.modal is not None:
             self._overlay(lines, cols, rows)
@@ -924,13 +1247,30 @@ class App:
     def _status(self, cols):
         return screen.pad(" " + self.status, cols)
 
-    def _hints(self, cols):
-        # 좁은 터미널에서는 뒤쪽이 잘리므로 자주 쓰는 키를 앞에 둔다
-        hints = (
-            "Tab 패널  ↑↓ 이동  Enter 열기  Space 선택  F5 복사  "
-            "F2 연결  F3 끊기  F4 공유폴더  F1 도움말  q 종료"
-        )
-        return term.FG_GRAY + screen.pad(" " + hints, cols) + term.RESET
+    def _fkey_bar(self, cols):
+        """MDir·Norton Commander 특유의 하단 기능키 줄.
+
+        칸 하나가 7칸보다 좁아지면 라벨이 잘려 읽을 수 없으므로, 그때는
+        짧은 안내 문구로 물러난다.
+        """
+        cell = cols // len(_FKEYS)
+        if cell < 7:
+            short = " F1도움 F2연결 F3보기 F5복사 F9정렬 F10끝내"
+            return term.FG_GRAY + screen.pad(short, cols) + term.RESET
+
+        parts = []
+        for number, label in _FKEYS:
+            # 번호는 흐리게, 라벨은 반전. 옛 화면의 그 모양이다
+            parts.append(
+                term.FG_GRAY
+                + number
+                + term.RESET
+                + term.REVERSE
+                + screen.pad(label, cell - len(number) - 1)
+                + term.RESET
+                + " "
+            )
+        return screen.pad("".join(parts), cols)
 
     def _overlay(self, lines, cols, rows):
         """모달을 화면 가운데 띄운다.
@@ -938,8 +1278,9 @@ class App:
         줄 문자열에 ANSI 가 섞여 있어 가로 일부만 정확히 덧씌우기는 까다롭다.
         그래서 다이얼로그를 화면 폭 가까이 넓게 잡고 해당 줄을 통째로 교체한다.
         """
-        box_width = min(max(cols - 8, 30), 72)
+        box_width = min(max(cols - 8, 30), 96)
         inner = box_width - 4
+        self.modal.max_body = max(rows - 8, 5)
         body = self.modal.lines(inner)
 
         content = [
@@ -962,6 +1303,20 @@ class App:
                 lines[row] = screen.pad(left_pad + term.FG_CYAN + line + term.RESET, cols)
 
 
+_FKEYS = [
+    ("1", "도움"),
+    ("2", "연결"),
+    ("3", "보기"),
+    ("4", "폴더"),
+    ("5", "복사"),
+    ("6", "끊기"),
+    ("7", "만들"),
+    ("8", "삭제"),
+    ("9", "정렬"),
+    ("10", "끝내"),
+]
+
+
 def _adder(transfer):
     """진행률 콜백. 받은 바이트 수를 누적한다."""
 
@@ -972,17 +1327,23 @@ def _adder(transfer):
 
 
 _HELP_LINES = [
-    "Tab        패널 전환",
-    "↑ ↓ k j    커서 이동   PgUp/PgDn 페이지",
-    "Enter      디렉터리 열기 (.. 은 상위로)",
-    "← h        상위 디렉터리",
-    "Space      선택 토글 (여러 개 고를 수 있습니다)",
-    "F5 / c     반대 패널로 복사 (디렉터리는 재귀)",
-    "F2 / n     연결할 PC 찾기",
-    "F3 / d     연결 끊기",
-    "F4 / o     공유 폴더 바꾸기 (연결 끊은 상태에서만)",
-    "F6 / r     새로고침",
-    "q          종료",
+    "왼쪽은 늘 내 PC, 오른쪽은 연결된 상대입니다.",
     "",
+    "Tab           패널 전환",
+    "↑ ↓ k j       커서 이동    PgUp/PgDn 페이지    Home/End 처음·끝",
+    "Enter         디렉터리 열기 (.. 은 상위로)",
+    "← h           상위 디렉터리",
+    "Space, Insert 선택 토글",
+    "+  -          마스크로 한꺼번에 선택 / 해제  (예: *.txt)",
+    "",
+    "F1  도움말             F2  연결할 PC 찾기",
+    "F3  파일 보기 (v)      F4  공유 폴더 바꾸기 (o)",
+    "F5  복사 (c)           F6  연결 끊기 (d)",
+    "F7  폴더 만들기 (m)    F8  삭제 (Delete)",
+    "F9  정렬 바꾸기 (s)    F10 종료 (q)",
+    "r             새로고침",
+    "",
+    "정렬은 이름 → 확장자 → 크기 → 날짜 순으로 돌아갑니다.",
+    "복사와 삭제는 선택한 항목이 없으면 커서에 있는 것 하나를 씁니다.",
     "상대가 연결을 요청하면 승인 창이 자동으로 뜹니다.",
 ]

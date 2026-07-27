@@ -144,7 +144,7 @@ class TestCopyGuards(AppTestCase):
         self.assertIn("덮어씁니다", "\n".join(self.app.modal.lines(60)))
 
     def test_disconnect_without_session_reports_it(self):
-        self.app._on_key("F3")
+        self.app._on_key("F6")  # F6 = 연결 끊기 (MDir 기능키 배치)
         self.assertIn("연결된 상대가 없습니다", self.app.status)
 
 

@@ -52,8 +52,39 @@ def list_dir(path):
                 }
             )
 
-    entries.sort(key=lambda e: (not e["is_dir"], e["name"].lower()))
-    return entries
+    return sort_entries(entries, SORT_NAME)
+
+
+# 정렬 기준. MDir 처럼 키 하나로 돌려가며 쓴다
+SORT_NAME, SORT_EXT, SORT_SIZE, SORT_DATE = "name", "ext", "size", "date"
+SORT_ORDER = (SORT_NAME, SORT_EXT, SORT_SIZE, SORT_DATE)
+SORT_LABELS = {SORT_NAME: "이름", SORT_EXT: "확장자", SORT_SIZE: "크기", SORT_DATE: "날짜"}
+
+
+def sort_entries(entries, mode):
+    """항목을 정렬한다. 기준이 무엇이든 디렉터리는 늘 위로 모은다.
+
+    원격에서 받은 목록에도 그대로 쓸 수 있게 순수 함수로 둔다. 정렬을 프로토콜에
+    끼워넣지 않아도 되는 이유다.
+    """
+    if mode == SORT_EXT:
+        key = lambda e: (not e["is_dir"], _suffix(e["name"]), e["name"].lower())
+    elif mode == SORT_SIZE:
+        # 큰 파일부터. 무엇이 자리를 차지하는지 찾는 게 목적이다
+        key = lambda e: (not e["is_dir"], -e["size"], e["name"].lower())
+    elif mode == SORT_DATE:
+        key = lambda e: (not e["is_dir"], -e["mtime"], e["name"].lower())
+    else:
+        key = lambda e: (not e["is_dir"], e["name"].lower())
+
+    return sorted(entries, key=key)
+
+
+def _suffix(name):
+    """확장자만 소문자로. 숨김 파일(.gitignore)은 확장자가 없는 것으로 본다."""
+    base = name[1:] if name.startswith(".") else name
+    _, dot, ext = base.rpartition(".")
+    return ext.lower() if dot else ""
 
 
 def walk_tree(root):
@@ -95,3 +126,28 @@ def human_size(n):
 def unique_part_path(dest):
     """수신용 임시 경로. 완료 후 rename 하므로 중단 시 반쪽 파일이 남지 않는다."""
     return dest.with_name(dest.name + ".part")
+
+
+def read_head(path, limit):
+    """파일 앞부분만 읽는다. 내장 뷰어가 큰 파일에 목메지 않게 한다."""
+    with open(path, "rb") as fp:
+        return fp.read(limit)
+
+
+def looks_binary(data):
+    """NUL 이 있으면 바이너리로 본다. 뷰어가 텍스트/16진수 모드를 고르는 기준."""
+    return b"\x00" in data
+
+
+def remove_tree(path):
+    """파일이든 디렉터리든 지운다. 심링크는 따라가지 않고 링크만 지운다."""
+    path = Path(path)
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+        return
+
+    # shutil.rmtree 를 쓰지 않는다. 심링크를 따라 밖을 지우지 않도록
+    # 직접 훑으며 링크는 링크만 지운다
+    for child in path.iterdir():
+        remove_tree(child)
+    path.rmdir()

@@ -188,7 +188,7 @@ class TestTwoNodes(unittest.TestCase):
         self._connect()
         pump([self.a, self.b], 5, until=lambda: self.a.remote.entries is not None)
 
-        self.a._on_key("F3")
+        self.a._on_key("F6")  # F6 = 연결 끊기
         gone = pump(
             [self.a, self.b], 8, until=lambda: not self.a.session and not self.b.session
         )
