@@ -240,6 +240,129 @@ class ApprovalDialog(Dialog):
         return False
 
 
+class FolderDialog(Dialog):
+    """공유할 폴더를 고르는 선택상자.
+
+    네이티브 GUI 창(tkinter)을 쓰지 않는다. tkinter 는 표준 라이브러리이긴 하지만
+    GUI 세션이 있어야 하고 Linux 에서는 별도 설치가 필요한 경우가 흔해서,
+    SSH 로 접속한 터미널에서는 창이 뜨지 못한다. 앱 안에서 직접 그리면
+    어느 환경에서나 똑같이 동작한다.
+    """
+
+    title = "공유할 폴더 선택"
+    VISIBLE = 10  # 한 번에 보여줄 폴더 수
+
+    def __init__(self, start, on_choose, on_cancel, cancel_hint="Esc 취소"):
+        self.path = Path(start)
+        self.cursor = 0
+        self.offset = 0
+        self.entries = []
+        self.message = ""
+        self.cancel_hint = cancel_hint
+        self._on_choose = on_choose
+        self._on_cancel = on_cancel
+        self._load()
+
+    def _load(self):
+        """하위 폴더만 읽어들인다. 파일은 고를 수 없으니 보여주지 않는다."""
+        try:
+            self.entries = [e["name"] for e in fsops.list_dir(self.path) if e["is_dir"]]
+            self.message = ""
+        except OSError as exc:
+            self.entries = []
+            self.message = "읽을 수 없습니다: %s" % exc
+        self.cursor = 0
+        self.offset = 0
+
+    def rows(self):
+        up = [".."] if self.path != self.path.parent else []
+        return up + self.entries
+
+    def lines(self, inner):
+        rows = self.rows()
+
+        if self.cursor < self.offset:
+            self.offset = self.cursor
+        elif self.cursor >= self.offset + self.VISIBLE:
+            self.offset = self.cursor - self.VISIBLE + 1
+
+        out = [
+            term.BOLD + screen.fit(str(self.path), inner) + term.RESET,
+            term.FG_GRAY + BOX_H * inner + term.RESET,
+        ]
+
+        if not rows:
+            out.append(term.FG_GRAY + "  (하위 폴더가 없습니다)" + term.RESET)
+        for index in range(self.offset, min(self.offset + self.VISIBLE, len(rows))):
+            name = rows[index]
+            label = screen.pad("  " + (name if name == ".." else name + "/"), inner)
+            if index == self.cursor:
+                out.append(term.REVERSE + label + term.RESET)
+            else:
+                out.append(term.FG_CYAN + label + term.RESET)
+
+        # 목록이 짧아도 상자 높이를 유지해 다이얼로그가 들썩이지 않게 한다
+        for _ in range(self.VISIBLE - max(len(rows), 1)):
+            out.append(" " * inner)
+
+        # 아래 두 줄은 내용이 없어도 자리를 지킨다. 폴더를 옮길 때마다 상자
+        # 높이가 달라지면 화면이 들썩여 눈에 거슬린다
+        if len(rows) > self.VISIBLE:
+            out.append(term.FG_GRAY + "  (%d/%d)" % (self.cursor + 1, len(rows)) + term.RESET)
+        else:
+            out.append(" " * inner)
+        out.append(
+            term.FG_RED + screen.fit(self.message, inner) + term.RESET
+            if self.message
+            else " " * inner
+        )
+
+        out += [
+            "",
+            term.BOLD + "Ctrl-D 이 폴더로 결정" + term.RESET
+            + term.FG_GRAY + "   Enter 열기   ← 상위   " + self.cancel_hint + term.RESET,
+        ]
+        return out
+
+    def key(self, key):
+        rows = self.rows()
+
+        if key in (term.UP, "k"):
+            self.cursor = max(0, self.cursor - 1)
+        elif key in (term.DOWN, "j"):
+            self.cursor = min(len(rows) - 1, self.cursor + 1) if rows else 0
+        elif key == term.PGUP:
+            self.cursor = max(0, self.cursor - self.VISIBLE)
+        elif key == term.PGDN:
+            self.cursor = min(len(rows) - 1, self.cursor + self.VISIBLE) if rows else 0
+        elif key == term.ENTER:
+            self._descend(rows)
+        elif key in (term.LEFT, "h"):
+            self._go_up()
+        elif key == "CTRL-D":
+            self._on_choose(self.path)
+            return True
+        elif key in (term.ESC, "q"):
+            self._on_cancel()
+            return True
+        return False
+
+    def _descend(self, rows):
+        if not rows or not 0 <= self.cursor < len(rows):
+            return
+        name = rows[self.cursor]
+        if name == "..":
+            self._go_up()
+            return
+        self.path = self.path / name
+        self._load()
+
+    def _go_up(self):
+        if self.path != self.path.parent:
+            self.path = self.path.parent
+            self._load()
+
+
 class PeerDialog(Dialog):
     """발견된 피어 목록. Enter 로 연결을 요청한다."""
 
@@ -326,9 +449,13 @@ class App:
 
     def __init__(self, my_name, root, tcp_port, udp_port, platform_name, use_discovery=True):
         self.my_name = my_name
-        self.root = Path(root).expanduser().resolve()
         self.platform_name = platform_name
         self.events = queue.Queue()
+
+        # root 가 None 이면 실행 직후 선택상자로 고르게 한다. 고르기 전에는
+        # 아무것도 공유하지 않아야 하므로 서비스 기동도 그때까지 미룬다
+        self.pick_root_at_start = root is None
+        self.root = Path(root or Path.home()).expanduser().resolve()
 
         self.local = Pane(self, is_remote=False)
         self.remote = Pane(self, is_remote=True)
@@ -340,6 +467,7 @@ class App:
         self.status = "F2 를 눌러 연결할 PC 를 찾습니다"
         self.transfer = None
         self.running = True
+        self._services_started = False
 
         self.server = session.Server(my_name, platform_name, self.root, self.events, tcp_port)
         self.port = self.server.bind()
@@ -353,9 +481,17 @@ class App:
     # --- 실행 ---
 
     def run(self):
-        self.server.start()
-        if self.discovery:
-            self.discovery.start()
+        if self.pick_root_at_start:
+            # 공유 폴더가 정해지기 전에는 서버를 열지 않는다. 취소하면 종료한다
+            self.modal = FolderDialog(
+                self.root,
+                on_choose=self._choose_root_and_start,
+                on_cancel=self._quit,
+                cancel_hint="Esc 종료",
+            )
+        else:
+            self.start_services()
+
         self.local.refresh()
 
         with term.Terminal() as terminal:
@@ -368,6 +504,41 @@ class App:
                     self._on_key(key)
 
         self.shutdown()
+
+    def start_services(self):
+        """TCP 수신과 브로드캐스트를 시작한다. 공유 폴더가 확정된 뒤에 부른다."""
+        if self._services_started:
+            return
+        self._services_started = True
+        self.server.start()
+        if self.discovery:
+            self.discovery.start()
+
+    def _quit(self):
+        self.running = False
+
+    def _choose_root_and_start(self, path):
+        self.set_root(path)
+        self.start_services()
+
+    def set_root(self, path):
+        """공유 폴더를 바꾼다. Server 가 이 값을 읽어 새 세션에 넘긴다."""
+        self.root = Path(path).resolve()
+        self.server.root = self.root
+        self.local.navigate(self.root)
+        self.status = "공유 폴더: %s" % self.root
+
+    def _open_root_picker(self):
+        """F4. 연결 중에는 막는다.
+
+        Session 은 만들어질 때 공유 루트를 받아 보관하므로, 연결 중에 바꿔도
+        상대가 보는 범위는 그대로다. 사용자는 바뀌었다고 믿는데 실제로는 아닌
+        상태가 되므로 아예 허용하지 않는다.
+        """
+        if self.session:
+            self.status = "연결 중에는 바꿀 수 없습니다. F3 으로 끊고 다시 시도하세요"
+            return
+        self.modal = FolderDialog(self.root, on_choose=self.set_root, on_cancel=lambda: None)
 
     def shutdown(self):
         if self.session:
@@ -521,6 +692,8 @@ class App:
             self.modal = PeerDialog(self)
         elif key in ("F3", "d"):
             self._disconnect()
+        elif key in ("F4", "o"):
+            self._open_root_picker()
         elif key in ("F6", "r"):
             self.focus.refresh()
         elif key in ("F1", "?"):
@@ -752,7 +925,11 @@ class App:
         return screen.pad(" " + self.status, cols)
 
     def _hints(self, cols):
-        hints = "Tab 패널  ↑↓ 이동  Enter 열기  Space 선택  F5 복사  F2 연결  F3 끊기  F1 도움말  q 종료"
+        # 좁은 터미널에서는 뒤쪽이 잘리므로 자주 쓰는 키를 앞에 둔다
+        hints = (
+            "Tab 패널  ↑↓ 이동  Enter 열기  Space 선택  F5 복사  "
+            "F2 연결  F3 끊기  F4 공유폴더  F1 도움말  q 종료"
+        )
         return term.FG_GRAY + screen.pad(" " + hints, cols) + term.RESET
 
     def _overlay(self, lines, cols, rows):
@@ -803,6 +980,7 @@ _HELP_LINES = [
     "F5 / c     반대 패널로 복사 (디렉터리는 재귀)",
     "F2 / n     연결할 PC 찾기",
     "F3 / d     연결 끊기",
+    "F4 / o     공유 폴더 바꾸기 (연결 끊은 상태에서만)",
     "F6 / r     새로고침",
     "q          종료",
     "",

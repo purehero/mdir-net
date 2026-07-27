@@ -24,8 +24,8 @@ def parse_args(argv=None):
     parser.add_argument("--name", default=default_name(), help="상대에게 보여줄 이름")
     parser.add_argument(
         "--root",
-        default=str(Path.home()),
-        help="상대에게 열어줄 공유 폴더 (기본값: 홈 디렉터리)",
+        default=None,
+        help="상대에게 열어줄 공유 폴더 (생략하면 실행 후 선택상자로 고른다)",
     )
     parser.add_argument("--port", type=int, default=config.TCP_PORT, help="세션 TCP 포트")
     parser.add_argument("--udp-port", type=int, default=config.UDP_PORT, help="발견용 UDP 포트")
@@ -40,10 +40,14 @@ def parse_args(argv=None):
 def main(argv=None):
     args = parse_args(argv)
 
-    root = Path(args.root).expanduser()
-    if not root.is_dir():
-        print("공유 폴더가 없습니다: %s" % root, file=sys.stderr)
-        return 1
+    # --root 를 생략하면 None 을 그대로 넘긴다. App 이 실행 직후 선택상자를 띄운다
+    root = None
+    if args.root is not None:
+        root = Path(args.root).expanduser()
+        if not root.is_dir():
+            print("공유 폴더가 없습니다: %s" % root, file=sys.stderr)
+            return 1
+
     if not sys.stdin.isatty():
         print("터미널에서 실행해야 합니다.", file=sys.stderr)
         return 1

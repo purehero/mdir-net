@@ -283,6 +283,8 @@ def _translate_char(ch):
         return BACKSPACE
     if ch == "\x03":
         return "CTRL-C"
+    if ch == "\x04":
+        return "CTRL-D"
     if ch == "\x1b":
         return ESC
     return ch

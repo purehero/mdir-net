@@ -287,6 +287,177 @@ class TestSessionLifecycle(AppTestCase):
         self.assertIn("3개", self.app.status)
 
 
+class TestFolderDialog(AppTestCase):
+    def make(self, start=None, hint="Esc 취소"):
+        self.chosen = []
+        self.cancelled = []
+        return app_module.FolderDialog(
+            start or self.root,
+            on_choose=self.chosen.append,
+            on_cancel=lambda: self.cancelled.append(True),
+            cancel_hint=hint,
+        )
+
+    def test_lists_only_directories(self):
+        dialog = self.make()
+        self.assertIn("문서", dialog.rows())
+        self.assertNotIn("보고서.txt", dialog.rows())
+        self.assertNotIn("photo.jpg", dialog.rows())
+
+    def test_dotdot_is_offered_when_not_at_filesystem_root(self):
+        self.assertEqual(self.make().rows()[0], "..")
+
+    def test_enter_descends_and_left_returns(self):
+        (self.root / "문서" / "안쪽").mkdir()
+        dialog = self.make()
+        dialog.cursor = dialog.rows().index("문서")
+
+        dialog.key(term.ENTER)
+        self.assertEqual(dialog.path, self.root / "문서")
+        self.assertIn("안쪽", dialog.rows())
+
+        dialog.key(term.LEFT)
+        self.assertEqual(dialog.path, self.root)
+
+    def test_enter_on_dotdot_goes_up(self):
+        dialog = self.make(self.root / "문서")
+        dialog.cursor = 0
+        dialog.key(term.ENTER)
+        self.assertEqual(dialog.path, self.root)
+
+    def test_ctrl_d_chooses_current_folder_and_closes(self):
+        dialog = self.make()
+        self.assertTrue(dialog.key("CTRL-D"))
+        self.assertEqual(self.chosen, [self.root])
+
+    def test_ctrl_d_chooses_the_folder_you_navigated_into(self):
+        dialog = self.make()
+        dialog.cursor = dialog.rows().index("문서")
+        dialog.key(term.ENTER)
+        dialog.key("CTRL-D")
+        self.assertEqual(self.chosen, [self.root / "문서"])
+
+    def test_esc_cancels_without_choosing(self):
+        dialog = self.make()
+        self.assertTrue(dialog.key(term.ESC))
+        self.assertEqual(self.chosen, [])
+        self.assertEqual(self.cancelled, [True])
+
+    def test_cursor_clamps_at_both_ends(self):
+        dialog = self.make()
+        for _ in range(50):
+            dialog.key(term.DOWN)
+        self.assertEqual(dialog.cursor, len(dialog.rows()) - 1)
+        for _ in range(50):
+            dialog.key(term.UP)
+        self.assertEqual(dialog.cursor, 0)
+
+    def test_enter_on_empty_listing_does_nothing(self):
+        empty = self.root / "빈폴더"
+        empty.mkdir()
+        dialog = self.make(empty)
+        dialog.cursor = 0
+        dialog.key(term.ENTER)  # '..' 뿐이므로 상위로 올라간다
+        self.assertEqual(dialog.path, self.root)
+
+    def test_cancel_hint_is_shown(self):
+        self.assertIn("Esc 종료", "\n".join(self.make(hint="Esc 종료").lines(60)))
+        self.assertIn("Ctrl-D", "\n".join(self.make().lines(60)))
+
+    def test_dialog_height_is_stable_between_folders(self):
+        """폴더마다 상자 높이가 들썩이면 화면이 어지럽다."""
+        (self.root / "빈폴더").mkdir()
+        many = self.root / "많은폴더"
+        many.mkdir()
+        for i in range(30):
+            (many / ("sub%02d" % i)).mkdir()
+
+        heights = set()
+        for start in (self.root, self.root / "빈폴더", many):
+            heights.add(len(self.make(start).lines(60)))
+        self.assertEqual(len(heights), 1, heights)
+
+    def test_overlay_keeps_line_widths(self):
+        self.app.modal = self.make()
+        for size in ((80, 24), (100, 30), (40, 12)):
+            for line in self.app._compose(size):
+                self.assertEqual(screen.width(line), size[0])
+
+
+class TestRootSelection(unittest.TestCase):
+    """--root 를 생략했을 때의 시작 흐름."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name).resolve()
+        (self.root / "고른폴더").mkdir()
+
+    def make(self, root):
+        app = app_module.App(
+            my_name="picker",
+            root=root,
+            tcp_port=0,
+            udp_port=0,
+            platform_name="testos",
+            use_discovery=False,
+        )
+        self.addCleanup(app.shutdown)
+        return app
+
+    def test_root_none_defers_service_startup(self):
+        """폴더를 고르기 전에는 아무것도 공유하지 않아야 한다."""
+        app = self.make(None)
+        self.assertTrue(app.pick_root_at_start)
+        self.assertFalse(app._services_started)
+
+    def test_explicit_root_starts_services_without_a_dialog(self):
+        app = self.make(self.root)
+        self.assertFalse(app.pick_root_at_start)
+        app.start_services()
+        self.assertTrue(app._services_started)
+        self.assertIsNone(app.modal)
+
+    def test_choosing_sets_root_and_starts_services(self):
+        app = self.make(None)
+        app._choose_root_and_start(self.root / "고른폴더")
+
+        self.assertEqual(app.root, self.root / "고른폴더")
+        self.assertEqual(app.server.root, self.root / "고른폴더")
+        self.assertEqual(app.local.path, self.root / "고른폴더")
+        self.assertTrue(app._services_started)
+
+    def test_start_services_is_idempotent(self):
+        app = self.make(self.root)
+        app.start_services()
+        app.start_services()
+        self.assertTrue(app._services_started)
+
+    def test_f4_opens_the_picker_when_idle(self):
+        app = self.make(self.root)
+        app._on_key("F4")
+        self.assertIsInstance(app.modal, app_module.FolderDialog)
+
+    def test_f4_is_refused_while_connected(self):
+        """Session 은 만들어질 때 루트를 보관한다. 연결 중 변경은 상대에게
+        반영되지 않으므로 허용하면 사용자를 속이게 된다."""
+        app = self.make(self.root)
+        app.session = _StubSession()
+
+        app._on_key("F4")
+        self.assertIsNone(app.modal)
+        self.assertIn("연결 중에는", app.status)
+
+    def test_cancelling_the_startup_picker_quits(self):
+        app = self.make(None)
+        dialog = app_module.FolderDialog(
+            self.root, on_choose=app._choose_root_and_start, on_cancel=app._quit
+        )
+        dialog.key(term.ESC)
+        self.assertFalse(app.running)
+        self.assertFalse(app._services_started)
+
+
 class _StubSession:
     """연결된 것처럼 보이게 하는 최소 대역. 네트워크는 건드리지 않는다."""
 

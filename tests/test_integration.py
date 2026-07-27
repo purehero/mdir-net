@@ -51,8 +51,7 @@ class TestTwoNodes(unittest.TestCase):
             platform_name="testos",
             use_discovery=True,
         )
-        app.server.start()
-        app.discovery.start()
+        app.start_services()
         app.local.refresh()
         self.addCleanup(app.shutdown)
         return app
