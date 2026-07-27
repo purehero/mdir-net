@@ -128,6 +128,100 @@ def unique_part_path(dest):
     return dest.with_name(dest.name + ".part")
 
 
+# --- 드라이브 / 볼륨 ---
+#
+# Windows 에서는 C:\ 의 부모가 자기 자신이라 '..' 로는 D: 에 갈 수 없다.
+# 드라이브 목록을 따로 보여주지 않으면 다른 드라이브를 아예 쓸 수 없다.
+# POSIX 는 '/' 하나로 이어져 있지만, 꽂아둔 외장 볼륨으로 한 번에 뛰는 용도로
+# 같은 화면을 쓴다.
+
+_WIN_DRIVE_KINDS = {
+    2: "이동식",
+    3: "고정",
+    4: "네트워크",
+    5: "CD/DVD",
+    6: "램디스크",
+}
+
+_POSIX_VOLUME_DIRS = ("/Volumes", "/media", "/mnt", "/run/media")
+
+
+def list_drives():
+    """고를 수 있는 최상위 위치 목록. [{path, label, kind}] 형태."""
+    return _windows_drives() if os.name == "nt" else _posix_volumes()
+
+
+def _windows_drive_bits():
+    """GetLogicalDrives 비트마스크. 실패하면 None.
+
+    글자마다 exists() 를 부르면 빈 CD 드라이브에서 몇 초씩 멈추는 일이 있어
+    비트마스크를 먼저 시도한다.
+    """
+    try:
+        import ctypes
+
+        return int(ctypes.windll.kernel32.GetLogicalDrives())
+    except (ImportError, AttributeError, OSError):
+        return None
+
+
+def _windows_drive_kind(root):
+    try:
+        import ctypes
+
+        code = int(ctypes.windll.kernel32.GetDriveTypeW(str(root)))
+    except (ImportError, AttributeError, OSError, ValueError):
+        return ""
+    return _WIN_DRIVE_KINDS.get(code, "")
+
+
+def _windows_drives():
+    bits = _windows_drive_bits()
+    out = []
+
+    for index in range(26):
+        letter = chr(ord("A") + index)
+        root = "%s:\\" % letter
+
+        if bits is not None:
+            if not (bits >> index) & 1:
+                continue
+        elif not Path(root).exists():  # 비트마스크를 못 얻었을 때의 대비책
+            continue
+
+        out.append({"path": root, "label": "%s:" % letter, "kind": _windows_drive_kind(root)})
+    return out
+
+
+def _posix_volumes():
+    out = [{"path": "/", "label": "/", "kind": "루트"}]
+    seen = {"/"}
+
+    for base in _POSIX_VOLUME_DIRS:
+        base_path = Path(base)
+        if not base_path.is_dir():
+            continue
+        try:
+            children = sorted(base_path.iterdir(), key=lambda p: p.name.lower())
+        except OSError:
+            continue
+
+        for child in children:
+            text = str(child)
+            if text in seen or not child.is_dir():
+                continue
+            seen.add(text)
+            out.append({"path": text, "label": child.name, "kind": "볼륨"})
+
+    return out
+
+
+def is_filesystem_root(path):
+    """더 위로 올라갈 수 없는 지점인가. Windows 의 `C:\\` 와 POSIX 의 `/`."""
+    path = Path(path)
+    return path == path.parent
+
+
 def read_head(path, limit):
     """파일 앞부분만 읽는다. 내장 뷰어가 큰 파일에 목메지 않게 한다."""
     with open(path, "rb") as fp:
