@@ -100,7 +100,7 @@ class TestApprovalDialog(ApprovalTestCase):
         _, dialog = self.make()
         rendered = "\n".join(dialog.lines(60))
         self.assertIn("Enter 확정", rendered)
-        self.assertIn("← →", rendered)
+        self.assertIn("< >", rendered)
 
 
 class TestApprovalThroughTheApp(unittest.TestCase):

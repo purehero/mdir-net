@@ -9,8 +9,8 @@ from pathlib import Path
 from .. import config, discovery, fsops, session
 from . import screen, term
 
-BOX_H, BOX_V = "─", "│"
-BOX_TL, BOX_TR, BOX_BL, BOX_BR = "┌", "┐", "└", "┘"
+BOX_H, BOX_V = "-", "|"
+BOX_TL, BOX_TR, BOX_BL, BOX_BR = "+", "+", "+", "+"
 
 SIZE_COL = 10  # 크기를 표시할 우측 열 폭
 
@@ -19,7 +19,7 @@ class Transfer:
     """진행 중인 복사 작업. 워커가 갱신하고 UI 가 매 프레임 읽어간다.
 
     청크마다 이벤트를 큐에 넣으면 큐가 넘치므로, 공용 객체를 두고 UI 가
-    폴링하는 쪽을 택했다. 정수·문자열 대입은 GIL 아래에서 찢어지지 않는다.
+    폴링하는 쪽을 택했다. 정수와 문자열 대입은 GIL 아래에서 찢어지지 않는다.
     """
 
     def __init__(self, label, total):
@@ -111,7 +111,7 @@ class Pane:
             self._clamp()
             return
 
-        self.message = "불러오는 중…"
+        self.message = "불러오는 중~"
         active = self.app.session
 
         def work():
@@ -210,7 +210,7 @@ class InputDialog(Dialog):
     def lines(self, inner):
         return (
             self._prompt
-            + ["", term.BOLD + screen.pad(self.text + "▌", inner) + term.RESET, ""]
+            + ["", term.BOLD + screen.pad(self.text + "_", inner) + term.RESET, ""]
             + [term.FG_GRAY + "Enter 확인   Esc 취소" + term.RESET]
         )
 
@@ -272,7 +272,7 @@ class ViewerDialog(Dialog):
         while len(out) < height:
             out.append("")
 
-        note = "%s · %s" % (
+        note = "%s . %s" % (
             "16진수" if self.binary else "텍스트",
             fsops.human_size(self.total_size),
         )
@@ -282,7 +282,7 @@ class ViewerDialog(Dialog):
         out += [
             term.FG_GRAY + BOX_H * inner + term.RESET,
             term.FG_GRAY
-            + screen.pad("%s   %d/%d 줄   ↑↓ PgUp/PgDn 스크롤   q 닫기" % (
+            + screen.pad("%s   %d/%d 줄   ^v PgUp/PgDn 스크롤   q 닫기" % (
                 note, min(self.offset + height, len(self.body)), len(self.body)), inner)
             + term.RESET,
         ]
@@ -308,7 +308,7 @@ class ViewerDialog(Dialog):
 
 
 class MessageDialog(Dialog):
-    """오류·안내 표시. 아무 키나 누르면 닫힌다."""
+    """오류와 안내 표시. 아무 키나 누르면 닫힌다."""
 
     def __init__(self, title, body, color=""):
         self.title = title
@@ -347,7 +347,7 @@ class ConfirmDialog(Dialog):
             "",
             button("진행(Y)", self.proceed) + "   " + button("취소(N)", not self.proceed),
             "",
-            term.FG_GRAY + "← → 선택   Enter 확정   Esc 취소" + term.RESET,
+            term.FG_GRAY + "< > 선택   Enter 확정   Esc 취소" + term.RESET,
         ]
 
     def key(self, key):
@@ -372,7 +372,7 @@ class ApprovalDialog(Dialog):
 
     글자 단축키에만 의존하면 안 된다. 한글 입력이 켜져 있으면 y/n 이 'ㅛ'/'ㅜ' 로
     들어와 아무 반응이 없어서, 사용자는 다이얼로그가 먹통이라고 느낀다.
-    그래서 방향키·Tab·Space 로 고르고 Enter 로 확정하는 길을 함께 둔다.
+    그래서 방향키와 Tab, Space 로 고르고 Enter 로 확정하는 길을 함께 둔다.
     """
 
     title = "연결 요청"
@@ -388,13 +388,13 @@ class ApprovalDialog(Dialog):
 
         return [
             term.BOLD + self.request.name + term.RESET,
-            term.FG_GRAY + "%s · %s" % (self.request.host, self.request.platform) + term.RESET,
+            term.FG_GRAY + "%s . %s" % (self.request.host, self.request.platform) + term.RESET,
             "",
             "이 PC 의 공유 폴더를 열어줍니다.",
             "",
             button("수락(Y)", self.accept) + "   " + button("거부(N)", not self.accept),
             "",
-            term.FG_GRAY + "← → 선택   Enter 확정   Esc 거부" + term.RESET,
+            term.FG_GRAY + "< > 선택   Enter 확정   Esc 거부" + term.RESET,
         ]
 
     def key(self, key):
@@ -432,7 +432,7 @@ class DriveDialog(Dialog):
         self.cursor = max(0, min(self.cursor, len(self.drives) - 1))
         out = []
         for index, drive in enumerate(self.drives):
-            kind = (" · %s" % drive["kind"]) if drive["kind"] else ""
+            kind = (" . %s" % drive["kind"]) if drive["kind"] else ""
             label = screen.pad("  %-4s %s%s" % (drive["label"], drive["path"], kind), inner)
             out.append(term.REVERSE + label + term.RESET if index == self.cursor else label)
 
@@ -544,7 +544,7 @@ class FolderDialog(Dialog):
             "",
             term.BOLD + "Ctrl-D 이 폴더로 결정" + term.RESET
             + term.FG_GRAY
-            + "   Enter 열기   ← 상위%s   %s" % (drive_hint, self.cancel_hint)
+            + "   Enter 열기   < 상위%s   %s" % (drive_hint, self.cancel_hint)
             + term.RESET,
         ]
         return out
@@ -611,7 +611,7 @@ class PeerDialog(Dialog):
             return [
                 term.BOLD + self.waiting + term.RESET + " 에게 연결을 요청했습니다.",
                 "",
-                term.FG_YELLOW + "상대가 승인할 때까지 기다리는 중…" + term.RESET,
+                term.FG_YELLOW + "상대가 승인할 때까지 기다리는 중~" + term.RESET,
                 term.FG_GRAY + "최대 %d초" % config.APPROVAL_TIMEOUT + term.RESET,
             ]
 
@@ -663,7 +663,7 @@ class ProgressDialog(Dialog):
         t = self.transfer
         bar_width = max(inner_width - 8, 10)
         filled = int(bar_width * t.ratio)
-        bar = "█" * filled + "░" * (bar_width - filled)
+        bar = "#" * filled + "." * (bar_width - filled)
         return [
             screen.fit(t.label, inner_width),
             term.FG_GRAY + screen.fit(t.current, inner_width) + term.RESET,
@@ -940,7 +940,7 @@ class App:
             active = self.modal
             key = raw_key if isinstance(active, InputDialog) else term.command_key(raw_key)
             closed = active.key(key)
-            # 다이얼로그가 콜백에서 다른 다이얼로그를 띄웠을 수 있다 (드라이브 →
+            # 다이얼로그가 콜백에서 다른 다이얼로그를 띄웠을 수 있다 (드라이브 >
             # 폴더 선택). 그때 None 을 덮어쓰면 방금 띄운 창이 사라진다
             if closed and self.modal is active:
                 self.modal = None
@@ -949,7 +949,7 @@ class App:
         key = term.command_key(raw_key)
         # 하단 바에 적힌 숫자를 그대로 누를 수 있게 한다. macOS 는 F 키에 fn 이
         # 필요하고, F 키의 이스케이프 시퀀스는 터미널마다 다르다. 숫자는 어느
-        # OS·터미널에서나 ASCII 한 바이트로 와서 변형이 없고, 한글 입력 상태에도
+        # OS.터미널에서나 ASCII 한 바이트로 와서 변형이 없고, 한글 입력 상태에도
         # 영향받지 않는다
         key = _DIGIT_FKEYS.get(key, key)
 
@@ -1040,7 +1040,7 @@ class App:
             count = pane.select_mask(pattern, add=add)
             verb = "선택" if add else "해제"
             self.status = (
-                "%s — %d개 %s" % (pattern, count, verb) if count else "%s — 맞는 항목이 없습니다" % pattern
+                "%s - %d개 %s" % (pattern, count, verb) if count else "%s - 맞는 항목이 없습니다" % pattern
             )
 
         self.modal = InputDialog(
@@ -1092,7 +1092,7 @@ class App:
             return
 
         # 원격 파일은 앞부분만 받아온다. 통째로 내려받지 않는다
-        self.status = "%s 를 불러오는 중…" % item["name"]
+        self.status = "%s 를 불러오는 중~" % item["name"]
         active = self.session
 
         def work():
@@ -1157,7 +1157,7 @@ class App:
         ]
         body += [term.FG_YELLOW + "  " + n + term.RESET for n in names[:6]]
         if len(names) > 6:
-            body.append(term.FG_GRAY + "  … 외 %d개" % (len(names) - 6) + term.RESET)
+            body.append(term.FG_GRAY + "  ~ 외 %d개" % (len(names) - 6) + term.RESET)
         body += [""]
         if has_dir:
             body.append(term.FG_RED + "폴더는 안에 든 것까지 함께 지워집니다." + term.RESET)
@@ -1183,7 +1183,7 @@ class App:
             try:
                 fsops.remove_tree(path)
             except OSError as exc:
-                failed.append("%s — %s" % (path.name, exc))
+                failed.append("%s - %s" % (path.name, exc))
 
         pane.selected.clear()
         pane.refresh()
@@ -1213,7 +1213,7 @@ class App:
         self.modal = ConfirmDialog(
             "복사",
             [
-                "%s → %s" % (source.title.split("  ")[0], dest.title.split("  ")[0]),
+                "%s > %s" % (source.title.split("  ")[0], dest.title.split("  ")[0]),
                 "",
                 screen.fit(names, 50),
                 "",
@@ -1249,7 +1249,7 @@ class App:
                                 src_path, str(dest_path), on_progress=_adder(transfer)
                             )
                     except (session.SessionError, OSError) as exc:
-                        errors.append("%s — %s" % (rel, exc))
+                        errors.append("%s - %s" % (rel, exc))
                 self.events.put(("copy_done", len(plan), errors))
             except (session.SessionError, OSError) as exc:
                 self.events.put(("copy_done", 0, ["%s" % exc]))
@@ -1303,16 +1303,16 @@ class App:
         # 들어가는 것을 고른다
         if self.session:
             color, variants = term.FG_GREEN, [
-                "● %s 연결됨" % self.session.peer_name,
-                "● %s" % self.session.peer_name,
-                "●",
+                "* %s 연결됨" % self.session.peer_name,
+                "* %s" % self.session.peer_name,
+                "*",
             ]
         else:
             found = len(self.discovery.peers()) if self.discovery else 0
             color, variants = term.FG_GRAY, [
-                "○ 연결 없음 · 발견 %d대 · 포트 %d" % (found, self.port),
-                "○ 발견 %d대" % found,
-                "○",
+                "o 연결 없음 . 발견 %d대 . 포트 %d" % (found, self.port),
+                "o 발견 %d대" % found,
+                "o",
             ]
 
         room = cols - screen.width(left) - 2
@@ -1384,7 +1384,7 @@ class App:
             return "F2 로 연결하세요"
         if pane.selected:
             total = sum(e["size"] for e in pane.entries if e["name"] in pane.selected)
-            return "%d개 선택 · %s" % (len(pane.selected), fsops.human_size(total))
+            return "%d개 선택 . %s" % (len(pane.selected), fsops.human_size(total))
 
         count = "%d개 항목" % len(pane.entries)
         # C:\ 에서는 '..' 이 없어 더 올라갈 곳이 안 보인다. 나갈 길을 알려준다
@@ -1396,7 +1396,7 @@ class App:
         return screen.pad(" " + self.status, cols)
 
     def _fkey_bar(self, cols):
-        """MDir·Norton Commander 특유의 하단 기능키 줄.
+        """MDir.Norton Commander 특유의 하단 기능키 줄.
 
         칸 하나가 7칸보다 좁아지면 라벨이 잘려 읽을 수 없으므로, 그때는
         짧은 안내 문구로 물러난다.
@@ -1451,7 +1451,7 @@ class App:
                 lines[row] = screen.pad(left_pad + term.FG_CYAN + line + term.RESET, cols)
 
 
-# 상단 숫자열 → 기능키. 키패드는 application 모드에서 이스케이프 시퀀스를 보내므로
+# 상단 숫자열 > 기능키. 키패드는 application 모드에서 이스케이프 시퀀스를 보내므로
 # 여기에 넣지 않는다 (숫자열만 다룬다)
 _DIGIT_FKEYS = {
     "1": "F1",
@@ -1476,7 +1476,7 @@ _FKEYS = [
     ("7", "만들"),
     ("8", "삭제"),
     ("9", "정렬"),
-    ("10", "끝내"),
+    ("0", "끝내"),
 ]
 
 
@@ -1493,9 +1493,9 @@ _HELP_LINES = [
     "왼쪽은 늘 내 PC, 오른쪽은 연결된 상대입니다.",
     "",
     "Tab           패널 전환",
-    "↑ ↓ k j       커서 이동    PgUp/PgDn 페이지    Home/End 처음·끝",
+    "^ v k j       커서 이동    PgUp/PgDn 페이지    Home/End 처음과 끝",
     "Enter         디렉터리 열기 (.. 은 상위로)",
-    "← h           상위 디렉터리",
+    "< h           상위 디렉터리",
     "Space, Insert 선택 토글",
     "+  -          마스크로 한꺼번에 선택 / 해제  (예: *.txt)",
     "\\             드라이브 / 볼륨 바꾸기 (내 PC 쪽만)",
@@ -1503,14 +1503,14 @@ _HELP_LINES = [
     "기능키는 하단 바에 적힌 숫자를 그대로 눌러도 됩니다.",
     "맥에서는 F 키에 fn 이 필요하니 숫자가 편합니다.",
     "",
-    "1 · F1  도움말              2 · F2  연결할 PC 찾기",
-    "3 · F3  파일 보기 (v)       4 · F4  공유 폴더 바꾸기 (o)",
-    "5 · F5  복사 (c)            6 · F6  연결 끊기 (d)",
-    "7 · F7  폴더 만들기 (m)     8 · F8  삭제 (Delete)",
-    "9 · F9  정렬 바꾸기 (s)     0 · F10 종료 (q)",
+    "1 . F1  도움말              2 . F2  연결할 PC 찾기",
+    "3 . F3  파일 보기 (v)       4 . F4  공유 폴더 바꾸기 (o)",
+    "5 . F5  복사 (c)            6 . F6  연결 끊기 (d)",
+    "7 . F7  폴더 만들기 (m)     8 . F8  삭제 (Delete)",
+    "9 . F9  정렬 바꾸기 (s)     0 . F10 종료 (q)",
     "r             새로고침",
     "",
-    "정렬은 이름 → 확장자 → 크기 → 날짜 순으로 돌아갑니다.",
+    "정렬은 이름 > 확장자 > 크기 > 날짜 순으로 돌아갑니다.",
     "Windows 에서 C:\\ 위로는 못 올라가므로 \\ 로 드라이브를 고릅니다.",
     "복사와 삭제는 선택한 항목이 없으면 커서에 있는 것 하나를 씁니다.",
     "상대가 연결을 요청하면 승인 창이 자동으로 뜹니다.",

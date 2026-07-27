@@ -25,10 +25,13 @@ class TestFit(unittest.TestCase):
     def test_short_text_untouched(self):
         self.assertEqual(screen.fit("abc", 10), "abc")
 
-    def test_truncates_with_ellipsis(self):
+    def test_truncates_with_ascii_marker(self):
+        """생략 표시는 ASCII 여야 한다. '…' 는 Ambiguous 폭이라 한글 터미널에서
+        2칸으로 그려져 줄 전체를 1칸 밀어버린다."""
         out = screen.fit("abcdefghij", 5)
         self.assertEqual(screen.width(out), 5)
-        self.assertTrue(out.endswith("…"))
+        self.assertTrue(out.endswith("~"))
+        self.assertTrue(out.isascii())
 
     def test_never_splits_a_wide_char_in_half(self):
         """한글을 반 칸만 남기고 자르면 테두리가 어긋난다."""
