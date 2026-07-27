@@ -9,8 +9,11 @@ from pathlib import Path
 from .. import config, discovery, fsops, session
 from . import screen, term
 
+# 테두리 문자. 폭이 정확히 1칸이고 East Asian Width 가 A(Ambiguous)가 아닌 것만
+# 쓴다. 박스 문자(U+2500~257F) 112자는 전부 Ambiguous 라 한글 터미널에서 두 칸으로
+# 그려져 화면을 밀어버린다. 모서리 전용 문자(U+231C~231F)는 EAW 가 N 이라 안전하다
 BOX_H, BOX_V = "-", "|"
-BOX_TL, BOX_TR, BOX_BL, BOX_BR = "+", "+", "+", "+"
+BOX_TL, BOX_TR, BOX_BL, BOX_BR = "\u231c", "\u231d", "\u231e", "\u231f"
 
 SIZE_COL = 10  # 크기를 표시할 우측 열 폭
 
