@@ -11,12 +11,22 @@ _ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
 def char_width(ch):
     """한 글자가 터미널에서 차지하는 칸 수.
 
-    한글·한자·일본어는 두 칸을 먹는다. 이걸 무시하면 파일 이름에 한글이 섞인
-    순간 오른쪽 패널의 테두리가 어긋난다.
+    한글과 한자, 일본어(W/F)는 두 칸을 먹는다. 이걸 무시하면 파일 이름에 한글이
+    섞인 순간 오른쪽 패널의 테두리가 어긋난다.
+
+    A(Ambiguous)도 두 칸으로 센다. MIDDLE DOT, HORIZONTAL ELLIPSIS,
+    화살표, 박스 문자가 여기 속하는데,
+    한글과 CJK 환경의 터미널은 이들을 두 칸으로 그린다. 우리가 한 칸으로 세면
+    줄이 계산보다 길어져 오른쪽 테두리가 밀리거나 줄이 넘쳐 화면이 깨진다.
+    반대로 두 칸으로 세고 터미널이 한 칸으로 그리면 빈틈만 생긴다.
+    **넘치는 쪽이 모자란 쪽보다 훨씬 나쁘므로 안전한 방향을 고른다.**
+
+    우리가 그리는 장식 문자에는 A 를 쓰지 않는다(tests/test_width_safety.py 가
+    이를 지킨다). 그래서 이 판단이 실제로 걸리는 곳은 파일 이름뿐이다.
     """
     if unicodedata.combining(ch):
         return 0
-    return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+    return 2 if unicodedata.east_asian_width(ch) in ("W", "F", "A") else 1
 
 
 def width(text):
@@ -25,7 +35,7 @@ def width(text):
 
 
 def fit(text, limit):
-    """표시 폭이 limit 을 넘지 않게 자른다. 잘렸으면 끝에 '…' 를 붙인다."""
+    """표시 폭이 limit 을 넘지 않게 자른다. 잘렸으면 끝에 '~' 를 붙인다."""
     if limit <= 0:
         return ""
     if width(text) <= limit:
@@ -38,7 +48,7 @@ def fit(text, limit):
             break
         out.append(ch)
         used += w
-    return "".join(out) + "…"
+    return "".join(out) + "~"
 
 
 def pad(text, target):

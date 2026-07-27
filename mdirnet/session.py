@@ -234,7 +234,7 @@ class Session:
     def remote_delete(self, path):
         self.request("delete", path=path)
 
-    # --- 전송: 상대 → 나 ---
+    # --- 전송: 상대 > 나 ---
 
     def pull_file(self, remote_path, dest, on_progress=None):
         """상대 파일 하나를 dest 로 받는다. .part 로 받고 완료 후 rename 한다."""
@@ -264,7 +264,7 @@ class Session:
         finally:
             self._close_box(self._outgoing, req_id)
 
-    # --- 전송: 나 → 상대 ---
+    # --- 전송: 나 > 상대 ---
 
     def push_file(self, local_path, remote_path, on_progress=None):
         """내 파일 하나를 상대의 remote_path 로 보낸다."""

@@ -60,9 +60,10 @@ class TestMappingTable(unittest.TestCase):
     def test_bar_labels_and_key_map_agree(self):
         """하단 바에 적힌 숫자가 실제로 그 기능을 부르는 숫자여야 한다."""
         labelled = [number for number, _ in app_module._FKEYS]
-        self.assertEqual(labelled, ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"])
-        # 바의 '10' 은 키보드에서 '0' 으로 누른다
-        for number in labelled[:-1]:
+        self.assertEqual(labelled, ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"])
+        # 바에 적힌 숫자가 곧 눌러야 하는 키여야 한다. '10' 이라고 적어두면
+        # 키보드에 없는 키를 안내하는 셈이 된다
+        for number in labelled:
             self.assertIn(number, app_module._DIGIT_FKEYS)
         self.assertEqual(app_module._DIGIT_FKEYS["0"], "F10")
 
@@ -218,8 +219,8 @@ class TestHelpMentionsDigits(DigitTestCase):
         self.app._on_key("1")
         rendered = "\n".join(self.app.modal.lines(70))
         self.assertIn("숫자", rendered)
-        self.assertIn("1 · F1", rendered)
-        self.assertIn("0 · F10", rendered)
+        self.assertIn("1 . F1", rendered)
+        self.assertIn("0 . F10", rendered)
 
 
 class _StubSession:

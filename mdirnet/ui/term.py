@@ -42,7 +42,7 @@ ENTER, ESC, TAB, SPACE, BACKSPACE = "ENTER", "ESC", "TAB", "SPACE", "BACKSPACE"
 HOME_KEY, END_KEY, PGUP, PGDN = "HOME", "END", "PGUP", "PGDN"
 INSERT, DELETE = "INSERT", "DELETE"
 
-# POSIX 터미널이 보내는 이스케이프 시퀀스 → 키 이름
+# POSIX 터미널이 보내는 이스케이프 시퀀스 > 키 이름
 _CSI_KEYS = {
     "A": UP,
     "B": DOWN,
@@ -70,7 +70,7 @@ _CSI_KEYS = {
 # ESC O 로 시작하는 형태 (일부 터미널의 F1~F4, 방향키)
 _SS3_KEYS = {"P": "F1", "Q": "F2", "R": "F3", "S": "F4", "A": UP, "B": DOWN, "C": RIGHT, "D": LEFT}
 
-# Windows 확장 키 스캔코드 → 키 이름
+# Windows 확장 키 스캔코드 > 키 이름
 _WIN_EXT = {
     "H": UP,
     "P": DOWN,
@@ -294,7 +294,7 @@ _HANGUL_TO_QWERTY = {
 def command_key(key):
     """한글 입력 상태로 눌린 글자를 원래 영문 단축키로 되돌린다.
 
-    매핑에 없으면 그대로 반환한다. 방향키·기능키 같은 이름 상수도 그대로 지난다.
+    매핑에 없으면 그대로 반환한다. 방향키나 기능키 같은 이름 상수도 그대로 지난다.
     """
     return _HANGUL_TO_QWERTY.get(key, key)
 
