@@ -48,11 +48,21 @@ class TestNoAmbiguousWidthInSource(unittest.TestCase):
             ),
         )
 
-    def test_drawing_constants_are_ascii(self):
+    def test_drawing_constants_are_width_safe(self):
+        """테두리 문자의 조건은 'ASCII' 가 아니라 '폭이 명확히 1칸' 이다.
+
+        모서리 문자(U+231C~231F)는 ASCII 가 아니지만 EAW 가 N 이어서 안전하다.
+        반대로 박스 문자(U+2500~)는 보기엔 딱 맞지만 Ambiguous 라 못 쓴다.
+        """
         for name in ("BOX_H", "BOX_V", "BOX_TL", "BOX_TR", "BOX_BL", "BOX_BR"):
             value = getattr(app_module, name)
-            self.assertTrue(value.isascii(), "%s = %r" % (name, value))
-            self.assertEqual(screen.width(value), 1, name)
+            self.assertEqual(len(value), 1, "%s = %r" % (name, value))
+            self.assertEqual(screen.width(value), 1, "%s = %r" % (name, value))
+            self.assertNotEqual(
+                unicodedata.east_asian_width(value),
+                "A",
+                "%s = %r 은 Ambiguous 폭입니다" % (name, value),
+            )
 
 
 class TestCharWidthErrsSafely(unittest.TestCase):
@@ -190,8 +200,13 @@ class TestPaneBoxIsClosed(LayoutTestCase):
         last = len(pane_lines) - 1
         for index, line in enumerate(pane_lines):
             plain = screen._ANSI.sub("", line)
-            # 첫 줄은 위 테두리, 마지막 줄은 아래 테두리, 사이는 세로 테두리
-            expected = app_module.BOX_V if 0 < index < last else app_module.BOX_TL
+            # 첫 줄은 위 모서리, 마지막 줄은 아래 모서리, 사이는 세로 테두리
+            if index == 0:
+                expected = app_module.BOX_TL
+            elif index == last:
+                expected = app_module.BOX_BL
+            else:
+                expected = app_module.BOX_V
             self.assertEqual(plain[0], expected, "왼쪽 테두리 없음: %r" % plain[:10])
             self.assertEqual(screen.width(line), cols)
 
@@ -200,13 +215,14 @@ class TestPaneBoxIsClosed(LayoutTestCase):
         top = screen._ANSI.sub("", lines[1])
         self.assertTrue(top.endswith(app_module.BOX_TR), "오른쪽 위 모서리 없음: %r" % top[-8:])
 
-    def test_all_drawing_is_ascii_so_the_console_cannot_disagree(self):
+    def test_no_glyph_on_screen_has_ambiguous_width(self):
         (self.root / "파일.txt").write_bytes(b"x")
         self.app.local.refresh()
         for line in self.app._compose((100, 30)):
             frame = "".join(ch for ch in screen._ANSI.sub("", line) if ord(ch) > 127)
             for ch in frame:
-                # 남는 비ASCII 는 파일 이름·한글 라벨뿐이고, 폭이 명확해야 한다
+                # 화면에 나오는 모든 비ASCII 문자는 폭이 명확해야 한다.
+                # 파일 이름, 한글 라벨, 모서리 문자가 여기 해당한다
                 self.assertIn(
                     unicodedata.east_asian_width(ch), ("W", "F", "N", "Na", "H"), repr(ch)
                 )
