@@ -526,8 +526,7 @@ class TestRightArrowEntersFolder(MdirListTestCase):
 
     def test_help_mentions_the_arrow(self):
         self.app._on_key("1")
-        rendered = "\n".join(self.app.modal.lines(70))
-        self.assertIn("폴더 안으로", rendered)
+        self.assertIn("폴더 안으로", "\n".join(app_module._HELP_LINES))
 
 
 class TestSlashOpensMenu(MdirListTestCase):
@@ -565,7 +564,7 @@ class TestSlashOpensMenu(MdirListTestCase):
 
     def test_help_shows_slash_next_to_the_menu(self):
         self.app._on_key("1")
-        self.assertIn("상단 메뉴 (/)", "\n".join(self.app.modal.lines(70)))
+        self.assertIn("상단 메뉴 (/)", "\n".join(app_module._HELP_LINES))
 
 
 class TestFixedColumnsVariableName(MdirListTestCase):
