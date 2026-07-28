@@ -888,7 +888,7 @@ class FolderDialog(Dialog):
         elif key == "CTRL-D":
             self._on_choose(self.path)
             return True
-        elif key in ("\\", "\u20a9") and self._on_drives:
+        elif key == "\\" and self._on_drives:
             self._on_drives()
             return False  # 드라이브 창이 이 창을 대신한다
         elif key in (term.ESC, "q"):
@@ -1375,8 +1375,7 @@ class App:
             self._go_up(self.focus)
         elif key in (term.RIGHT, "l"):
             self._enter_dir_only()
-        elif key in ("\\", "\u20a9"):
-            # 한글 키보드의 역슬래시 자리는 입력 상태에 따라 '₩' 를 보낸다
+        elif key == "\\":
             self._open_drive_picker()
         elif key == "+":
             self._ask_mask(add=True)

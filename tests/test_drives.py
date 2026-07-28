@@ -343,7 +343,7 @@ if __name__ == "__main__":
 
 
 class TestDriveKeyAliases(DriveAppTestCase):
-    """드라이브 키는 '\\' 다. 한글 키보드가 그 자리에서 보내는 '₩' 도 받는다.
+    """드라이브 키는 '\\' 다.
 
     '/' 는 상단 메뉴를 여는 키이므로 드라이브와 겹치지 않아야 한다.
     """
@@ -362,12 +362,6 @@ class TestDriveKeyAliases(DriveAppTestCase):
         with mock.patch.object(fsops, "list_drives", return_value=self.FAKE):
             self.app._on_key("/")
         self.assertIsInstance(self.app.modal, app_module.MenuBar)
-
-    def test_won_sign_works(self):
-        """한글 키보드에서 그 자리 키가 '₩' 를 보내는 경우가 있다."""
-        with mock.patch.object(fsops, "list_drives", return_value=self.FAKE):
-            self.app._on_key("₩")
-        self.assertIsInstance(self.app.modal, app_module.DriveDialog)
 
     def test_menu_hint_shows_backslash(self):
         for title, items in app_module.MenuBar(self.app).menus:
