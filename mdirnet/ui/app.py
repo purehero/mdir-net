@@ -44,10 +44,35 @@ class Transfer:
         self.done = 0
         self.current = ""
         self.cancelled = False
+        self.started = time.monotonic()
 
     @property
     def ratio(self):
         return min(self.done / self.total, 1.0) if self.total else 0.0
+
+    @property
+    def speed(self):
+        """초당 바이트. 시작 직후에는 표본이 없어 0 이다."""
+        elapsed = time.monotonic() - self.started
+        return self.done / elapsed if elapsed > 0.5 and self.done else 0.0
+
+    def rate_text(self):
+        """`12.4 MB/s . 약 2분 남음` 형태. 남은 시간은 지금 속도 기준의 추정이다."""
+        speed = self.speed
+        if not speed:
+            return "속도 재는 중..."
+
+        text = "%s/s" % fsops.human_size(int(speed))
+        left = self.total - self.done
+        if left <= 0:
+            return text
+
+        seconds = int(left / speed)
+        if seconds < 60:
+            return "%s . 약 %d초 남음" % (text, max(seconds, 1))
+        if seconds < 3600:
+            return "%s . 약 %d분 남음" % (text, seconds // 60)
+        return "%s . 약 %d시간 %d분 남음" % (text, seconds // 3600, (seconds % 3600) // 60)
 
 
 class Pane:
@@ -167,7 +192,7 @@ class Pane:
             self._clamp()
             return
 
-        self.message = "불러오는 중~"
+        self.message = "불러오는 중..."
         active = self.app.session
 
         def work():
@@ -272,14 +297,26 @@ class InputDialog(Dialog):
     def __init__(self, title, prompt, on_submit, initial=""):
         self.title = title
         self.text = initial
+        # 커서 위치. 이름 바꾸기는 기존 이름이 채워진 채로 열리므로, 끝에 붙이기만
+        # 되면 앞부분을 고치려고 전부 지웠다 다시 쳐야 한다
+        self.cursor = len(initial)
         self._prompt = prompt if isinstance(prompt, list) else [prompt]
         self._on_submit = on_submit
+
+    def _rendered(self, inner):
+        """커서 자리의 글자를 반전시켜 보여준다. 끝이면 빈칸을 반전시킨다."""
+        head = self.text[: self.cursor]
+        at = self.text[self.cursor : self.cursor + 1] or " "
+        tail = self.text[self.cursor + 1 :]
+        body = term.BOLD + head + term.RESET + term.REVERSE + at + term.RESET
+        body += term.BOLD + tail + term.RESET
+        return screen.pad(body, inner)
 
     def lines(self, inner):
         return (
             self._prompt
-            + ["", term.BOLD + screen.pad(self.text + "_", inner) + term.RESET, ""]
-            + [term.FG_GRAY + "Enter 확인   Esc 취소" + term.RESET]
+            + ["", self._rendered(inner), ""]
+            + [term.FG_GRAY + "Enter 확인   Esc 취소   < > Home End 이동" + term.RESET]
         )
 
     def key(self, key):
@@ -290,13 +327,30 @@ class InputDialog(Dialog):
             return True
         if key == term.ESC:
             return True
-        if key == term.BACKSPACE:
-            self.text = self.text[:-1]
+
+        if key == term.LEFT:
+            self.cursor = max(0, self.cursor - 1)
+        elif key == term.RIGHT:
+            self.cursor = min(len(self.text), self.cursor + 1)
+        elif key == term.HOME_KEY:
+            self.cursor = 0
+        elif key == term.END_KEY:
+            self.cursor = len(self.text)
+        elif key == term.BACKSPACE:
+            if self.cursor:
+                self.text = self.text[: self.cursor - 1] + self.text[self.cursor :]
+                self.cursor -= 1
+        elif key == term.DELETE:
+            self.text = self.text[: self.cursor] + self.text[self.cursor + 1 :]
         elif key == term.SPACE:
-            self.text += " "
+            self._insert(" ")
         elif len(key) == 1 and key.isprintable():
-            self.text += key
+            self._insert(key)
         return False
+
+    def _insert(self, text):
+        self.text = self.text[: self.cursor] + text + self.text[self.cursor :]
+        self.cursor += len(text)
 
 
 class ViewerDialog(Dialog):
@@ -991,7 +1045,7 @@ class PeerDialog(Dialog):
             return [
                 term.BOLD + self.waiting + term.RESET + " 에게 연결을 요청했습니다.",
                 "",
-                term.FG_YELLOW + "상대가 승인할 때까지 기다리는 중~" + term.RESET,
+                term.FG_YELLOW + "상대가 승인할 때까지 기다리는 중..." + term.RESET,
                 term.FG_GRAY + "최대 %d초" % config.APPROVAL_TIMEOUT + term.RESET,
             ]
 
@@ -1049,7 +1103,8 @@ class ProgressDialog(Dialog):
             term.FG_GRAY + screen.fit(t.current, inner_width) + term.RESET,
             "",
             term.FG_GREEN + bar + term.RESET + " %3d%%" % int(t.ratio * 100),
-            "%s / %s" % (fsops.human_size(t.done), fsops.human_size(t.total)),
+            "%s / %s   %s"
+            % (fsops.human_size(t.done), fsops.human_size(t.total), t.rate_text()),
             "",
             term.FG_GRAY
             + ("취소하는 중..." if t.cancelled else "Esc 취소")
@@ -1096,6 +1151,7 @@ class App:
         self.transfer = None
         self.running = True
         self.show_hidden = False
+        self._known_peers = set()  # 새로 나타난 상대를 알리기 위해
         self._services_started = False
 
         self.server = session.Server(my_name, platform_name, self.shares, self.events, tcp_port)
@@ -1106,6 +1162,7 @@ class App:
             else None
         )
         self.renderer = screen.Renderer()
+        self._body_height = 10  # 화면을 그리며 실제 높이로 갱신된다
 
     # --- 실행 ---
 
@@ -1123,6 +1180,7 @@ class App:
         with term.Terminal() as terminal:
             while self.running:
                 self._drain_events()
+                self._notice_new_peers()
                 self.renderer.render(self._compose(term.size()), term.size())
 
                 key = terminal.read_key(config.UI_TICK)
@@ -1142,6 +1200,23 @@ class App:
 
     def _quit(self):
         self.running = False
+
+    def _ask_quit(self):
+        """연결 중이거나 전송 중이면 한 번 묻는다.
+
+        다이얼로그마다 q 가 '닫기' 라서, 창을 닫은 직후 한 번 더 누르는 실수가
+        곧 종료였다. NC 도 종료를 물었다.
+        """
+        if not self.session and not self.transfer:
+            self.running = False
+            return
+
+        reason = "전송이 진행 중입니다." if self.transfer else "%s 와 연결되어 있습니다." % self.session.peer_name
+        self.modal = ConfirmDialog(
+            "종료",
+            [reason, "", "정말 끝낼까요?"],
+            lambda ok: self._quit() if ok else None,
+        )
 
     def add_share(self, path):
         """목록에 폴더를 더한다. Server 가 같은 목록 객체를 보므로 곧바로 반영된다."""
@@ -1268,6 +1343,22 @@ class App:
             self.discovery.stop()
 
     # --- 이벤트 ---
+
+    def _notice_new_peers(self):
+        """새 상대가 나타나면 알린다.
+
+        헤더의 '발견 N대' 숫자만 조용히 바뀌면 사용자가 그 자리를 보고 있어야
+        한다. 이 앱의 첫 동작이 연결인데 그 순간을 놓치면 안 된다.
+        """
+        if not self.discovery or self.session:
+            return
+
+        names = {p.name for p in self.discovery.peers()}
+        fresh = names - self._known_peers
+        self._known_peers = names
+
+        if fresh and not self.modal:
+            self.status = "%s 발견 - n 으로 연결하세요" % ", ".join(sorted(fresh))
 
     def _drain_events(self):
         while True:
@@ -1455,8 +1546,8 @@ class App:
         # 영향받지 않는다
         key = _DIGIT_FKEYS.get(key, key)
 
-        if key in ("q", "F10", "CTRL-C"):
-            self.running = False
+        if key in ("q", "F10"):
+            self._ask_quit()
         elif key == term.TAB:
             self._toggle_focus()
         elif key in (term.UP, "k"):
@@ -1464,9 +1555,9 @@ class App:
         elif key in (term.DOWN, "j"):
             self.focus.move(1)
         elif key == term.PGUP:
-            self.focus.move(-1, 10)
+            self.focus.move(-1, self._body_height)
         elif key == term.PGDN:
-            self.focus.move(1, 10)
+            self.focus.move(1, self._body_height)
         elif key == term.HOME_KEY:
             self.focus.cursor = 0
         elif key == term.END_KEY:
@@ -1475,7 +1566,9 @@ class App:
             self.focus.toggle_select()
         elif key == term.ENTER:
             self._enter()
-        elif key in (term.LEFT, "h"):
+        elif key in (term.LEFT, "h", term.BACKSPACE):
+            # 맥 노트북의 delete 키는 Backspace 로 들어온다. 파일 관리자 관습대로
+            # 상위 폴더에 묶는다
             self._go_up(self.focus)
         elif key in (term.RIGHT, "l"):
             self._enter_dir_only()
@@ -1530,6 +1623,10 @@ class App:
             self._go_up(self.focus)
         elif item["is_dir"]:
             self.focus.navigate(self.focus.child(item["name"]))
+        else:
+            # 듀얼 패널 관습에서 파일 위의 Enter 는 보기다. 아무 반응이 없으면
+            # 사용자는 키가 먹지 않았다고 생각한다
+            self._view_file()
 
     def _enter_dir_only(self):
         """오른쪽 화살표. 폴더면 들어가고 파일이면 아무 일도 하지 않는다.
@@ -1615,7 +1712,7 @@ class App:
             return
 
         # 원격 파일은 앞부분만 받아온다. 통째로 내려받지 않는다
-        self.status = "%s 를 불러오는 중~" % item["name"]
+        self.status = "%s 를 불러오는 중..." % item["name"]
         active = self.session
 
         def work():
@@ -1813,18 +1910,42 @@ class App:
             return
 
         names = ", ".join(i["name"] for i in items[:3]) + (" 외" if len(items) > 3 else "")
+
+        body = [
+            "%s > %s" % (source.label, dest.label),
+            "",
+            screen.fit(names, 50),
+            "",
+            term.FG_GRAY + "대상: %s" % dest.location + term.RESET,
+        ]
+
+        # 매번 뜨는 경고는 아무도 읽지 않는다. 실제로 겹칠 때만 알린다
+        clashes = self._clashing_names(dest, items)
+        if clashes:
+            body.append(
+                term.FG_RED
+                + "기존 %d개를 덮어씁니다: %s"
+                % (len(clashes), screen.fit(", ".join(clashes), 36))
+                + term.RESET
+            )
+
         self.modal = ConfirmDialog(
-            "복사",
-            [
-                "%s > %s" % (source.title.split("  ")[0], dest.title.split("  ")[0]),
-                "",
-                screen.fit(names, 50),
-                "",
-                term.FG_GRAY + "대상: %s" % dest.location + term.RESET,
-                term.FG_YELLOW + "같은 이름이 있으면 덮어씁니다." + term.RESET,
-            ],
-            lambda ok: self._run_copy(source, dest, items) if ok else None,
+            "복사", body, lambda ok: self._run_copy(source, dest, items) if ok else None
         )
+
+    @staticmethod
+    def _clashing_names(dest, items):
+        """대상에 이미 있는 이름들. 추가 왕복 없이 지금 아는 것만으로 판정한다.
+
+        원격은 화면에 띄운 목록을, 로컬은 파일시스템을 본다. 원격 목록이 살짝
+        낡았을 수는 있지만 경고를 띄우기 위한 것이라 그 정도면 충분하다.
+        """
+        existing = {e["name"] for e in dest.entries}
+        if not dest.is_remote:
+            existing |= {
+                i["name"] for i in items if (Path(dest.path) / i["name"]).exists()
+            }
+        return [i["name"] for i in items if i["name"] in existing]
 
     def _run_copy(self, source, dest, items):
         """전송 계획을 세우고 워커 스레드에서 실행한다."""
@@ -1971,6 +2092,7 @@ class App:
 
         left, right = self.left, self.right
         body_height = height - 2
+        self._body_height = body_height  # PgUp/PgDn 이 이 값을 쓴다
         for pane in (left, right):
             pane.scroll_into_view(body_height)
 
@@ -2024,8 +2146,13 @@ class App:
     def _pane_row(self, pane, index, width):
         rows = pane.rows()
         position = pane.offset + index
+
         if position >= len(rows):
+            # 항목이 없으면 본문이 통째로 백지라 '로딩 중' 과 구분되지 않는다
+            if pane.active and not pane.entries and not pane.message and position == len(rows):
+                return term.FG_GRAY + screen.pad("  (빈 폴더)", width) + term.RESET
             return " " * width
+
         return self._entry_line(pane, rows[position], position, width, pane is self.focus)
 
     def _pane_foot(self, pane, width):
@@ -2122,8 +2249,11 @@ class App:
         # MDir 하단처럼 파일 수 / 폴더 수 / 전체 바이트를 보여준다
         files = [e for e in pane.entries if not e["is_dir"]]
         dirs = [e for e in pane.entries if e["is_dir"]]
-        summary = "%d File  %d Dir  %s Byte" % (
-            len(files), len(dirs), fsops.mdir_size(sum(e["size"] for e in files))
+        summary = "%d File  %d Dir  %s Byte  . %s순" % (
+            len(files),
+            len(dirs),
+            fsops.mdir_size(sum(e["size"] for e in files)),
+            fsops.SORT_LABELS[pane.sort_mode],
         )
 
         # C:\ 에서는 '..' 이 없어 더 올라갈 곳이 안 보인다. 나갈 길을 알려준다

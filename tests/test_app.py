@@ -162,7 +162,9 @@ class TestCopyGuards(AppTestCase):
 
         self.app._on_key("F5")
         self.assertIsInstance(self.app.modal, app_module.ConfirmDialog)
-        self.assertIn("덮어씁니다", "\n".join(self.app.modal.lines(60)))
+        # 겹치는 이름이 없으면 덮어쓰기 경고를 띄우지 않는다
+        self.assertNotIn("덮어씁니다", "\n".join(self.app.modal.lines(60)))
+        self.assertIn("photo.jpg", "\n".join(self.app.modal.lines(60)))
 
     def test_disconnect_without_session_reports_it(self):
         self.app._on_key("d")  # 끊기는 문자 키와 Commands 메뉴에만 있다

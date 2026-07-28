@@ -145,7 +145,7 @@ try:
     # *.TXT 는 대소문자를 가리지 않으므로 .txt 파일 3개가 모두 잡힌다
     check("마스크로 3개 선택 (대소문자 무시)", "3개 선택" in a.screen(0.7))
     a.key(b"5", 1.5)
-    check("복사 확인 창", a.wait("덮어씁니다", 8))
+    check("복사 확인 창", a.wait("진행(Y)", 8))
     a.key(b"y", 3.5)
     got = a_share/"보고서.TXT"
     check("pull 로 받은 파일 해시 일치", got.is_file() and sha(got)==sha(b1/"보고서.TXT"))
@@ -161,7 +161,8 @@ try:
     a.key(b"\r", 1.5)
     check("push 대상이 beta문서", "/beta문서" in a.screen(0.5))
     a.key(b"5", 1.2)
-    if a.wait("덮어씁니다", 6): a.key(b"y", 6.0)
+    assert a.wait("진행(Y)", 8), "확인 창이 뜨지 않음"
+    a.key(b"y", 6.0)
     dest = b1/"보낼프로젝트"
     same = dest.is_dir() and (dest/"src"/"main.py").is_file() and \
            sha(dest/"src"/"main.py")==sha(proj/"src"/"main.py")
@@ -191,7 +192,7 @@ try:
     print(menu.split("\n")[0]); 
     for line in menu.split("\n"):
         if "연결" in line and ("n" in line or "d" in line): print("   ", line.strip()[:80])
-    check("연결 힌트가 n", "연결할 PC 찾기" in a.text and " n " in a.text)
+    check("Commands 메뉴에 연결/끊기", "연결할 PC 찾기" in a.text and "연결 끊기" in a.text)
     a.key(b"\x1b", 0.6)
 
     print("\n### 8. 끊기와 종료")
