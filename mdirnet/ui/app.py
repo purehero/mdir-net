@@ -2081,67 +2081,66 @@ class App:
         return screen.pad(left + " " * gap + color + text + term.RESET, cols)
 
     def _panes(self, cols, height):
-        """두 패널을 테두리 하나로 감싸고 가운데 구분선을 공유한다.
+        """MDir 처럼 바깥 벽 없이 가로줄과 가운데 구분선만으로 나눈다.
 
-        패널마다 상자를 그리면 가운데가 `||` 로 겹쳐 한 칸을 버린다.
-        테두리를 왼쪽, 가운데, 오른쪽 세 개로 줄이면 그 한 칸이 이름 칸으로 간다.
+        위아래가 각각 두 줄이다. 제목 줄과 가로줄, 그리고 가로줄과 요약 줄.
+        테두리에 제목을 끼워넣던 방식보다 읽기 쉽고 참고 화면과도 같다.
+        바깥 벽을 없앤 만큼 두 칸이 내용으로 돌아간다.
+
+            내 PC  ~/Documents              | office-pc  /프로젝트
+            --------------------------------+------------------------
+              ..            [ Up-Dir ]      |   ..          [ Up-Dir ]
+            --------------------------------+------------------------
+            3 File 2 Dir 20 KB . 이름순     | 2 File 1 Dir 13 KB
         """
-        content = cols - 3  # 왼쪽 테두리 + 가운데 구분선 + 오른쪽 테두리
+        content = cols - 1  # 가운데 구분선 한 칸만 뺀다
         left_width = content // 2
         right_width = content - left_width
 
         left, right = self.left, self.right
-        body_height = height - 2
+        body_height = max(height - 4, 1)  # 제목 + 가로줄 + 본문 + 가로줄 + 요약
         self._body_height = body_height  # PgUp/PgDn 이 이 값을 쓴다
         for pane in (left, right):
             pane.scroll_into_view(body_height)
 
-        edge = term.FG_GRAY
-        joint = edge + "+" + term.RESET
-        wall = edge + BOX_V + term.RESET
+        wall = term.FG_GRAY + BOX_V + term.RESET
+        rule = (
+            term.FG_GRAY
+            + BOX_H * left_width
+            + "+"
+            + BOX_H * right_width
+            + term.RESET
+        )
 
         out = [
-            edge + BOX_TL + term.RESET
-            + self._pane_head(left, left_width)
-            + joint
-            + self._pane_head(right, right_width)
-            + edge + BOX_TR + term.RESET
+            self._pane_head(left, left_width) + wall + self._pane_head(right, right_width),
+            rule,
         ]
-
         for index in range(body_height):
             out.append(
-                wall
-                + self._pane_row(left, index, left_width)
+                self._pane_row(left, index, left_width)
                 + wall
                 + self._pane_row(right, index, right_width)
-                + wall
             )
-
+        out.append(rule)
         out.append(
-            edge + BOX_BL + term.RESET
-            + self._pane_foot(left, left_width)
-            + joint
-            + self._pane_foot(right, right_width)
-            + edge + BOX_BR + term.RESET
+            self._pane_foot(left, left_width) + wall + self._pane_foot(right, right_width)
         )
         return out
 
     def _pane_head(self, pane, width):
-        """패널 제목 줄. 정확히 width 칸을 차지한다.
+        """패널 제목 줄. 초점이 있으면 반전시킨다.
 
-        테두리 색으로 초점을 표시할 수 없게 되었으므로(테두리가 하나로 합쳐졌다)
-        초점이 있는 패널의 제목을 반전시킨다. NC 도 활성 패널의 머리를 강조했다.
+        테두리 색으로 초점을 보일 수 없으므로(테두리가 없다) 제목을 강조한다.
+        NC 와 MDir 모두 활성 패널의 머리를 강조했다.
         """
         focused = pane is self.focus
         label = pane.label
         room = width - 2 - screen.width(label) - 2
-        title = "%s  %s" % (label, screen.fit_left(pane.location, max(room, 0)))
-        title = screen.fit(title, width - 2)
+        title = " %s  %s" % (label, screen.fit_left(pane.location, max(room, 0)))
 
         style = term.REVERSE if focused else term.BOLD
-        filled = BOX_H + style + title + term.RESET
-        rest = width - 1 - screen.width(title)
-        return filled + term.FG_GRAY + BOX_H * max(rest, 0) + term.RESET
+        return style + screen.pad(title, width) + term.RESET
 
     def _pane_row(self, pane, index, width):
         rows = pane.rows()
@@ -2156,13 +2155,8 @@ class App:
         return self._entry_line(pane, rows[position], position, width, pane is self.focus)
 
     def _pane_foot(self, pane, width):
-        text = screen.fit(pane.message or self._pane_summary(pane), width - 2)
-        rest = width - 1 - screen.width(text)
-        return (
-            BOX_H
-            + term.FG_GRAY + text + term.RESET
-            + term.FG_GRAY + BOX_H * max(rest, 0) + term.RESET
-        )
+        text = " " + (pane.message or self._pane_summary(pane))
+        return term.FG_GRAY + screen.pad(screen.fit(text, width), width) + term.RESET
 
     @staticmethod
     def _columns(inner):

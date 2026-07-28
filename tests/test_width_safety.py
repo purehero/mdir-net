@@ -190,35 +190,29 @@ class TestHeaderPortNumber(LayoutTestCase):
             self.assertEqual(screen.width(self.app._header(cols)), cols, cols)
 
 
-class TestPaneBoxIsClosed(LayoutTestCase):
-    """사용자가 보고한 증상 2 — Windows 에서 네모칸이 닫히지 않던 문제."""
+class TestPaneFrame(LayoutTestCase):
+    """사용자가 보고했던 증상 2(네모칸이 닫히지 않음)의 후속.
 
-    def test_every_pane_row_starts_and_ends_with_a_border(self):
+    이제 MDir 처럼 바깥 벽이 없으므로 '닫힘' 이 아니라 '가로줄과 구분선이
+    제자리에 있는가' 를 본다.
+    """
+
+    def test_rules_span_the_full_width(self):
         (self.root / "폴더").mkdir()
         (self.root / "한글 이름.txt").write_bytes(b"x")
         self.app.local.refresh()
 
-        cols, rows = 100, 30
-        lines = self.app._compose((cols, rows))
-        pane_lines = lines[1:-2]  # 머리글과 상태줄·기능키 바를 제외한 패널 영역
+        cols = 100
+        lines = [screen._ANSI.sub("", l) for l in self.app._compose((cols, 30))]
+        for row in (lines[2], lines[-4]):
+            self.assertEqual(screen.width(row), cols)
+            self.assertEqual(set(row) - {"-", "+"}, set(), row)
 
-        last = len(pane_lines) - 1
-        for index, line in enumerate(pane_lines):
-            plain = screen._ANSI.sub("", line)
-            # 첫 줄은 위 모서리, 마지막 줄은 아래 모서리, 사이는 세로 테두리
-            if index == 0:
-                expected = app_module.BOX_TL
-            elif index == last:
-                expected = app_module.BOX_BL
-            else:
-                expected = app_module.BOX_V
-            self.assertEqual(plain[0], expected, "왼쪽 테두리 없음: %r" % plain[:10])
-            self.assertEqual(screen.width(line), cols)
-
-    def test_box_corners_appear_on_the_right_edge(self):
-        lines = self.app._compose((100, 30))
-        top = screen._ANSI.sub("", lines[1])
-        self.assertTrue(top.endswith(app_module.BOX_TR), "오른쪽 위 모서리 없음: %r" % top[-8:])
+    def test_divider_is_present_on_every_body_row(self):
+        cols = 100
+        lines = [screen._ANSI.sub("", l) for l in self.app._compose((cols, 30))]
+        for row in lines[3:-4]:
+            self.assertIn(app_module.BOX_V, row, row[:50])
 
     def test_no_glyph_on_screen_has_ambiguous_width(self):
         (self.root / "파일.txt").write_bytes(b"x")
