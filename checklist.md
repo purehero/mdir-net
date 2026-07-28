@@ -290,7 +290,17 @@ fable 모델 검토에서 나온 버그를 전부 수정.
 - [x] README 방화벽 절에 '한쪽만 찾는 경우' 점검 순서 추가
 - [ ] verify: Windows 실기 — 맥이 Windows 를 찾는지 (사용자 확인 필요)
 
-## 28. 남은 것
+## 28. 방화벽 허용 스크립트 (2026-07-28)
+- [x] `tools/allow-firewall.ps1` — Windows 인바운드 TCP 9600-9609 / UDP 9601,
+      Private·Domain 프로필만 (Public 은 일부러 제외), `-Remove` 로 되돌리기
+- [x] `tools/allow-firewall.sh` — macOS 는 포트가 아니라 실행 파일 단위이므로
+      `sys.executable` 을 허용 목록에 넣는다
+- [x] 포트는 `config.py` 에서 읽어온다 (스크립트에 박아두면 어긋난다)
+- [x] README 에 사용법과 프로필 선택 이유
+- [ ] verify: Windows 실기 (관리자 PowerShell) — 실행 확인 필요
+- [ ] verify: macOS 실기 — sudo 가 필요해 사용자가 직접 실행
+
+## 29. 남은 것
 - [ ] Windows 실기 확인 (msvcrt 키 입력, ANSI 활성화, 경로 표시)
 - [ ] 전송 중 취소 (Esc) — 현재는 끝날 때까지 기다려야 한다
 - [ ] 덮어쓰기를 항목별로 묻기 — 현재는 일괄 확인 한 번
