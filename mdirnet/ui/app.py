@@ -97,11 +97,6 @@ class Pane:
         self._generation = 0  # 늦게 도착한 조회 결과를 버리기 위한 세대 번호
 
     @property
-    def is_left(self):
-        """왼쪽 자리인가. 줄 앞 여백을 둘지 정하는 데 쓴다."""
-        return self is self.app.left
-
-    @property
     def label(self):
         """패널 이름. 왼쪽은 늘 내 PC, 오른쪽은 늘 상대다."""
         if not self.is_remote:
@@ -2161,15 +2156,6 @@ class App:
         )
         return out
 
-    @staticmethod
-    def _lead(pane):
-        """줄 앞 여백. 왼쪽 패널은 화면 끝이라 여백이 필요없다.
-
-        오른쪽은 가운데 구분선 바로 옆이므로 한 칸을 띄워야 `|*메모` 처럼
-        붙어 보이지 않는다.
-        """
-        return "" if pane.is_left else " "
-
     def _pane_head(self, pane, width):
         """패널 제목 줄. 초점이 있으면 반전시킨다.
 
@@ -2178,10 +2164,8 @@ class App:
         """
         focused = pane is self.focus
         label = pane.label
-        room = width - 2 - screen.width(label) - 2 - len(self._lead(pane))
-        title = "%s%s  %s" % (
-            self._lead(pane), label, screen.fit_left(pane.location, max(room, 0))
-        )
+        room = width - 2 - screen.width(label) - 2
+        title = "%s  %s" % (label, screen.fit_left(pane.location, max(room, 0)))
 
         style = term.REVERSE if focused else term.BOLD
         return style + screen.pad(title, width) + term.RESET
@@ -2193,13 +2177,13 @@ class App:
         if position >= len(rows):
             # 항목이 없으면 본문이 통째로 백지라 '로딩 중' 과 구분되지 않는다
             if pane.active and not pane.entries and not pane.message and position == len(rows):
-                return term.FG_GRAY + screen.pad(self._lead(pane) + " (빈 폴더)", width) + term.RESET
+                return term.FG_GRAY + screen.pad(" (빈 폴더)", width) + term.RESET
             return " " * width
 
         return self._entry_line(pane, rows[position], position, width, pane is self.focus)
 
     def _pane_foot(self, pane, width):
-        text = self._lead(pane) + (pane.message or self._pane_summary(pane))
+        text = pane.message or self._pane_summary(pane)
         return term.FG_GRAY + screen.pad(screen.fit(text, width), width) + term.RESET
 
     @staticmethod
@@ -2248,12 +2232,13 @@ class App:
         else:
             base, ext = item["name"], ""
 
-        used = 1 + len(self._lead(pane)) + SIZE_COL + (EXT_COL + 1 if show_ext else 0)
+        # 선택 표시 한 칸 + 고정 칸들. 양쪽 패널 모두 0번 칸에서 시작한다
+        used = 1 + SIZE_COL + (EXT_COL + 1 if show_ext else 0)
         used += (DATE_COL + 1) if show_date else 0
         used += (TIME_COL + 1) if show_time else 0
         name_width = max(inner - used, NAME_MIN)
 
-        parts = [self._lead(pane), "*" if picked else " ", screen.pad(base, name_width)]
+        parts = ["*" if picked else " ", screen.pad(base, name_width)]
         if show_ext:
             parts.append(" " + screen.pad(ext.upper(), EXT_COL))
         parts.append(screen.rjust(size_text, SIZE_COL))
