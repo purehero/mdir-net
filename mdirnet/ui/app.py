@@ -16,12 +16,18 @@ BOX_H, BOX_V = "-", "|"
 BOX_TL, BOX_TR, BOX_BL, BOX_BR = "\u231c", "\u231d", "\u231e", "\u231f"
 
 # MDir 처럼 이름, 확장자, 크기, 날짜, 시간을 칸으로 나눠 보여준다.
-# 패널이 좁으면 오른쪽 칸부터 접는다 (칸이 잘려 읽을 수 없게 되는 것보다 낫다)
-EXT_COL = 3
-SIZE_COL = 11  # `[ SubDir ]` 과 `1,901,416` 이 모두 들어가는 폭
-DATE_COL = 8   # 93-12-01
-TIME_COL = 5   # 2:11a
-NAME_MIN = 8
+#
+# 확장자/크기/날짜/시간은 **폭이 고정**이고, 남는 자리를 이름이 모두 가져간다.
+# 그래야 창을 넓히면 긴 파일 이름이 그만큼 더 보이고, 오른쪽 칸들은 늘 같은
+# 자리에 있어 눈이 따라가기 쉽다.
+EXT_COL = 4    # HTML, JSON, JPEG, XLSX 같은 네 글자 확장자가 흔하다
+SIZE_COL = 10  # `[ SubDir ]` 이 10칸, 사람이 읽는 크기는 최대 `1023.0 GB` 9칸
+DATE_COL = 8   # 26-07-28
+TIME_COL = 6   # 11:14a. 두 자리 시각이면 6칸이다. 5로 잡으면 `11:1~` 로 잘린다
+NAME_MIN = 6
+
+# 고정 칸이 차지하는 총 폭 (표시 2 + 확장자 5 + 크기 10 + 날짜 9 + 시간 7)
+FIXED_COLS = 2 + (EXT_COL + 1) + SIZE_COL + (DATE_COL + 1) + (TIME_COL + 1)
 
 
 class Transfer:
@@ -1895,15 +1901,25 @@ class App:
 
     @staticmethod
     def _columns(inner):
-        """패널 폭에 맞춰 보여줄 칸을 정한다. 좁으면 오른쪽부터 접는다."""
-        fixed = 2 + EXT_COL + 1 + SIZE_COL  # 표시(2) + 확장자 + 공백 + 크기
-        if inner >= fixed + NAME_MIN + 1 + DATE_COL + 1 + TIME_COL:
+        """보여줄 칸을 정한다.
+
+        보통은 모든 칸을 그대로 둔다. 이름 칸이 남는 자리를 가져가므로 창 폭이
+        달라져도 오른쪽 칸들의 자리는 변하지 않는다.
+
+        다만 이름에 최소 %d칸도 못 줄 만큼 좁으면(전체 폭 78칸 아래) 물리적으로
+        다 담을 수 없다. 그때만 시간, 날짜, 확장자 순으로 접는다.
+        """ % NAME_MIN
+        if inner >= FIXED_COLS + NAME_MIN:
             return True, True, True
-        if inner >= fixed + NAME_MIN + 1 + DATE_COL:
+
+        without_time = FIXED_COLS - (TIME_COL + 1)
+        if inner >= without_time + NAME_MIN:
             return True, True, False
-        if inner >= fixed + NAME_MIN:
+
+        without_date = without_time - (DATE_COL + 1)
+        if inner >= without_date + NAME_MIN:
             return True, False, False
-        return False, False, False  # 아주 좁으면 이름과 크기만
+        return False, False, False
 
     def _entry_line(self, pane, item, position, inner, focused):
         is_cursor = position == pane.cursor
@@ -1918,7 +1934,9 @@ class App:
         elif item["is_dir"]:
             size_text = "[ SubDir ]"
         else:
-            size_text = fsops.mdir_size(item["size"])
+            # GB/MB/KB 로 보여준다. 바이트 수를 그대로 쓰면 칸이 넓어져
+            # 그만큼 이름이 짧아진다
+            size_text = fsops.human_size(item["size"])
 
         if show_ext:
             base, ext = ("..", "") if is_up else fsops.split_name(item["name"])
