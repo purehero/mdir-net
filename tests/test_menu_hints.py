@@ -92,7 +92,7 @@ class TestEveryHintMatchesItsAction(HintTestCase):
         app = self.fresh_app()
         bound = {n for n, _ in app_module._FKEYS}
         bound |= {"F%d" % i for i in range(1, 11)}
-        bound |= {"n", "d", "r", "s", "v", "o", "c", "m", "q", "?", "\\", ".", "=", "+", "-"}
+        bound |= {"n", "d", "r", "s", "v", "o", "c", "m", "q", "?", "/", ".", "=", "+", "-"}
 
         for title, items in app_module.MenuBar(app).menus:
             for label, hint, action in items:

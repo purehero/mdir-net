@@ -508,7 +508,7 @@ class MenuBar(Dialog):
             ]
 
         left = pane_menu(app.local)
-        left += [("드라이브 바꾸기", "\\", app._open_drive_picker)]
+        left += [("드라이브 바꾸기", "/", app._open_drive_picker)]
 
         right = [
             (
@@ -519,7 +519,7 @@ class MenuBar(Dialog):
             sep,
         ] + pane_menu(app.remote)
         if not app.right.is_remote:
-            right += [("드라이브 바꾸기", "\\", app._open_drive_picker)]
+            right += [("드라이브 바꾸기", "/", app._open_drive_picker)]
 
         return [
             ("Left", left),
@@ -860,7 +860,7 @@ class FolderDialog(Dialog):
             else " " * inner
         )
 
-        drive_hint = "   \\ 드라이브" if self._on_drives else ""
+        drive_hint = "   / 드라이브" if self._on_drives else ""
         out += [
             "",
             term.BOLD + "Ctrl-D 이 폴더로 결정" + term.RESET
@@ -888,7 +888,7 @@ class FolderDialog(Dialog):
         elif key == "CTRL-D":
             self._on_choose(self.path)
             return True
-        elif key == "\\" and self._on_drives:
+        elif key in ("/", "\\", "\u20a9") and self._on_drives:
             self._on_drives()
             return False  # 드라이브 창이 이 창을 대신한다
         elif key in (term.ESC, "q"):
@@ -1373,7 +1373,11 @@ class App:
             self._enter()
         elif key in (term.LEFT, "h"):
             self._go_up(self.focus)
-        elif key == "\\":
+        elif key in (term.RIGHT, "l"):
+            self._enter_dir_only()
+        elif key in ("/", "\\", "\u20a9"):
+            # 한글 키보드의 역슬래시 자리는 입력 상태에 따라 '₩' 를 보낸다.
+            # 안내는 '/' 하나로 하고 옛 키들은 조용히 함께 받는다
             self._open_drive_picker()
         elif key == "+":
             self._ask_mask(add=True)
@@ -1423,6 +1427,16 @@ class App:
         if item.get("up"):
             self._go_up(self.focus)
         elif item["is_dir"]:
+            self.focus.navigate(self.focus.child(item["name"]))
+
+    def _enter_dir_only(self):
+        """오른쪽 화살표. 폴더면 들어가고 파일이면 아무 일도 하지 않는다.
+
+        `..` 도 무시한다. 위로 가는 것은 왼쪽 화살표의 몫이고, 오른쪽 화살표가
+        위로 올라가면 방향과 어긋난다.
+        """
+        item = self.focus.current_item()
+        if item and item["is_dir"] and not item.get("up"):
             self.focus.navigate(self.focus.child(item["name"]))
 
     def _go_up(self, pane):
@@ -1960,7 +1974,7 @@ class App:
 
         # C:\ 에서는 '..' 이 없어 더 올라갈 곳이 안 보인다. 나갈 길을 알려준다
         if not pane.is_remote and fsops.is_filesystem_root(pane.path):
-            return summary + "   \\ 드라이브"
+            return summary + "   / 드라이브"
         return summary
 
     def _status(self, cols):
@@ -2070,10 +2084,10 @@ _HELP_LINES = [
     "Tab           패널 전환",
     "^ v k j       커서 이동    PgUp/PgDn 페이지    Home/End 처음과 끝",
     "Enter         디렉터리 열기 (.. 은 상위로)",
-    "< h           상위 디렉터리",
+    "< h           상위 디렉터리        > l   폴더 안으로",
     "Space, Insert 선택 토글",
     "+  -          마스크로 한꺼번에 선택 / 해제  (예: *.txt)",
-    "\\             드라이브 / 볼륨 바꾸기 (내 PC 쪽만)",
+    "/             드라이브 / 볼륨 바꾸기 (내 PC 쪽만)",
     "",
     "기능키는 하단 바에 적힌 숫자를 그대로 눌러도 됩니다.",
     "맥에서는 F 키에 fn 이 필요하니 숫자가 편합니다.",
@@ -2087,13 +2101,13 @@ _HELP_LINES = [
     "n             연결할 PC 찾기      d   연결 끊기",
     "=             오른쪽 패널을 내 PC / 상대 로 전환",
     ".             숨김 파일 보기/감추기",
-    "r             새로고침            \\   드라이브",
+    "r             새로고침            /   드라이브",
     "",
     "연결, 끊기, 새로고침, 드라이브는 상단 메뉴(9)에도 있습니다.",
     "r             새로고침",
     "",
     "정렬은 이름 > 확장자 > 크기 > 날짜 순으로 돌아갑니다.",
-    "Windows 에서 C:\\ 위로는 못 올라가므로 \\ 로 드라이브를 고릅니다.",
+    "Windows 에서 C:\\ 위로는 못 올라가므로 / 로 드라이브를 고릅니다.",
     "복사와 삭제는 선택한 항목이 없으면 커서에 있는 것 하나를 씁니다.",
     "상대가 연결을 요청하면 승인 창이 자동으로 뜹니다.",
 ]
