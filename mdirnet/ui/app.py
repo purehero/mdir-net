@@ -7,7 +7,7 @@ import queue
 import threading
 from pathlib import Path
 
-from .. import config, discovery, fsops, session, shares as shares_mod
+from .. import config, discovery, fsops, session, shares as shares_mod, winfw
 from . import screen, term
 
 # 테두리 문자. 폭이 정확히 1칸이고 East Asian Width 가 A(Ambiguous)가 아닌 것만
@@ -1173,6 +1173,8 @@ class App:
         )
         self.renderer = screen.Renderer()
         self._body_height = 10  # 화면을 그리며 실제 높이로 갱신된다
+        # Windows 에서만 방화벽을 묻는다. 다른 OS 는 물어볼 것이 없다
+        self._firewall_asked = not winfw.available()
 
     # --- 실행 ---
 
@@ -1191,6 +1193,9 @@ class App:
             while self.running:
                 self._drain_events()
                 self._notice_new_peers()
+                # 공유 폴더 선택상자가 떠 있으면 그것이 끝난 뒤에 묻는다
+                if not self._firewall_asked and self.modal is None:
+                    self._ask_firewall()
                 self.renderer.render(self._compose(term.size()), term.size())
 
                 key = terminal.read_key(config.UI_TICK)
@@ -1198,6 +1203,54 @@ class App:
                     self._on_key(key)
 
         self.shutdown()
+
+    def _ask_firewall(self):
+        """Windows 에서 방화벽이 우리를 막고 있으면 한 번만 묻는다.
+
+        규칙 변경은 관리자 권한이 필요하므로 조용히 할 수 없다. 동의하면 UAC
+        창이 한 번 뜨고, 규칙이 들어가면 다음 실행부터는 묻지 않는다.
+        """
+        self._firewall_asked = True  # 거절하든 실패하든 다시 묻지 않는다
+        try:
+            state = winfw.inspect()
+        except winfw.Unknown:
+            return  # 상태를 모르면 붙잡지 않는다
+
+        if state.ok:
+            return
+
+        body = ["상대가 나를 찾지 못하는 원인이 방화벽일 수 있습니다.", ""]
+        if state.allow_missing:
+            # 스크립트가 config 의 기본 포트로 규칙을 넣는다. --udp-port 로 바꿔
+            # 실행했다면 그 포트는 직접 열어야 한다
+            body.append(
+                "  . 들어오는 TCP %d~%d 와 UDP %d 를 허용합니다"
+                % (config.TCP_PORT, config.TCP_PORT + 9, config.UDP_PORT)
+            )
+        if state.blocks:
+            # 차단 규칙은 허용 규칙보다 먼저 판정된다. 남겨두면 허용이 무의미하다
+            body.append("  . 아래 차단 규칙을 지웁니다 (허용보다 먼저 적용됩니다)")
+            body += ["      %s" % name for name in state.blocks[:5]]
+            if len(state.blocks) > 5:
+                body.append("      ~ 외 %d개" % (len(state.blocks) - 5))
+        body += [
+            "",
+            term.FG_GRAY + "관리자 권한이 필요해 Windows 동의 창이 한 번 뜹니다." + term.RESET,
+            term.FG_GRAY + "공용 네트워크 프로필은 열지 않습니다." + term.RESET,
+            "",
+            "지금 허용할까요?",
+        ]
+
+        def decide(ok):
+            if not ok:
+                self.status = "방화벽을 그대로 둡니다. tools/allow-firewall.ps1 로 나중에 할 수 있습니다"
+                return
+            if winfw.request(remove_blocks=bool(state.blocks)):
+                self.status = "동의 창에서 허용하면 규칙이 들어갑니다"
+            else:
+                self.status = "방화벽 규칙을 넣지 못했습니다. 관리자 PowerShell 에서 직접 실행하세요"
+
+        self.modal = ConfirmDialog("방화벽 허용", body, decide)
 
     def start_services(self):
         """TCP 수신과 브로드캐스트를 시작한다. 공유 폴더가 확정된 뒤에 부른다."""

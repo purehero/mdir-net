@@ -4,7 +4,9 @@
 #   되돌리려면:                  .\tools\allow-firewall.ps1 -Remove
 
 param(
-    [switch]$Remove
+    [switch]$Remove,        # 우리가 넣은 허용 규칙을 되돌린다
+    [switch]$RemoveBlocks,  # python.exe 를 막고 있는 인바운드 차단 규칙을 지운다
+    [switch]$Pause          # 끝나고 창을 붙잡아 둔다 (UAC 로 새 창에서 열릴 때)
 )
 
 $ErrorActionPreference = "Stop"
@@ -66,8 +68,30 @@ foreach ($rule in $rules) {
     Write-Host "허용: $($rule.Name)  (Private, Domain 프로필)"
 }
 
+# Windows 는 차단 규칙을 허용 규칙보다 먼저 본다. python.exe 를 막는 규칙이
+# 남아 있으면 위에서 넣은 포트 허용은 아무 효과가 없다
+if ($RemoveBlocks) {
+    $blocked = Get-NetFirewallApplicationFilter |
+        Where-Object { $_.Program -like "*python*" } |
+        Get-NetFirewallRule |
+        Where-Object { $_.Direction -eq "Inbound" -and $_.Action -eq "Block" }
+
+    if (-not $blocked) {
+        Write-Host "python.exe 를 막는 차단 규칙은 없습니다."
+    }
+    foreach ($rule in $blocked) {
+        Remove-NetFirewallRule -Name $rule.Name
+        Write-Host "차단 규칙 제거: $($rule.DisplayName)"
+    }
+}
+
 if (-not $Remove) {
     Write-Host ""
     Write-Host "들어오는 연결을 허용했습니다. 나가는 연결은 Windows 기본값이 이미 허용입니다."
     Write-Host "네트워크가 '공용'으로 잡혀 있으면 설정 > 네트워크에서 '개인'으로 바꾸세요."
+}
+
+if ($Pause) {
+    Write-Host ""
+    Read-Host "Enter 를 누르면 닫힙니다"
 }
