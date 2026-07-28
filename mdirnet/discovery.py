@@ -25,6 +25,54 @@ def local_ip():
         sock.close()
 
 
+def local_ips():
+    """브로드캐스트를 내보낼 후보 인터페이스 주소들.
+
+    한 번의 `sendto("255.255.255.255")` 는 **인터페이스 하나로만** 나간다.
+    어느 하나인지는 라우팅 테이블이 정하는데, Windows 에서는 Hyper-V, WSL,
+    VirtualBox, VPN 가상 어댑터가 그 자리를 차지하는 일이 흔하다. 그러면
+    브로드캐스트가 LAN 으로 나가지 않아 상대가 나를 찾지 못한다. 인터페이스마다
+    소켓을 묶어 따로 보내려면 주소 목록이 필요하다.
+
+    표준 라이브러리만으로는 인터페이스를 열거할 방법이 없어 두 가지를 합친다.
+    라우팅 테이블이 고른 주소(`local_ip`)와 호스트 이름에 딸린 주소들이다.
+    뒤쪽은 Windows 에서 가상 어댑터까지 다 돌려주고, macOS 에서는 `.local`
+    이름이 풀리지 않아 실패하는 일이 많다. 그래서 둘 다 시도한다.
+    """
+    found = []
+
+    def add(ip):
+        if isinstance(ip, str) and ip and not ip.startswith("127.") and ip not in found:
+            found.append(ip)
+
+    add(local_ip())
+    try:
+        add(socket.gethostbyname(socket.gethostname()))
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            add(info[4][0])
+    except OSError:
+        pass  # 호스트 이름이 풀리지 않는다. 라우팅 쪽 주소만 쓴다
+
+    return found
+
+
+def broadcast_targets(ip):
+    """이 인터페이스로 보낼 목적지들.
+
+    제한 브로드캐스트(255.255.255.255)와 서브넷 브로드캐스트를 함께 쓴다.
+    넷마스크를 표준 라이브러리로 알 수 없어 가정 공유기에서 사실상 표준인
+    /24 로 본다. 가정이 틀려도 제한 브로드캐스트가 그 인터페이스 전체를
+    덮으므로 손해는 없다. 상대는 같은 알림을 두 번 받지만 node_id 로
+    갱신하므로 결과는 같다.
+    """
+    targets = ["255.255.255.255"]
+    if ip:
+        head, _, tail = ip.rpartition(".")
+        if head and tail != "255":
+            targets.append(head + ".255")
+    return targets
+
+
 class Peer:
     """발견된 상대 노드 하나."""
 
@@ -79,8 +127,6 @@ class Discovery:
     # --- announcer ---
 
     def _announce_loop(self):
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         payload = json.dumps(
             {
                 "v": config.PROTOCOL_VERSION,
@@ -91,15 +137,47 @@ class Discovery:
             }
         ).encode("utf-8")
 
+        while not self._stop.is_set():
+            self._announce_once(payload)
+            self._stop.wait(config.ANNOUNCE_INTERVAL)
+
+    def _announce_once(self, payload):
+        """모든 인터페이스로 한 바퀴 알린다.
+
+        주기마다 주소를 다시 알아본다. Wi-Fi 를 다시 붙거나 VPN 을 켜면 주소가
+        바뀌는데, 시작할 때 한 번만 잡아두면 그때부터 아무에게도 안 보인다.
+        """
+        sent = False
+        for ip in local_ips():
+            sent = self._announce_from(payload, ip) or sent
+
+        if not sent:
+            # 주소를 못 알아냈거나 전부 실패했다. 인터페이스를 지정하지 않고
+            # 한 번은 보낸다. 인터페이스가 하나인 PC 는 이것으로 충분하다
+            self._announce_from(payload, None)
+
+    def _announce_from(self, payload, ip):
+        """이 인터페이스에 소켓을 묶어 보낸다. 하나라도 나갔으면 True."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         try:
-            while not self._stop.is_set():
+            if ip:
+                sock.bind((ip, 0))
+        except OSError:
+            sock.close()
+            return False  # 방금 내려간 인터페이스. 다음 주기에 다시 본다
+
+        ok = False
+        try:
+            for dest in broadcast_targets(ip):
                 try:
-                    sock.sendto(payload, ("255.255.255.255", self.udp_port))
+                    sock.sendto(payload, (dest, self.udp_port))
+                    ok = True
                 except OSError:
-                    pass  # 인터페이스가 잠깐 내려간 경우. 다음 주기에 다시 시도한다
-                self._stop.wait(config.ANNOUNCE_INTERVAL)
+                    pass  # 이 목적지만 실패. 다른 목적지를 계속 시도한다
         finally:
             sock.close()
+        return ok
 
     # --- listener ---
 
