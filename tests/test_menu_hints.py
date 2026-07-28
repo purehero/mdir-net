@@ -4,6 +4,8 @@
 # 화면에 적힌 키를 눌렀는데 다른 일이 벌어지는 것은 그냥 거짓말이다.
 # 이 검사가 그런 어긋남을 잡는다.
 
+import pathlib
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -294,3 +296,69 @@ class _StubSession:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestNoStaleKeyNamesOnScreen(HintTestCase):
+    """화면에 나가는 안내 문자열이 실제 키 배치와 어긋나지 않게 막는다.
+
+    키 배치를 두 번 옮기는 동안 상태줄, 패널 푸터, 좁은 창 축약 바가 옛 키를
+    가리키고 있었다. 메뉴 힌트만 검사하던 기존 테스트로는 잡히지 않았다.
+    """
+
+    # 하단 바에서 사라진 키. 이 이름이 안내 문구에 나오면 거의 확실히 옛 문구다
+    RETIRED = ("F2 ", "F2를", "F2 를", "F2 로", "F6 ", "F6를", "F6 를", "F6 으로")
+
+    def screen_strings(self):
+        """화면에 나갈 수 있는 안내 문자열을 모은다."""
+        source = pathlib.Path(app_module.__file__).read_text().split("\n")
+        out = []
+        for line_no, line in enumerate(source, 1):
+            for match in re.finditer(r'"([^"\\]{4,})"', line):
+                text = match.group(1)
+                if any(h in text for h in ("F1", "F2", "F3", "F4", "F5", "F6",
+                                           "F7", "F8", "F9", "F10")):
+                    out.append((line_no, text))
+        return out
+
+    def test_no_retired_function_key_is_advertised(self):
+        offenders = []
+        for line_no, text in self.screen_strings():
+            # 도움말의 정식 표(`2 . F2  정렬`)는 숫자와 짝지어 적으므로 제외한다
+            if " . F" in text:
+                continue
+            for retired in self.RETIRED:
+                if retired in text:
+                    offenders.append("app.py:%d %r" % (line_no, text))
+                    break
+
+        self.assertEqual(
+            offenders,
+            [],
+            "하단 바에서 내려간 키를 안내하고 있습니다:\n  " + "\n  ".join(offenders),
+        )
+
+    def test_status_and_footer_point_at_the_connect_key(self):
+        """연결 안내는 실제 연결 키(n)를 가리켜야 한다."""
+        app = self.fresh_app()
+        self.assertIn("n", app.status)
+        self.assertNotIn("F2", app.status)
+
+        footer = app._pane_summary(app.right)
+        self.assertNotIn("F2", footer)
+        self.assertIn("n", footer)
+
+    def test_short_function_bar_is_derived_not_hand_written(self):
+        """좁은 창 축약 바도 _FKEYS 에서 나와야 어긋나지 않는다."""
+        app = self.fresh_app()
+        short = app._fkey_bar(50)
+        labels = dict(app_module._FKEYS)
+        for number in ("1", "2", "3", "5", "9", "0"):
+            self.assertIn(number + labels[number], short, short)
+        self.assertNotIn("연결", short)  # 연결은 바에서 내려갔다
+
+    def test_disconnect_guidance_uses_the_real_key(self):
+        app = self.fresh_app()
+        app.session = _StubSession()
+        app._on_key("F4")
+        self.assertIn("d ", app.status)
+        self.assertNotIn("F6", app.status)

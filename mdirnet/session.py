@@ -605,6 +605,9 @@ class Server:
             self.events.put(("approval", approval))
 
             if not approval.wait(config.APPROVAL_TIMEOUT):
+                # UI 에 알리지 않으면, 늦게 수락을 눌렀을 때 창만 닫히고
+                # 아무 일도 일어나지 않아 사용자는 수락됐다고 믿게 된다
+                self.events.put(("approval_expired", approval))
                 protocol.send_frame(sock, {"t": "hello.no"})
                 sock.close()
                 return

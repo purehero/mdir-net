@@ -2,6 +2,7 @@
 
 import fnmatch
 import os
+import time
 import queue
 import threading
 from pathlib import Path
@@ -375,21 +376,64 @@ class ViewerDialog(Dialog):
 
 
 class MessageDialog(Dialog):
-    """오류와 안내 표시. 아무 키나 누르면 닫힌다."""
+    """오류와 안내 표시. 아무 키나 누르면 닫힌다.
+
+    내용이 화면보다 길면 잘리는데, 잘렸다는 표시도 스크롤도 없으면 사용자는
+    거기까지가 전부인 줄 안다. 길면 스크롤할 수 있게 한다.
+    """
 
     def __init__(self, title, body, color=""):
         self.title = title
         self._body = body if isinstance(body, list) else [body]
         self._color = color
+        self.offset = 0
+
+    def _room(self):
+        # 제목, 구분선, 안내줄을 뺀 본문 자리
+        return max((self.max_body or 18) - 4, 3)
+
+    @property
+    def scrollable(self):
+        return len(self._body) > self._room()
 
     def lines(self, inner_width):
-        return [self._color + line + term.RESET for line in self._body] + [
+        room = self._room()
+        if not self.scrollable:
+            return [self._color + line + term.RESET for line in self._body] + [
+                "",
+                term.FG_GRAY + "아무 키나 누르면 닫힙니다" + term.RESET,
+            ]
+
+        self.offset = max(0, min(self.offset, len(self._body) - room))
+        window = self._body[self.offset : self.offset + room]
+        return [self._color + line + term.RESET for line in window] + [
             "",
-            term.FG_GRAY + "아무 키나 누르면 닫힙니다" + term.RESET,
+            term.FG_GRAY
+            + "%d-%d / %d줄   위아래로 스크롤   q 닫기"
+            % (self.offset + 1, self.offset + len(window), len(self._body))
+            + term.RESET,
         ]
 
     def key(self, key):
-        return True
+        if not self.scrollable:
+            return True
+
+        room = self._room()
+        if key in (term.UP, "k"):
+            self.offset -= 1
+        elif key in (term.DOWN, "j"):
+            self.offset += 1
+        elif key == term.PGUP:
+            self.offset -= room
+        elif key == term.PGDN:
+            self.offset += room
+        elif key == term.HOME_KEY:
+            self.offset = 0
+        elif key == term.END_KEY:
+            self.offset = len(self._body)
+        else:
+            return True  # 그 외의 키는 닫는다
+        return False
 
 
 class ConfirmDialog(Dialog):
@@ -444,9 +488,10 @@ class ApprovalDialog(Dialog):
 
     title = "연결 요청"
 
-    def __init__(self, request):
+    def __init__(self, request, deadline=None):
         self.request = request
         self.accept = True  # 커서가 놓인 버튼. 흔한 경우가 수락이므로 여기서 시작한다
+        self.deadline = deadline
 
     def lines(self, inner_width):
         def button(text, chosen):
@@ -461,8 +506,16 @@ class ApprovalDialog(Dialog):
             "",
             button("수락(Y)", self.accept) + "   " + button("거부(N)", not self.accept),
             "",
+            term.FG_GRAY + self._deadline_text() + term.RESET,
             term.FG_GRAY + "< > 선택   Enter 확정   Esc 거부" + term.RESET,
         ]
+
+    def _deadline_text(self):
+        """남은 시간을 매 프레임 갱신한다. 멈춘 화면처럼 보이지 않게."""
+        if self.deadline is None:
+            return "결정하지 않으면 거부됩니다."
+        left = max(int(self.deadline - time.monotonic()), 0)
+        return "%d초 안에 결정하지 않으면 거부됩니다." % left
 
     def key(self, key):
         if key in ("y", "Y"):
@@ -833,7 +886,7 @@ class FolderDialog(Dialog):
             self.offset = self.cursor - self.VISIBLE + 1
 
         out = [
-            term.BOLD + screen.fit(str(self.path), inner) + term.RESET,
+            term.BOLD + screen.fit_left(str(self.path), inner) + term.RESET,
             term.FG_GRAY + BOX_H * inner + term.RESET,
         ]
 
@@ -997,10 +1050,17 @@ class ProgressDialog(Dialog):
             "",
             term.FG_GREEN + bar + term.RESET + " %3d%%" % int(t.ratio * 100),
             "%s / %s" % (fsops.human_size(t.done), fsops.human_size(t.total)),
+            "",
+            term.FG_GRAY
+            + ("취소하는 중..." if t.cancelled else "Esc 취소")
+            + term.RESET,
         ]
 
     def key(self, key):
-        return False  # 전송 중에는 닫지 않는다
+        """Esc 로 취소를 요청한다. 창은 워커가 정리한 뒤 앱이 닫는다."""
+        if key in (term.ESC, "CTRL-C") and not self.transfer.cancelled:
+            self.transfer.cancelled = True
+        return False
 
 
 class App:
@@ -1032,7 +1092,7 @@ class App:
 
         self.session = None
         self.modal = None
-        self.status = "F2 를 눌러 연결할 PC 를 찾습니다"
+        self.status = "n 을 눌러 연결할 PC 를 찾습니다"
         self.transfer = None
         self.running = True
         self.show_hidden = False
@@ -1152,7 +1212,7 @@ class App:
         화면은 그대로여서 혼란스럽다. 끊은 뒤에 바꾸게 한다.
         """
         if self.session:
-            self.status = "연결 중에는 바꿀 수 없습니다. F6 으로 끊고 다시 시도하세요"
+            self.status = "연결 중에는 바꿀 수 없습니다. d 로 끊고 다시 시도하세요"
             return
         self.modal = ShareDialog(self)
 
@@ -1225,7 +1285,16 @@ class App:
                 request.decide(False)
                 self.status = "%s 의 연결 요청을 거절했습니다 (이미 연결 중)" % request.name
             else:
-                self.modal = ApprovalDialog(request)
+                self.modal = ApprovalDialog(
+                    request, deadline=time.monotonic() + config.APPROVAL_TIMEOUT
+                )
+
+        elif kind == "approval_expired":
+            # 시간이 지나 이미 거부된 요청이다. 창을 닫고 이유를 알린다
+            request = payload[0]
+            if isinstance(self.modal, ApprovalDialog) and self.modal.request is request:
+                self.modal = None
+            self.status = "%s 의 연결 요청이 시간 초과로 취소되었습니다" % request.name
 
         elif kind == "connected":
             self._on_connected(payload[0])
@@ -1244,8 +1313,14 @@ class App:
 
         elif kind == "received":
             self.status = "받음: %s" % Path(payload[0]).name
-            if not self.local.is_remote:
-                self.local.refresh()
+            self._refresh_local_panes(Path(payload[0]).parent)
+
+        elif kind == "copy_cancelled":
+            self.transfer = None
+            if isinstance(self.modal, ProgressDialog):
+                self.modal = None
+            self.status = "전송을 취소했습니다 (이미 보낸 파일은 남아 있습니다)"
+            self._refresh_panes()
 
         elif kind == "copy_done":
             self.transfer = None
@@ -1258,9 +1333,7 @@ class App:
                 )
             else:
                 self.status = "%d개 항목을 전송했습니다" % count
-            self.local.refresh()
-            if self.session:
-                self.remote.refresh()
+            self._refresh_panes()
 
         elif kind == "view":
             name, data, size = payload
@@ -1272,12 +1345,28 @@ class App:
             self.focus.refresh()
 
         elif kind == "remote_changed":
-            # 상대가 내 쪽 파일을 지웠다. 왼쪽 패널을 다시 읽어 반영한다
-            if Path(payload[0]) == self.local.path:
-                self.local.refresh()
+            # 상대가 내 쪽 파일을 바꿨다. 그 폴더를 보고 있는 패널을 다시 읽는다
+            self._refresh_local_panes(Path(payload[0]))
 
         elif kind == "error":
             self.modal = MessageDialog("오류", payload[0], term.FG_RED)
+
+    def _refresh_panes(self):
+        """두 패널을 갱신한다. 원격은 세션이 있을 때만, 로컬은 언제나.
+
+        예전에는 `if self.session` 아래에 오른쪽 갱신을 두어서, 오른쪽이 내 PC 를
+        보고 있고 연결이 없으면 복사한 파일이 화면에 안 나타났다.
+        """
+        for pane in (self.left, self.right):
+            if pane.is_remote and not self.session:
+                continue
+            pane.refresh()
+
+    def _refresh_local_panes(self, path):
+        """상대가 건드린 폴더를 보고 있는 내 PC 패널만 다시 읽는다."""
+        for pane in (self.left, self.right):
+            if not pane.is_remote and Path(pane.path) == Path(path):
+                pane.refresh()
 
     def _pane(self, side):
         return self.remote if side == "remote" else self.local
@@ -1340,6 +1429,15 @@ class App:
     def _on_key(self, raw_key):
         # 한글 입력이 켜진 채로 y/n 을 누르면 'ㅛ'/'ㅜ' 가 들어와 단축키가 먹지 않는다.
         # 명령으로 쓸 때만 되돌린다. 입력창은 한글을 그대로 받아야 하므로 예외다
+        # Ctrl-C 는 모달보다 먼저 본다. 전송 중에 갇히면 빠져나갈 길이 없다
+        if raw_key == "CTRL-C":
+            if self.transfer and not self.transfer.cancelled:
+                self.transfer.cancelled = True
+                self.status = "취소하는 중..."
+                return
+            self.running = False
+            return
+
         if self.modal is not None:
             active = self.modal
             key = raw_key if isinstance(active, InputDialog) else term.command_key(raw_key)
@@ -1559,7 +1657,7 @@ class App:
 
         self.modal = InputDialog(
             "폴더 만들기",
-            ["%s 안에 새 폴더를 만듭니다." % screen.fit(str(pane.path), 46), "", "이름을 입력하세요."],
+            ["%s 안에 새 폴더를 만듭니다." % screen.fit_left(pane.location, 46), "", "이름을 입력하세요."],
             create,
         )
 
@@ -1753,6 +1851,8 @@ class App:
                         pass  # 이미 있으면 그만이다
 
                 for rel, src_path, size in plan:
+                    if transfer.cancelled:
+                        break
                     transfer.current = rel
                     dest_path = dest.child(rel)
                     try:
@@ -1771,7 +1871,10 @@ class App:
                             )
                     except (session.SessionError, OSError) as exc:
                         errors.append("%s - %s" % (rel, exc))
-                self.events.put(("copy_done", len(plan), errors))
+                if transfer.cancelled:
+                    self.events.put(("copy_cancelled", None))
+                else:
+                    self.events.put(("copy_done", len(plan), errors))
             except (session.SessionError, OSError) as exc:
                 self.events.put(("copy_done", 0, ["%s" % exc]))
 
@@ -1941,7 +2044,7 @@ class App:
         보통은 모든 칸을 그대로 둔다. 이름 칸이 남는 자리를 가져가므로 창 폭이
         달라져도 오른쪽 칸들의 자리는 변하지 않는다.
 
-        다만 이름에 최소 %d칸도 못 줄 만큼 좁으면(전체 폭 78칸 아래) 물리적으로
+        다만 이름에 최소 %d칸도 못 줄 만큼 좁으면(전체 폭 82칸 아래) 물리적으로
         다 담을 수 없다. 그때만 시간, 날짜, 확장자 순으로 접는다.
         """ % NAME_MIN
         if inner >= FIXED_COLS + NAME_MIN:
@@ -2011,7 +2114,7 @@ class App:
 
     def _pane_summary(self, pane):
         if not pane.active:
-            return "F2 로 연결하세요"
+            return "n 으로 연결하세요"
         if pane.selected:
             total = sum(e["size"] for e in pane.entries if e["name"] in pane.selected)
             return "%d개 선택 . %s" % (len(pane.selected), fsops.human_size(total))
@@ -2039,8 +2142,9 @@ class App:
         """
         cell = cols // len(_FKEYS)
         if cell < 7:
-            short = " F1도움 F2연결 F3보기 F5복사 F9정렬 F10끝내"
-            return term.FG_GRAY + screen.pad(short, cols) + term.RESET
+            # 손으로 적으면 키를 옮길 때마다 어긋난다. 늘 _FKEYS 에서 만든다
+            picked = [n + l for n, l in _FKEYS if n in ("1", "2", "3", "5", "9", "0")]
+            return term.FG_GRAY + screen.pad(" " + " ".join(picked), cols) + term.RESET
 
         parts = []
         for number, label in _FKEYS:
@@ -2155,7 +2259,6 @@ _HELP_LINES = [
     "r             새로고침            \\   드라이브",
     "",
     "연결, 끊기, 새로고침, 드라이브는 상단 메뉴(9)에도 있습니다.",
-    "r             새로고침",
     "",
     "정렬은 이름 > 확장자 > 크기 > 날짜 순으로 돌아갑니다.",
     "Windows 에서 C:\\ 위로는 못 올라가므로 \\ 로 드라이브를 고릅니다.",

@@ -227,11 +227,35 @@ class TestDigitsAreInputModeProof(DigitTestCase):
 
 class TestHelpMentionsDigits(DigitTestCase):
     def test_help_lists_the_digit_shortcuts(self):
+        """도움말이 길어 스크롤되므로 한 화면이 아니라 전체 내용을 본다."""
         self.app._on_key("1")
-        rendered = "\n".join(self.app.modal.lines(70))
-        self.assertIn("숫자", rendered)
-        self.assertIn("1 . F1", rendered)
-        self.assertIn("0 . F10", rendered)
+        full = "\n".join(app_module._HELP_LINES)
+        self.assertIn("숫자", full)
+        self.assertIn("1 . F1", full)
+        self.assertIn("0 . F10", full)
+
+    def test_help_can_scroll_to_the_digit_table(self):
+        self.app._on_key("1")
+        dialog = self.app.modal
+        dialog.max_body = 16  # 24행 터미널 정도
+
+        self.assertTrue(dialog.scrollable, "긴 도움말인데 스크롤이 안 된다")
+
+        # 아래로 훑어가며 숫자 표가 어느 지점에서든 보이는지 확인한다
+        seen = False
+        for _ in range(len(app_module._HELP_LINES)):
+            if "0 . F10" in "\n".join(dialog.lines(70)):
+                seen = True
+                break
+            dialog.key(term.DOWN)
+        self.assertTrue(seen, "스크롤해도 숫자 표에 닿지 못한다")
+
+    def test_help_has_no_duplicate_entries(self):
+        """넘치는 창에서 중복 줄은 실제 정보의 자리를 뺏는다."""
+        keys = [l.split()[0] for l in app_module._HELP_LINES
+                if l and not l.startswith(" ") and len(l.split()) > 1]
+        duplicated = {k for k in keys if keys.count(k) > 1}
+        self.assertEqual(duplicated, set(), "같은 키가 여러 번 설명되어 있습니다")
 
 
 class _StubSession:
