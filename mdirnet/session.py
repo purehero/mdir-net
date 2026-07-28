@@ -217,7 +217,9 @@ class Session:
         return self.request("stat", path=path)
 
     def remote_tree(self, path):
-        return self.request("tree", path=path)["files"]
+        """(파일 목록, 하위 디렉터리 목록). 빈 폴더도 복사해야 하므로 둘 다 받는다."""
+        reply = self.request("tree", path=path)
+        return reply["files"], reply.get("dirs", [])
 
     def remote_head(self, path, limit):
         """뷰어용. 파일 앞부분만 받아온다."""
@@ -366,7 +368,14 @@ class Session:
 
     def _on_tree(self, req_id, header, blob, box):
         path = self._safe(header["path"])
-        self._send({"t": "tree.ok", "id": req_id, "files": fsops.walk_tree(path)})
+        self._send(
+            {
+                "t": "tree.ok",
+                "id": req_id,
+                "files": fsops.walk_tree(path),
+                "dirs": fsops.walk_dirs(path),
+            }
+        )
 
     def _on_head(self, req_id, header, blob, box):
         path = self._safe(header["path"])

@@ -146,6 +146,21 @@ def split_name(name):
     return (base, ext) if dot and base else (name, "")
 
 
+def walk_dirs(root):
+    """root 아래 모든 하위 디렉터리의 상대 경로.
+
+    파일이 하나도 없는 디렉터리는 walk_tree 에 잡히지 않는다. 그런 폴더도
+    복사되어야 하므로 따로 모은다. 심링크는 따라가지 않는다.
+    """
+    root = Path(root)
+    out = []
+    for dirpath, dirnames, _ in os.walk(root, onerror=lambda _: None):
+        dirnames[:] = sorted(d for d in dirnames if not (Path(dirpath) / d).is_symlink())
+        for name in dirnames:
+            out.append((Path(dirpath) / name).relative_to(root).as_posix())
+    return sorted(out)
+
+
 def human_size(n):
     """바이트 수를 화면에 넣기 좋은 문자열로 만든다."""
     if n < 1024:
@@ -253,6 +268,33 @@ def is_filesystem_root(path):
     """더 위로 올라갈 수 없는 지점인가. Windows 의 `C:\\` 와 POSIX 의 `/`."""
     path = Path(path)
     return path == path.parent
+
+
+def copy_file(src, dest, on_progress=None, chunk=256 * 1024):
+    """내 PC 안에서 파일을 복사한다. 전송과 같은 규칙을 지킨다.
+
+    `.part` 로 쓰고 완료 후 rename 하므로 중간에 끊겨도 반쪽 파일이 남지 않는다.
+    """
+    src, dest = Path(src), Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    part = unique_part_path(dest)
+
+    copied = 0
+    try:
+        with open(src, "rb") as reader, open(part, "wb") as writer:
+            while True:
+                block = reader.read(chunk)
+                if not block:
+                    break
+                writer.write(block)
+                copied += len(block)
+                if on_progress:
+                    on_progress(len(block))
+        os.replace(part, dest)
+        return copied
+    except BaseException:
+        part.unlink(missing_ok=True)
+        raise
 
 
 def read_head(path, limit):

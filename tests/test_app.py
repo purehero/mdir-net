@@ -247,18 +247,32 @@ class TestPlan(AppTestCase):
         self.app.local.refresh()
 
         items = [e for e in self.app.local.entries if e["name"] == "문서"]
-        plan = self.app._build_plan(self.app.local, items, None)
+        plan, dirs = self.app._build_plan(self.app.local, items, None)
 
         self.assertEqual(
             {rel for rel, _, _ in plan},
             {"문서/a.txt", "문서/안쪽/b.txt"},
         )
         self.assertEqual(sum(size for _, _, size in plan), 3)
+        # 폴더 자체와 하위 폴더도 계획에 들어간다 (빈 폴더 대비)
+        self.assertEqual(dirs, ["문서", "문서/안쪽"])
+
+    def test_plan_includes_an_empty_directory(self):
+        """빈 폴더를 복사하면 아무 일도 안 나던 버그를 막는다."""
+        (self.root / "빈폴더").mkdir()
+        self.app.local.refresh()
+
+        items = [e for e in self.app.local.entries if e["name"] == "빈폴더"]
+        plan, dirs = self.app._build_plan(self.app.local, items, None)
+
+        self.assertEqual(plan, [])
+        self.assertEqual(dirs, ["빈폴더"])
 
     def test_plan_of_a_single_file(self):
         items = [e for e in self.app.local.entries if e["name"] == "photo.jpg"]
-        plan = self.app._build_plan(self.app.local, items, None)
+        plan, dirs = self.app._build_plan(self.app.local, items, None)
         self.assertEqual(plan, [("photo.jpg", self.root / "photo.jpg", 500)])
+        self.assertEqual(dirs, [], "파일만 고르면 만들 폴더가 없다")
 
     def test_targets_prefers_selection_over_cursor(self):
         self.app.local.selected = {"photo.jpg", "보고서.txt"}
