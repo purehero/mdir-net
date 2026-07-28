@@ -1632,8 +1632,10 @@ class App:
             self._go_up(self.focus)
         elif item["is_dir"]:
             self.focus.navigate(self.focus.child(item["name"]))
+        elif not self.focus.is_remote and fsops.is_executable(self.focus.child(item["name"])):
+            self._run_file(item["name"])
         else:
-            # 듀얼 패널 관습에서 파일 위의 Enter 는 보기다. 아무 반응이 없으면
+            # 실행 파일이 아니면 보기다. 듀얼 패널 관습이고, 아무 반응이 없으면
             # 사용자는 키가 먹지 않았다고 생각한다
             self._view_file()
 
@@ -1696,6 +1698,21 @@ class App:
                 self.events.put(("error", str(exc)))
 
         threading.Thread(target=runner, name="remote-op", daemon=True).start()
+
+    # --- 파일 실행 (Enter) ---
+
+    def _run_file(self, name):
+        """실행 권한이 있는 파일을 백그라운드로 띄운다.
+
+        TUI 는 그대로 두므로 실행한 프로그램의 출력은 보이지 않는다. 대신 화면이
+        뭉개지지 않는다. 원격 파일은 판단할 방법이 없어 여기까지 오지 않는다.
+        """
+        try:
+            fsops.launch(self.focus.child(name))
+        except OSError as exc:
+            self.modal = MessageDialog("실행할 수 없습니다", str(exc), term.FG_RED)
+            return
+        self.status = "%s 를 실행했습니다" % name
 
     # --- 파일 보기 (F3) ---
 
@@ -2383,6 +2400,7 @@ _HELP_LINES = [
     "Tab           패널 전환",
     "^ v k j       커서 이동    PgUp/PgDn 페이지    Home/End 처음과 끝",
     "Enter         디렉터리 열기 (.. 은 상위로)",
+    "              실행 권한이 있는 파일이면 실행, 그 밖의 파일은 보기",
     "< h           상위 디렉터리        > l   폴더 안으로",
     "Space, Insert 선택 토글",
     "+  -          마스크로 한꺼번에 선택 / 해제  (예: *.txt)",

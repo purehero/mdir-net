@@ -1,6 +1,7 @@
 # 로컬 파일시스템 조회와 원격 경로의 안전성 검증을 담당하는 모듈
 
 import os
+import subprocess
 import time
 from pathlib import Path
 
@@ -301,6 +302,52 @@ def read_head(path, limit):
     """파일 앞부분만 읽는다. 내장 뷰어가 큰 파일에 목메지 않게 한다."""
     with open(path, "rb") as fp:
         return fp.read(limit)
+
+
+def is_executable(path):
+    """실행할 수 있는 파일인가.
+
+    POSIX 는 실행 권한(x)이 기준이다. Windows 에는 그 개념이 없어 `PATHEXT`
+    확장자로 본다. 디렉터리는 (macOS 의 `.app` 처럼) 실행 대상이 아니다.
+    """
+    path = Path(path)
+    if not path.is_file():
+        return False
+
+    if os.name == "nt":
+        exts = os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(";")
+        return path.suffix.upper() in {e.strip().upper() for e in exts if e.strip()}
+
+    return os.access(path, os.X_OK)
+
+
+_launched = []  # 끝난 자식을 거두기 위해 들고 있는 핸들
+
+
+def launch(path):
+    """파일을 백그라운드에서 실행한다.
+
+    입출력을 모두 버린다. 자식이 우리 터미널에 글자를 쓰면 화면이 뭉개진다.
+    `start_new_session` 으로 부모와 떼어놓아 MDirNet 이 받는 Ctrl-C 나 종료가
+    자식까지 끌고 가지 않게 한다.
+
+    핸들을 모아두고 다음 실행 때 `poll()` 로 거둔다. 놓아버리면 끝난 자식이
+    좀비로 남고, GC 가 Popen 을 거둘 때 ResourceWarning 도 뜬다.
+    """
+    path = Path(path)
+    kwargs = {"start_new_session": True} if os.name != "nt" else {}
+    child = subprocess.Popen(
+        [str(path)],
+        cwd=str(path.parent),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+        **kwargs,
+    )
+
+    _launched[:] = [c for c in _launched if c.poll() is None]
+    _launched.append(child)
 
 
 def looks_binary(data):
