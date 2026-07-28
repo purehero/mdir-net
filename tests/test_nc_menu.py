@@ -54,10 +54,11 @@ class TestMdirColumns(MdirListTestCase):
         self.app.local.navigate(self.root / "FONT")
         self.assertIn("[ Up-Dir ]", self.body())
 
-    def test_size_uses_thousands_separators(self):
+    def test_size_uses_readable_units(self):
+        """GB/MB/KB 로 보여준다. 바이트 수를 그대로 쓰면 이름 칸이 좁아진다."""
         text = self.body()
-        self.assertIn("15,210", text)
-        self.assertIn("1,054", text)
+        self.assertIn("14.9 KB", text)   # MERGEDIC.EXE 15,210 바이트
+        self.assertIn("1.0 KB", text)    # HWP.CFG 1,054 바이트
 
     def test_extension_is_a_separate_column_in_upper_case(self):
         text = self.body()
@@ -565,3 +566,167 @@ class TestSlashOpensMenu(MdirListTestCase):
     def test_help_shows_slash_next_to_the_menu(self):
         self.app._on_key("1")
         self.assertIn("상단 메뉴 (/)", "\n".join(self.app.modal.lines(70)))
+
+
+class TestFixedColumnsVariableName(MdirListTestCase):
+    """확장자/크기/날짜/시간 칸은 고정, 이름 칸만 창 폭에 따라 늘고 준다."""
+
+    def name_width(self, inner):
+        show_ext, show_date, show_time = app_module.App._columns(inner)
+        used = 2 + app_module.SIZE_COL
+        used += (app_module.EXT_COL + 1) if show_ext else 0
+        used += (app_module.DATE_COL + 1) if show_date else 0
+        used += (app_module.TIME_COL + 1) if show_time else 0
+        return max(inner - used, app_module.NAME_MIN)
+
+    @property
+    def min_full_cols(self):
+        """모든 칸이 보이는 최소 창 폭. 상수에서 계산한다."""
+        inner = app_module.FIXED_COLS + app_module.NAME_MIN
+        return (inner + 2) * 2
+
+    def test_all_columns_stay_at_normal_widths(self):
+        for cols in (self.min_full_cols, 100, 120, 160, 200):
+            inner = cols // 2 - 2
+            self.assertEqual(
+                app_module.App._columns(inner), (True, True, True), "cols=%d" % cols
+            )
+
+    def test_name_column_grows_with_the_window(self):
+        widths = [self.name_width(cols // 2 - 2) for cols in (80, 100, 120, 160, 200)]
+        self.assertEqual(widths, sorted(widths))
+        self.assertEqual(len(set(widths)), len(widths), "폭이 늘어도 이름이 그대로다")
+
+    def test_name_absorbs_every_extra_column(self):
+        """창을 20칸 넓히면 각 패널 이름 칸이 10칸씩 늘어야 한다."""
+        a = self.name_width(100 // 2 - 2)
+        b = self.name_width(120 // 2 - 2)
+        self.assertEqual(b - a, 10)
+
+    def test_fixed_columns_never_change_width(self):
+        """오른쪽 칸들은 어떤 창 폭에서도 같은 자리에 있어야 한다."""
+        seen = set()
+        for cols in (self.min_full_cols, 100, 140, 200):
+            lines = self.app._compose((cols, 30))
+            for line in lines:
+                plain = screen._ANSI.sub("", line)
+                if "[ SubDir ]" in plain:
+                    # '[ SubDir ]' 오른쪽에 남는 칸 수 (날짜+시간 자리)
+                    left_pane = plain[: cols // 2]
+                    after = left_pane.split("[ SubDir ]", 1)[1]
+                    seen.add(screen.width(after.rstrip("|")))
+                    break
+        self.assertEqual(len(seen), 1, "창 폭에 따라 오른쪽 칸 폭이 달라졌다: %s" % seen)
+
+    def test_long_name_is_truncated_not_the_columns(self):
+        long_name = "아주아주아주아주아주긴한글파일이름입니다정말로깁니다.bin"
+        (self.root / long_name).write_bytes(b"z" * 5)
+        self.app.local.refresh()
+
+        for cols in (self.min_full_cols, 100, 140):
+            body = "\n".join(self.app._compose((cols, 30)))
+            self.assertIn("~", body, "긴 이름이 잘렸다는 표시가 없다")
+            self.assertIn("5 B", body, "크기 칸이 밀렸다")
+
+    def test_size_column_fits_every_magnitude(self):
+        from mdirnet import fsops
+
+        for n in (0, 999, 1024, 15210, 3_500_000, 2**31, 1023 * 1024**3):
+            self.assertLessEqual(
+                screen.width(fsops.human_size(n)), app_module.SIZE_COL, n
+            )
+
+    def test_subdir_marker_fits_the_size_column(self):
+        for marker in ("[ SubDir ]", "[ Up-Dir ]"):
+            self.assertLessEqual(screen.width(marker), app_module.SIZE_COL)
+
+    def test_folding_only_happens_below_the_computed_threshold(self):
+        """임계값 이상이면 접히지 않는다. 그 아래는 물리적으로 담을 수 없다."""
+        full = self.min_full_cols
+        self.assertEqual(app_module.App._columns(full // 2 - 2), (True, True, True))
+        self.assertNotEqual(app_module.App._columns((full - 4) // 2 - 2), (True, True, True))
+
+    def test_threshold_is_a_sane_terminal_width(self):
+        """임계값이 터무니없이 크면 대부분의 창에서 칸이 접혀 고정이 무의미해진다."""
+        self.assertLessEqual(self.min_full_cols, 90, self.min_full_cols)
+
+    def test_lines_stay_exact_at_every_width(self):
+        long_name = "긴" * 60 + ".txt"
+        (self.root / long_name).write_bytes(b"z")
+        self.app.local.refresh()
+        for cols in range(40, 201, 9):
+            for line in self.app._compose((cols, 24)):
+                self.assertEqual(screen.width(line), cols, "cols=%d" % cols)
+
+
+class TestColumnWidthsFitTheirContent(unittest.TestCase):
+    """칸 폭이 내용보다 좁으면 조용히 잘린다. 시각과 확장자가 실제로 그랬다."""
+
+    def test_time_column_fits_two_digit_hours(self):
+        """`11:14a` 는 6칸이다. 5로 잡으면 `11:1~` 로 잘린다."""
+        import time as _time
+
+        from mdirnet import fsops
+
+        longest = 0
+        for hour in range(24):
+            stamp = _time.mktime((2026, 7, 28, hour, 59, 0, 0, 0, -1))
+            longest = max(longest, screen.width(fsops.mdir_time(stamp)))
+        self.assertEqual(longest, 6)
+        self.assertGreaterEqual(app_module.TIME_COL, longest)
+
+    def test_date_column_fits(self):
+        import time as _time
+
+        from mdirnet import fsops
+
+        stamp = _time.mktime((2026, 12, 31, 0, 0, 0, 0, 0, -1))
+        self.assertGreaterEqual(app_module.DATE_COL, screen.width(fsops.mdir_date(stamp)))
+
+    def test_extension_column_fits_common_four_letter_extensions(self):
+        from mdirnet import fsops
+
+        for name in ("index.html", "data.json", "photo.jpeg", "표.xlsx", "a.docx"):
+            _, ext = fsops.split_name(name)
+            self.assertLessEqual(
+                screen.width(ext.upper()), app_module.EXT_COL, "%s -> %s" % (name, ext)
+            )
+
+    def test_size_column_fits_the_largest_readable_size(self):
+        from mdirnet import fsops
+
+        biggest = max(
+            screen.width(fsops.human_size(1024 ** e * m))
+            for e in range(5)
+            for m in (1, 512, 1023)
+        )
+        self.assertGreaterEqual(app_module.SIZE_COL, biggest)
+
+
+class TestNothingIsTruncatedInFixedColumns(MdirListTestCase):
+    def setUp(self):
+        super().setUp()
+        import os
+        import time as _time
+
+        # 두 자리 시각으로 맞춘다 (한 자리면 시간 칸 문제가 드러나지 않는다)
+        stamp = _time.mktime((2026, 7, 28, 11, 14, 0, 0, 0, -1))
+        (self.root / "index.html").write_bytes(b"x" * 4200)
+        for path in self.root.iterdir():
+            os.utime(path, (stamp, stamp))
+        self.app.local.refresh()
+
+    def test_time_is_shown_in_full(self):
+        body = self.body((100, 24))
+        self.assertIn("11:14a", body)
+        self.assertNotIn("11:1~", body)
+
+    def test_four_letter_extension_is_shown_in_full(self):
+        body = self.body((100, 24))
+        self.assertIn("HTML", body)
+        self.assertNotIn("HT~", body)
+
+    def test_still_full_at_the_narrowest_width_that_shows_everything(self):
+        body = self.body((82, 24))
+        self.assertIn("11:14a", body)
+        self.assertIn("HTML", body)
