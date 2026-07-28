@@ -507,6 +507,7 @@ class MenuBar(Dialog):
                 [
                     ("파일 보기", "3", app._view_file),
                     ("복사", "5", app._start_copy),
+                    ("이름 바꾸기", "6", app._ask_rename),
                     ("폴더 만들기", "7", app._ask_mkdir),
                     ("삭제", "8", app._ask_delete),
                     sep,
@@ -528,7 +529,7 @@ class MenuBar(Dialog):
                 [
                     (
                         ("숨김 파일 감추기" if app.show_hidden else "숨김 파일 보기"),
-                        "",
+                        ".",
                         app.toggle_hidden,
                     ),
                 ],
@@ -1334,13 +1335,17 @@ class App:
             self._ask_mask(add=False)
         elif key in ("F5", "c"):
             self._start_copy()
-        elif key in ("F2", "n"):
+        elif key == "F2":
+            self.status = "%s 정렬: %s 기준" % (self.focus.label, self.focus.cycle_sort())
+        elif key == "n":
             self._open_peer_dialog()
         elif key in ("F3", "v"):
             self._view_file()
         elif key in ("F4", "o"):
             self._open_share_manager()
-        elif key in ("F6", "d"):
+        elif key == "F6":
+            self._ask_rename()
+        elif key == "d":
             self._disconnect()
         elif key in ("F7", "m"):
             self._ask_mkdir()
@@ -1352,6 +1357,8 @@ class App:
             self.status = "%s 정렬: %s 기준" % (self.focus.label, self.focus.cycle_sort())
         elif key == "r":
             self.focus.refresh()
+        elif key == ".":
+            self.toggle_hidden()
         elif key in ("F1", "?"):
             self._show_help()
 
@@ -1488,6 +1495,65 @@ class App:
             "폴더 만들기",
             ["%s 안에 새 폴더를 만듭니다." % screen.fit(str(pane.path), 46), "", "이름을 입력하세요."],
             create,
+        )
+
+    # --- 이름 바꾸기 (F6) ---
+
+    def _ask_rename(self):
+        pane = self.focus
+        if not pane.active:
+            return
+
+        item = pane.current_item()
+        if not item or item.get("up"):
+            self.status = "이름을 바꿀 항목에 커서를 두세요"
+            return
+        if pane.is_remote and pane.at_top:
+            self.status = "공유 폴더 이름은 상대가 목록에서 정합니다"
+            return
+
+        old = item["name"]
+
+        def apply(new_name):
+            if new_name == old:
+                return
+            if "/" in new_name or "\\" in new_name or new_name in (".", ".."):
+                self.modal = MessageDialog(
+                    "이름이 잘못되었습니다", "경로 구분자는 쓸 수 없습니다", term.FG_RED
+                )
+                return
+
+            if pane.is_remote:
+                self._run_remote(
+                    lambda active: active.remote_rename(pane.child(old), new_name),
+                    "이름을 바꿨습니다: %s" % new_name,
+                )
+                return
+
+            target = pane.path / new_name
+            # 덮어쓰지 않는다. POSIX 의 rename 은 대상이 있으면 조용히 지운다
+            if target.exists() or target.is_symlink():
+                self.modal = MessageDialog(
+                    "바꿀 수 없습니다", "같은 이름이 이미 있습니다: %s" % new_name, term.FG_RED
+                )
+                return
+            try:
+                (pane.path / old).rename(target)
+                self.status = "이름을 바꿨습니다: %s" % new_name
+                pane.selected.discard(old)
+                pane.refresh()
+            except OSError as exc:
+                self.modal = MessageDialog("바꿀 수 없습니다", str(exc), term.FG_RED)
+
+        self.modal = InputDialog(
+            "이름 바꾸기",
+            [
+                term.FG_GRAY + screen.fit_left(pane.location, 46) + term.RESET,
+                "",
+                "%s 의 새 이름을 입력하세요." % old,
+            ],
+            apply,
+            initial=old,
         )
 
     # --- 삭제 (F8) ---
@@ -1897,13 +1963,15 @@ _DIGIT_FKEYS = {
     "0": "F10",
 }
 
+# NC 의 10칸 배치에 최대한 맞춘다. 연결과 끊기는 Commands 메뉴와 문자 키(n/d)로만
+# 두고, 6번은 NC 의 Rename/Move 자리를 되찾았다
 _FKEYS = [
     ("1", "도움"),
-    ("2", "연결"),
+    ("2", "정렬"),
     ("3", "보기"),
     ("4", "폴더"),
     ("5", "복사"),
-    ("6", "끊기"),
+    ("6", "이름"),
     ("7", "만들"),
     ("8", "삭제"),
     ("9", "메뉴"),
@@ -1934,12 +2002,17 @@ _HELP_LINES = [
     "기능키는 하단 바에 적힌 숫자를 그대로 눌러도 됩니다.",
     "맥에서는 F 키에 fn 이 필요하니 숫자가 편합니다.",
     "",
-    "1 . F1  도움말              2 . F2  연결할 PC 찾기",
-    "3 . F3  파일 보기 (v)       4 . F4  공유 폴더 바꾸기 (o)",
-    "5 . F5  복사 (c)            6 . F6  연결 끊기 (d)",
+    "1 . F1  도움말              2 . F2  정렬 바꾸기 (s)",
+    "3 . F3  파일 보기 (v)       4 . F4  공유 폴더 관리 (o)",
+    "5 . F5  복사 (c)            6 . F6  이름 바꾸기",
     "7 . F7  폴더 만들기 (m)     8 . F8  삭제 (Delete)",
     "9 . F9  상단 메뉴           0 . F10 종료 (q)",
-    "s             정렬 바꾸기 (메뉴에서 기준을 직접 고를 수 있습니다)",
+    "",
+    "n             연결할 PC 찾기      d   연결 끊기",
+    ".             숨김 파일 보기/감추기",
+    "r             새로고침            \\   드라이브",
+    "",
+    "연결, 끊기, 새로고침, 드라이브는 상단 메뉴(9)에도 있습니다.",
     "r             새로고침",
     "",
     "정렬은 이름 > 확장자 > 크기 > 날짜 순으로 돌아갑니다.",

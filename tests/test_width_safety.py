@@ -239,7 +239,8 @@ class TestDialogsKeepWidth(LayoutTestCase):
         (self.root / "blob.bin").write_bytes(bytes(range(256)))
         self.app.local.refresh()
 
-        openers = [("1", "도움말"), ("2", "연결"), ("4", "공유폴더"), ("7", "만들기")]
+        # 연결은 하단 바에서 빠져 문자 키 n 으로 부른다
+        openers = [("1", "도움말"), ("n", "연결"), ("4", "공유폴더"), ("7", "만들기"), ("9", "메뉴")]
         for key, label in openers:
             self.app.modal = None
             self.app._on_key(key)

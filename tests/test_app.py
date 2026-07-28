@@ -165,7 +165,7 @@ class TestCopyGuards(AppTestCase):
         self.assertIn("덮어씁니다", "\n".join(self.app.modal.lines(60)))
 
     def test_disconnect_without_session_reports_it(self):
-        self.app._on_key("F6")  # F6 = 연결 끊기 (MDir 기능키 배치)
+        self.app._on_key("d")  # 끊기는 문자 키와 Commands 메뉴에만 있다
         self.assertIn("연결된 상대가 없습니다", self.app.status)
 
 
@@ -216,7 +216,7 @@ class TestDialogs(AppTestCase):
         self.assertIn("거절", self.app.status)
 
     def test_peer_dialog_reports_empty_network(self):
-        self.app._on_key("F2")
+        self.app._on_key("n")  # 연결은 문자 키와 Commands 메뉴에만 있다
         self.assertIsInstance(self.app.modal, app_module.PeerDialog)
         self.assertIn("찾지 못했습니다", "\n".join(self.app.modal.lines(60)))
 

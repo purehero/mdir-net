@@ -396,3 +396,81 @@ class TestPersistOnChange(ShareTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRemoteRename(unittest.TestCase):
+    """원격 이름 바꾸기. 덮어쓰기와 공유 폴더 자체 변경을 막는다."""
+
+    def setUp(self):
+        import queue
+        import socket
+
+        from mdirnet import session
+
+        self.tmp_a = tempfile.TemporaryDirectory()
+        self.tmp_b = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp_a.cleanup)
+        self.addCleanup(self.tmp_b.cleanup)
+        self.root_a = Path(self.tmp_a.name).resolve()
+        self.root_b = Path(self.tmp_b.name).resolve()
+
+        self.session_mod = session
+        self.shares_b = make_shares(self.root_b)
+        self.rb = self.shares_b.names[0]
+
+        sock_a, sock_b = socket.socketpair()
+        self.a = session.Session(sock_a, "b", "1", make_shares(self.root_a), queue.Queue())
+        self.b = session.Session(sock_b, "a", "1", self.shares_b, queue.Queue())
+        self.a.start()
+        self.b.start()
+        self.addCleanup(self.b.close)
+        self.addCleanup(self.a.close)
+
+    def r(self, *parts):
+        return shares_mod.join(self.rb, *parts)
+
+    def test_renames_a_file(self):
+        (self.root_b / "old.txt").write_bytes(b"x")
+        self.a.remote_rename(self.r("old.txt"), "new.txt")
+
+        self.assertTrue((self.root_b / "new.txt").is_file())
+        self.assertFalse((self.root_b / "old.txt").exists())
+
+    def test_renames_a_directory(self):
+        (self.root_b / "dir").mkdir()
+        self.a.remote_rename(self.r("dir"), "폴더")
+        self.assertTrue((self.root_b / "폴더").is_dir())
+
+    def test_refuses_to_overwrite(self):
+        (self.root_b / "a.txt").write_bytes(b"aaa")
+        (self.root_b / "b.txt").write_bytes(b"bbb")
+
+        with self.assertRaises(self.session_mod.SessionError):
+            self.a.remote_rename(self.r("a.txt"), "b.txt")
+
+        self.assertEqual((self.root_b / "b.txt").read_bytes(), b"bbb")
+        self.assertTrue((self.root_b / "a.txt").is_file())
+
+    def test_refuses_path_separators(self):
+        (self.root_b / "f.txt").write_bytes(b"x")
+        for bad in ("sub/f.txt", "..", ".", ""):
+            with self.assertRaises(self.session_mod.SessionError, msg=bad):
+                self.a.remote_rename(self.r("f.txt"), bad)
+        self.assertTrue((self.root_b / "f.txt").is_file())
+
+    def test_cannot_rename_the_share_folder_itself(self):
+        with self.assertRaises(self.session_mod.SessionError):
+            self.a.remote_rename(self.rb, "다른이름")
+        self.assertTrue(self.root_b.is_dir())
+
+    def test_cannot_rename_the_virtual_root(self):
+        with self.assertRaises(self.session_mod.SessionError):
+            self.a.remote_rename(shares_mod.ROOT, "x")
+
+    def test_cannot_rename_something_outside_a_share(self):
+        with self.assertRaises(self.session_mod.SessionError):
+            self.a.remote_rename("/etc/hosts", "hosts2")
+
+    def test_missing_file_reports_an_error(self):
+        with self.assertRaises(self.session_mod.SessionError):
+            self.a.remote_rename(self.r("없음.txt"), "x.txt")

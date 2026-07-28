@@ -235,6 +235,9 @@ class Session:
     def remote_delete(self, path):
         self.request("delete", path=path)
 
+    def remote_rename(self, path, new_name):
+        self.request("rename", path=path, name=new_name)
+
     # --- 전송: 상대 > 나 ---
 
     def pull_file(self, remote_path, dest, on_progress=None):
@@ -399,6 +402,29 @@ class Session:
         self._send({"t": "delete.ok", "id": req_id})
         self._events.put(("remote_changed", str(path.parent)))
 
+    def _on_rename(self, req_id, header, blob, box):
+        """원격 이름 바꾸기. 덮어쓰지 않고, 공유 폴더 자체는 못 바꾸게 막는다."""
+        if self._shares.is_root(header["path"]):
+            raise ValueError("공유 목록은 이름을 바꿀 수 없습니다")
+
+        name = str(header.get("name") or "")
+        if not name or "/" in name or "\\" in name or name in (".", ".."):
+            raise ValueError("이름이 올바르지 않습니다")
+
+        path = self._safe(header["path"])
+        share = self._shares.share_of(header["path"])
+        if share is not None and path == share.path:
+            raise ValueError("공유 폴더 자체는 이름을 바꿀 수 없습니다")
+
+        # 새 이름도 같은 공유 폴더 안쪽인지 검사한다
+        target = fsops.resolve_within(share.path, path.parent / name)
+        if target.exists() or target.is_symlink():
+            raise ValueError("같은 이름이 이미 있습니다: %s" % name)
+
+        os.rename(path, target)
+        self._send({"t": "rename.ok", "id": req_id})
+        self._events.put(("remote_changed", str(path.parent)))
+
     def _on_pull(self, req_id, header, blob, box):
         path = self._safe(header["path"])
         if not path.is_file():
@@ -450,6 +476,7 @@ _REQUESTS = {
     "head": Session._on_head,
     "mkdir": Session._on_mkdir,
     "delete": Session._on_delete,
+    "rename": Session._on_rename,
     "pull": Session._on_pull,
     "push.begin": Session._on_push_begin,
 }
