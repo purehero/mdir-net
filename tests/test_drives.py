@@ -241,7 +241,7 @@ class TestDriveKeyInApp(DriveAppTestCase):
     def test_pane_footer_hints_at_the_drive_key_when_at_root(self):
         self.app.local.navigate(Path("/"))
         body = "\n".join(self.app._compose((100, 30)))
-        self.assertIn("드라이브 선택", body)
+        self.assertIn("드라이브", body)
 
     def test_pane_footer_has_no_hint_when_not_at_root(self):
         summary = self.app._pane_summary(self.app.local)

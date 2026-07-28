@@ -84,6 +84,64 @@ def rjust(text, target):
     return " " * max(target - width(text), 0) + text
 
 
+def splice(base, col, insert):
+    """base 의 col 칸 위치에 insert 를 겹쳐 쓴다.
+
+    폭을 기준으로 자르고 ANSI 시퀀스는 보존한다. 이게 없으면 다이얼로그를 띄울 때
+    그 줄 전체를 지워야 해서, 상자 좌우의 패널 테두리가 사라진다.
+
+    경계에 두 칸 문자가 걸치면 반쪽만 남길 수 없으므로 공백으로 바꾼다.
+    """
+    end = col + width(insert)
+    head, head_styles = _take(base, 0, col)
+    tail, tail_styles = _take(base, end, None)
+    return head + head_styles[:0] + insert + term.RESET + tail_styles + tail
+
+
+def _take(text, start, stop):
+    """표시 칸 [start, stop) 구간을 잘라낸다.
+
+    (자른 문자열, 그 구간 시작 시점에 살아있던 ANSI 코드) 를 돌려준다.
+    잘린 앞부분의 스타일을 다시 붙여줘야 색이 끊기지 않는다.
+    """
+    out = []
+    styles = []
+    col = 0
+    index = 0
+
+    while index < len(text):
+        match = _ANSI.match(text, index)
+        if match:
+            code = match.group(0)
+            if col <= start:
+                styles.append(code)  # 구간 시작 전의 스타일은 기억해둔다
+            if start <= col and (stop is None or col < stop):
+                out.append(code)
+            index = match.end()
+            continue
+
+        ch = text[index]
+        w = char_width(ch)
+        limit = stop if stop is not None else col + w
+
+        if start <= col and col + w <= limit:
+            out.append(ch)
+        else:
+            # 경계에 걸친 문자는 반쪽을 남길 수 없으므로, 이 구간과 겹치는
+            # 칸 수만큼만 공백으로 채운다
+            overlap = min(col + w, limit) - max(col, start)
+            if overlap > 0:
+                out.append(" " * overlap)
+
+        col += w
+        index += 1
+
+    # 구간이 줄보다 길면 남은 칸을 공백으로 채운다
+    if stop is not None and col < stop:
+        out.append(" " * (stop - max(col, start)))
+    return "".join(out), "".join(styles)
+
+
 class Renderer:
     """줄 단위로 이전 프레임과 비교해 달라진 줄만 다시 쓴다.
 

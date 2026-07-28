@@ -1,6 +1,7 @@
 # 로컬 파일시스템 조회와 원격 경로의 안전성 검증을 담당하는 모듈
 
 import os
+import time
 from pathlib import Path
 
 
@@ -111,6 +112,38 @@ def walk_tree(root):
             files.append({"path": full.relative_to(root).as_posix(), "size": size})
 
     return files
+
+
+def mdir_size(n):
+    """MDir 처럼 천 단위로 끊은 크기. `15,210` 형태."""
+    return format(int(n), ",d")
+
+
+def mdir_date(mtime):
+    """MDir 처럼 `93-12-01` (YY-MM-DD)."""
+    if not mtime:
+        return ""
+    return time.strftime("%y-%m-%d", time.localtime(mtime))
+
+
+def mdir_time(mtime):
+    """MDir 처럼 `2:11a` (12시간제 + a/p)."""
+    if not mtime:
+        return ""
+    stamp = time.localtime(mtime)
+    hour = stamp.tm_hour % 12 or 12
+    return "%d:%02d%s" % (hour, stamp.tm_min, "a" if stamp.tm_hour < 12 else "p")
+
+
+def split_name(name):
+    """이름과 확장자를 나눈다. MDir 은 두 칸으로 나눠 보여줬다.
+
+    숨김 파일(`.gitignore`)은 확장자가 없는 것으로 본다. 디렉터리는 나누지 않는다.
+    """
+    if name.startswith("."):
+        return name, ""
+    base, dot, ext = name.rpartition(".")
+    return (base, ext) if dot and base else (name, "")
 
 
 def human_size(n):
