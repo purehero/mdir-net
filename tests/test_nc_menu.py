@@ -859,8 +859,8 @@ class TestTighterFrame(MdirListTestCase):
         marked = [l for l in self.plain() if "HWP" in l][0]
         self.assertTrue(marked.startswith("*"), marked[:20])
 
-    def test_right_pane_keeps_one_space_after_the_divider(self):
-        """오른쪽은 구분선 바로 옆이라 붙으면 `|*메모` 처럼 읽힌다."""
+    def test_right_pane_starts_right_after_the_divider(self):
+        """오른쪽도 구분선 바로 다음 칸이 선택 표시 자리다. 왼쪽과 모양이 같다."""
         self.app._on_key("=")
         self.app.right.navigate(self.root)
         self.app.right.selected = {"HWP.CFG"}
@@ -869,7 +869,7 @@ class TestTighterFrame(MdirListTestCase):
         lines = self.plain()
         marked = [l for l in lines if l.count("HWP") and app_module.BOX_V in l][0]
         after = marked.split(app_module.BOX_V, 1)[1]
-        self.assertTrue(after.startswith(" "), repr(after[:12]))
+        self.assertTrue(after.startswith("*"), repr(after[:12]))
 
     def test_horizontal_rule_is_one_row_each(self):
         """`=` 가 두 줄처럼 보이므로 위아래 각각 한 줄이면 된다."""
@@ -882,11 +882,20 @@ class TestTighterFrame(MdirListTestCase):
         rules = self.rules(lines)
         self.assertEqual(lines[rules[0]], lines[rules[1]])
 
-    def test_left_pane_gains_a_column_for_names(self):
-        """여백을 없앤 만큼 이름 칸이 넓어져야 한다."""
-        left_used = 1 + len(self.app._lead(self.app.left))
-        right_used = 1 + len(self.app._lead(self.app.right))
-        self.assertEqual(right_used - left_used, 1)
+    def test_both_panes_use_the_same_name_width(self):
+        """여백을 없앴으므로 두 패널의 이름 칸이 같아야 한다.
+
+        가운데 구분선 때문에 한쪽이 한 칸 넓을 수는 있다(홀수 폭). 그 이상
+        차이가 나면 어느 한쪽에 여백이 남아 있다는 뜻이다.
+        """
+        self.app._on_key("=")
+        self.app.right.navigate(self.root)
+        self.app.right.refresh()
+
+        lines = self.plain(cols=100)
+        row = [l for l in lines if "HWP" in l][0]
+        left, right = row.split(app_module.BOX_V, 1)
+        self.assertEqual(left.index("HWP"), right.index("HWP"))
 
     def test_widths_stay_exact(self):
         for cols in range(40, 201, 9):
