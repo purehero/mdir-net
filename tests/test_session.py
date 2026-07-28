@@ -140,8 +140,17 @@ class TestQueries(SessionPairTestCase):
         (self.root_b / "d" / "one.txt").write_bytes(b"1")
         (self.root_b / "d" / "e" / "two.txt").write_bytes(b"22")
 
-        files = self.a.remote_tree(rpath(self.rb, "d"))
+        files, dirs = self.a.remote_tree(rpath(self.rb, "d"))
         self.assertEqual({f["path"] for f in files}, {"one.txt", "e/two.txt"})
+        self.assertEqual(dirs, ["e"])
+
+    def test_remote_tree_reports_empty_directories(self):
+        """파일이 하나도 없는 폴더도 알려줘야 복사할 때 만들 수 있다."""
+        (self.root_b / "d" / "빈폴더" / "더깊은빈폴더").mkdir(parents=True)
+
+        files, dirs = self.a.remote_tree(rpath(self.rb, "d"))
+        self.assertEqual(files, [])
+        self.assertEqual(dirs, ["빈폴더", "빈폴더/더깊은빈폴더"])
 
 
 class TestPathSafety(SessionPairTestCase):
@@ -288,7 +297,7 @@ class TestTransfers(SessionPairTestCase):
 
         dest_root = self.root_a / "project"
         remote_base = rpath(self.rb, "project")
-        for item in self.a.remote_tree(remote_base):
+        for item in self.a.remote_tree(remote_base)[0]:
             self.a.pull_file(rpath(remote_base, item["path"]), dest_root / item["path"])
 
         self.assertEqual(

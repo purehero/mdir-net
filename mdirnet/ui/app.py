@@ -120,6 +120,17 @@ class Pane:
             return [item]
         return []
 
+    def set_remote(self, remote):
+        """이 패널이 볼 대상을 바꾼다. 경로 공간이 달라지므로 처음으로 되돌린다."""
+        if self.is_remote == remote:
+            return
+        self.is_remote = remote
+        self.path = shares_mod.ROOT if remote else Path.home()
+        self.cursor = 0
+        self.offset = 0
+        self.selected.clear()
+        self.refresh()
+
     def navigate(self, path):
         self.path = path if self.is_remote else Path(path)
         self.cursor = 0
@@ -498,7 +509,17 @@ class MenuBar(Dialog):
 
         left = pane_menu(app.local)
         left += [("드라이브 바꾸기", "\\", app._open_drive_picker)]
-        right = pane_menu(app.remote)
+
+        right = [
+            (
+                ("상대 보기" if not app.right.is_remote else "내 PC 보기"),
+                "=",
+                app.toggle_right_source,
+            ),
+            sep,
+        ] + pane_menu(app.remote)
+        if not app.right.is_remote:
+            right += [("드라이브 바꾸기", "\\", app._open_drive_picker)]
 
         return [
             ("Left", left),
@@ -518,8 +539,8 @@ class MenuBar(Dialog):
             (
                 "Commands",
                 [
-                    ("연결할 PC 찾기", "2", app._open_peer_dialog),
-                    ("연결 끊기", "6", app._disconnect),
+                    ("연결할 PC 찾기", "n", app._open_peer_dialog),
+                    ("연결 끊기", "d", app._disconnect),
                     sep,
                     ("공유 폴더 관리", "4", app._open_share_manager),
                 ],
@@ -998,6 +1019,11 @@ class App:
         self.local.path = first.path if first else Path.home()
         self.focus = self.local
 
+        # 자리 이름. local/remote 는 '기본 역할' 이름이고, right 는 내 PC 를
+        # 보도록 바꿀 수 있다. 왼쪽은 늘 내 PC 다 (바꾸지 않는다)
+        self.left = self.local
+        self.right = self.remote
+
         self.session = None
         self.modal = None
         self.status = "F2 를 눌러 연결할 PC 를 찾습니다"
@@ -1091,6 +1117,20 @@ class App:
         pane._clamp()
         self.status = "%s 정렬: %s 기준" % (pane.label, fsops.SORT_LABELS[mode])
 
+    def toggle_right_source(self):
+        """오른쪽 패널을 내 PC / 상대 사이에서 바꾼다.
+
+        왼쪽은 늘 내 PC 이므로 바꾸지 않는다. NC 의 Right 메뉴가 패널의 대상을
+        고르는 것과 같은 자리다.
+        """
+        going_remote = not self.right.is_remote
+        if going_remote and not self.session:
+            self.status = "연결된 상대가 없습니다. n 으로 먼저 연결하세요"
+            return
+
+        self.right.set_remote(going_remote)
+        self.status = "오른쪽 패널: %s" % ("상대" if going_remote else "내 PC")
+
     def toggle_hidden(self):
         self.show_hidden = not self.show_hidden
         self.status = "숨김 파일 %s" % ("보임" if self.show_hidden else "감춤")
@@ -1143,7 +1183,8 @@ class App:
         상대 패널에는 쓸 수 없다. 상대는 공유 루트 안에 갇혀 있어서 다른
         드라이브로 옮겨가도 곧바로 거부당한다. 헛되게 열지 않고 이유를 알린다.
         """
-        if self.focus is self.remote:
+        pane = self.focus
+        if pane.is_remote:
             self.status = "상대 쪽은 공유 폴더 안으로 제한됩니다. 드라이브를 바꿀 수 없습니다"
             return
 
@@ -1151,7 +1192,7 @@ class App:
         if len(drives) <= 1:
             self.status = "옮겨갈 드라이브가 없습니다"
             return
-        self.modal = DriveDialog(drives, self.local.navigate)
+        self.modal = DriveDialog(drives, pane.navigate)
 
     def shutdown(self):
         if self.session:
@@ -1245,6 +1286,9 @@ class App:
         if isinstance(self.modal, (PeerDialog, ApprovalDialog)):
             self.modal = None
 
+        # 연결했다는 것은 상대를 보겠다는 뜻이다. 오른쪽을 상대로 돌린다
+        self.right.is_remote = True
+
         def load_home():
             try:
                 # 원격 경로는 공유 상대 경로 문자열이다. Path 로 감싸면
@@ -1258,9 +1302,11 @@ class App:
     def _on_disconnected(self, reason):
         self.session = None
         self.transfer = None
-        self.remote.entries = []
-        self.remote.selected.clear()
-        self.focus = self.local
+        # 오른쪽이 내 PC 를 보고 있으면 끊겼다고 지울 이유가 없다
+        if self.right.is_remote:
+            self.right.entries = []
+            self.right.selected.clear()
+            self.focus = self.local
         if isinstance(self.modal, ProgressDialog):
             self.modal = None
         self.status = reason
@@ -1329,7 +1375,7 @@ class App:
             self._go_up(self.focus)
         elif key == "\\":
             self._open_drive_picker()
-        elif key in ("+", "="):
+        elif key == "+":
             self._ask_mask(add=True)
         elif key in ("-", "_"):
             self._ask_mask(add=False)
@@ -1359,14 +1405,16 @@ class App:
             self.focus.refresh()
         elif key == ".":
             self.toggle_hidden()
+        elif key == "=":
+            self.toggle_right_source()
         elif key in ("F1", "?"):
             self._show_help()
 
     def _toggle_focus(self):
-        if self.focus is self.local and self.session:
-            self.focus = self.remote
+        if self.focus is self.left and self.right.active:
+            self.focus = self.right
         else:
-            self.focus = self.local
+            self.focus = self.left
 
     def _enter(self):
         item = self.focus.current_item()
@@ -1623,9 +1671,15 @@ class App:
             self.status = "이미 전송 중입니다"
             return
 
-        source, dest = self.focus, (self.remote if self.focus is self.local else self.local)
-        if not self.session:
-            self.status = "먼저 F2 로 상대에 연결하세요"
+        source, dest = self.focus, (self.right if self.focus is self.left else self.left)
+
+        # 양쪽 모두 내 PC 라면 세션이 필요없다. 그냥 로컬 복사다
+        needs_session = source.is_remote or dest.is_remote
+        if needs_session and not self.session:
+            self.status = "먼저 n 으로 상대에 연결하세요"
+            return
+        if source is dest:
+            self.status = "같은 패널로는 복사할 수 없습니다"
             return
 
         # 가상 루트에는 파일을 둘 수 없다. 파일마다 오류를 내는 것보다
@@ -1666,8 +1720,19 @@ class App:
         def work():
             errors = []
             try:
-                plan = self._build_plan(source, items, active)
+                plan, dirs = self._build_plan(source, items, active)
                 transfer.total = sum(size for _, _, size in plan) or 1
+
+                # 빈 폴더까지 만들어준다. 파일만 옮기면 빈 폴더가 사라진다
+                for rel in dirs:
+                    target = dest.child(rel)
+                    try:
+                        if dest.is_remote:
+                            active.remote_mkdir(target)
+                        else:
+                            Path(target).mkdir(parents=True, exist_ok=True)
+                    except (session.SessionError, OSError):
+                        pass  # 이미 있으면 그만이다
 
                 for rel, src_path, size in plan:
                     transfer.current = rel
@@ -1677,8 +1742,13 @@ class App:
                             active.pull_file(
                                 src_path, dest_path, on_progress=_adder(transfer)
                             )
-                        else:
+                        elif dest.is_remote:
                             active.push_file(
+                                src_path, dest_path, on_progress=_adder(transfer)
+                            )
+                        else:
+                            # 내 PC 안에서의 복사. 네트워크를 거치지 않는다
+                            fsops.copy_file(
                                 src_path, dest_path, on_progress=_adder(transfer)
                             )
                     except (session.SessionError, OSError) as exc:
@@ -1695,7 +1765,7 @@ class App:
         디렉터리는 여기서 재귀적으로 펼쳐진다. 목적지 쪽은 파일을 받을 때
         부모 디렉터리를 자동으로 만들기 때문에 디렉터리 자체는 보내지 않는다.
         """
-        plan = []
+        plan, dirs = [], []
         for item in items:
             name = item["name"]
             src = source.child(name)
@@ -1707,17 +1777,22 @@ class App:
             # 디렉터리는 여기서 펼친다. tree 는 상대 경로 목록을 돌려주므로
             # 원본 쪽 경로 공간에 맞춰 다시 붙인다
             if source.is_remote:
-                listing = active.remote_tree(src)
+                listing, subdirs = active.remote_tree(src)
                 join = lambda base, rel: shares_mod.join(base, rel)
             else:
-                listing = fsops.walk_tree(src)
+                listing, subdirs = fsops.walk_tree(src), fsops.walk_dirs(src)
                 join = lambda base, rel: base / rel
+
+            # 폴더 자체와 하위 폴더를 먼저 적어둔다. 파일이 하나도 없는 폴더도
+            # 복사되어야 한다. 이걸 빼면 빈 폴더를 복사했을 때 아무 일도 안 난다
+            dirs.append(name)
+            dirs += ["%s/%s" % (name, d) for d in subdirs]
 
             for entry in listing:
                 plan.append(
                     ("%s/%s" % (name, entry["path"]), join(src, entry["path"]), entry["size"])
                 )
-        return plan
+        return plan, dirs
 
     # --- 렌더링 ---
 
@@ -1989,7 +2064,8 @@ def _adder(transfer):
 
 
 _HELP_LINES = [
-    "왼쪽은 늘 내 PC, 오른쪽은 연결된 상대입니다.",
+    "왼쪽은 늘 내 PC 입니다. 오른쪽은 상대 또는 내 PC 를 볼 수 있습니다 (=).",
+    "양쪽이 모두 내 PC 면 복사는 네트워크를 거치지 않습니다.",
     "",
     "Tab           패널 전환",
     "^ v k j       커서 이동    PgUp/PgDn 페이지    Home/End 처음과 끝",
@@ -2009,6 +2085,7 @@ _HELP_LINES = [
     "9 . F9  상단 메뉴           0 . F10 종료 (q)",
     "",
     "n             연결할 PC 찾기      d   연결 끊기",
+    "=             오른쪽 패널을 내 PC / 상대 로 전환",
     ".             숨김 파일 보기/감추기",
     "r             새로고침            \\   드라이브",
     "",

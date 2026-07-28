@@ -93,9 +93,14 @@ def splice(base, col, insert):
     경계에 두 칸 문자가 걸치면 반쪽만 남길 수 없으므로 공백으로 바꾼다.
     """
     end = col + width(insert)
-    head, head_styles = _take(base, 0, col)
+    head, _ = _take(base, 0, col)
     tail, tail_styles = _take(base, end, None)
-    return head + head_styles[:0] + insert + term.RESET + tail_styles + tail
+
+    # 앞부분에서 켜진 스타일을 반드시 끊고 insert 를 놓는다. 이게 없으면
+    # 커서가 놓인 줄의 반전(REVERSE)이 끝나지 않은 채로 상자가 시작되어
+    # 상단 메뉴까지 선택색으로 물든다.
+    # 뒤부분은 원래 살아있던 스타일을 다시 켜줘야 색이 끊기지 않는다.
+    return head + term.RESET + insert + term.RESET + tail_styles + tail
 
 
 def _take(text, start, stop):

@@ -422,3 +422,56 @@ class TestHiddenToggleKey(MdirListTestCase):
 
         self.app._on_key(".")
         self.assertIn(".git", self.body())
+
+
+class TestOverlayDoesNotInheritStyles(MdirListTestCase):
+    """커서가 놓인 줄의 선택색이 위에 겹친 상자로 새어나가면 안 된다.
+
+    커서 줄은 REVERSE 로 시작해 줄 끝에서 RESET 된다. 그 중간에 메뉴 상자를
+    겹쳐 쓰면서 스타일을 끊지 않으면 상단 메뉴까지 반전으로 물든다.
+    """
+
+    def test_splice_resets_before_the_inserted_text(self):
+        row = term.REVERSE + " note.txt   1,054 " + term.RESET
+        out = screen.splice(row, 5, "| 메뉴 |")
+
+        before_box = out.split("| 메뉴")[0]
+        self.assertTrue(
+            before_box.endswith(term.RESET),
+            "상자 앞에서 스타일을 끊지 않았습니다: %r" % before_box,
+        )
+
+    def test_splice_restores_the_style_after_the_box(self):
+        row = term.REVERSE + " note.txt   1,054 " + term.RESET
+        out = screen.splice(row, 5, "| 메뉴 |")
+        self.assertIn(term.REVERSE, out.split("메뉴 |")[1], "뒷부분 색이 끊겼습니다")
+
+    def test_menu_box_is_not_reversed_when_it_overlaps_the_cursor_row(self):
+        """실제 화면 조립으로 확인한다. 커서를 상자가 걸치는 줄에 둔다."""
+        self.app.local.cursor = 3
+        self.app._on_key("F9")
+        lines = self.app._compose((104, 30))
+
+        # 상자가 그려진 줄들을 훑어, 상자 테두리 앞에 RESET 이 오는지 본다
+        checked = 0
+        for line in lines[1:12]:
+            if app_module.BOX_V not in line and app_module.BOX_TL not in line:
+                continue
+            for piece in ("| 파일 보기", "| 복사", "|--------"):
+                if piece in line:
+                    head = line.split(piece)[0]
+                    self.assertNotIn(
+                        term.REVERSE,
+                        head.split(term.RESET)[-1],
+                        "상자가 선택색을 물려받았습니다: %r" % line[:70],
+                    )
+                    checked += 1
+        self.assertGreater(checked, 0, "검사할 상자 줄을 찾지 못했습니다")
+
+    def test_dialog_box_is_not_reversed_over_the_cursor_row(self):
+        self.app.local.cursor = 5
+        self.app._on_key("1")  # 도움말
+        for line in self.app._compose((104, 30)):
+            if "도움말" in line:
+                head = line.split("도움말")[0]
+                self.assertNotIn(term.REVERSE, head.split(term.RESET)[-1], line[:60])
