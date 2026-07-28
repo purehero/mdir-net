@@ -228,14 +228,18 @@ class TestMenuBar(MdirListTestCase):
         self.assertFalse(self.app.running)
 
     def test_dropdown_floats_over_the_panes_without_erasing_them(self):
-        """NC 처럼 상자 좌우의 패널 테두리가 남아야 한다."""
+        """상자를 그려도 그 좌우의 패널 내용이 남아야 한다."""
         self.open_menu()
-        lines = self.app._compose((104, 30))
+        lines = [screen._ANSI.sub("", l) for l in self.app._compose((104, 30))]
 
-        row = screen._ANSI.sub("", lines[1])  # 패널 위 테두리와 상자가 겹치는 줄
-        self.assertTrue(row.startswith(app_module.BOX_TL), row[:12])
-        self.assertTrue(row.rstrip().endswith(app_module.BOX_TR), row[-12:])
-        self.assertIn(app_module.BOX_TL, row[1:], "상자 테두리가 보이지 않는다")
+        row = lines[1]  # 제목 줄에 상자 윗변이 겹친다
+        self.assertIn("내 PC", row, "상자가 왼쪽 제목을 지웠다")
+        self.assertIn(app_module.BOX_TL, row, "상자 테두리가 보이지 않는다")
+        self.assertIn("상대", row, "상자가 오른쪽 제목을 지웠다")
+
+        # 본문 줄에서도 상자 오른쪽에 패널 구분선이 남아야 한다
+        body = next(l for l in lines[3:12] if app_module.BOX_V in l)
+        self.assertIn(app_module.BOX_V, body.split(app_module.BOX_BR)[-1] or body)
 
     def test_menu_keeps_line_widths(self):
         self.open_menu()
@@ -731,58 +735,81 @@ class TestNothingIsTruncatedInFixedColumns(MdirListTestCase):
         self.assertIn("HTML", body)
 
 
-class TestSharedDivider(MdirListTestCase):
-    """두 패널이 가운데 구분선을 공유한다. 테두리가 겹쳐 한 칸을 버리지 않는다."""
+class TestMdirFrame(MdirListTestCase):
+    """MDir 처럼 바깥 벽 없이 가로줄과 가운데 구분선만 쓴다."""
 
     def plain(self, cols=100, rows=24):
         return [screen._ANSI.sub("", l) for l in self.app._compose((cols, rows))]
 
-    def test_only_three_vertical_borders(self):
-        body = self.plain()[2]  # 첫 항목 줄
-        self.assertEqual(body.count(app_module.BOX_V), 3, body)
+    @staticmethod
+    def _char_at_column(text, column):
+        """표시 칸 기준으로 그 자리의 글자를 꺼낸다.
 
-    def test_no_doubled_border_in_the_middle(self):
+        한글이 섞이면 문자열 인덱스와 표시 칸이 어긋나므로 폭을 세며 찾아야 한다.
+        """
+        used = 0
+        for ch in text:
+            width = screen.char_width(ch)
+            if used <= column < used + width:
+                return ch
+            used += width
+        return " "  # 줄이 짧으면 그 자리는 빈칸이다
+
+    def test_no_outer_walls(self):
+        """왼쪽 끝과 오른쪽 끝에 벽이 없어야 한다. 그만큼 내용이 넓어진다."""
+        cols = 100
+        for line in self.plain(cols)[1:-2]:
+            self.assertNotEqual(self._char_at_column(line, 0), app_module.BOX_V, line[:40])
+            self.assertNotEqual(
+                self._char_at_column(line, cols - 1), app_module.BOX_V, line[-40:]
+            )
+
+    def test_exactly_one_vertical_divider_per_row(self):
         for line in self.plain()[1:-2]:
-            self.assertNotIn(app_module.BOX_V * 2, line, line[:60])
+            if not line.strip():
+                continue
+            self.assertLessEqual(line.count(app_module.BOX_V), 1, line[:60])
 
-    def test_top_and_bottom_have_a_single_joint(self):
+    def test_top_and_bottom_are_two_rows_each(self):
+        """제목 줄 + 가로줄, 가로줄 + 요약 줄."""
         lines = self.plain()
-        top, bottom = lines[1], lines[-3]
-        self.assertEqual(top.count("+"), 1, top)
-        self.assertEqual(bottom.count("+"), 1, bottom)
-        self.assertTrue(top.startswith(app_module.BOX_TL))
-        self.assertTrue(top.endswith(app_module.BOX_TR))
-        self.assertTrue(bottom.startswith(app_module.BOX_BL))
-        self.assertTrue(bottom.endswith(app_module.BOX_BR))
+        self.assertIn("내 PC", lines[1])          # 제목 줄
+        self.assertIn("+", lines[2])              # 가로줄
+        self.assertEqual(set(lines[2]) - {"-", "+"}, set(), lines[2])
+
+        self.assertIn("+", lines[-4])             # 아래 가로줄
+        self.assertEqual(set(lines[-4]) - {"-", "+"}, set(), lines[-4])
+        self.assertIn("File", lines[-3])          # 요약 줄
+
+    def test_rules_have_a_single_joint(self):
+        lines = self.plain()
+        for row in (lines[2], lines[-4]):
+            self.assertEqual(row.count("+"), 1, row)
 
     def test_joint_lines_up_with_the_divider(self):
-        """가운데 `+` 와 본문의 `|` 가 같은 칸에 있어야 세로로 이어져 보인다."""
+        """가로줄의 `+` 와 본문의 `|` 가 같은 칸에 있어야 세로로 이어져 보인다."""
         lines = self.plain()
-        top = lines[1]
-        joint_col = screen.width(top[: top.index("+")])
+        rule = lines[2]
+        joint_col = screen.width(rule[: rule.index("+")])
 
-        for row in lines[2:-3]:
-            walls = [i for i, ch in enumerate(row) if ch == app_module.BOX_V]
-            middle = screen.width(row[: walls[1]])
-            self.assertEqual(middle, joint_col, row[:60])
+        for row in lines[1:-2]:
+            if app_module.BOX_V in row:
+                self.assertEqual(
+                    screen.width(row[: row.index(app_module.BOX_V)]), joint_col, row[:60]
+                )
+            elif "+" in row:
+                self.assertEqual(screen.width(row[: row.index("+")]), joint_col, row[:60])
 
-        bottom = lines[-3]
-        self.assertEqual(screen.width(bottom[: bottom.index("+")]), joint_col)
-
-    def test_merging_gives_the_extra_column_to_content(self):
-        """테두리 4개에서 3개로 줄었으니 내용 칸이 1칸 늘어야 한다."""
+    def test_removing_outer_walls_gives_two_columns_to_content(self):
         cols = 100
-        line = self.plain(cols)[2]
-        borders = line.count(app_module.BOX_V)
-        self.assertEqual(borders, 3)
-        self.assertEqual(screen.width(line) - borders, cols - 3)
+        body = [l for l in self.plain(cols) if app_module.BOX_V in l][2]
+        self.assertEqual(body.count(app_module.BOX_V), 1)
+        self.assertEqual(screen.width(body) - 1, cols - 1)
 
     def test_focused_pane_title_is_highlighted(self):
-        """테두리 색으로 초점을 못 보이므로 제목을 반전시킨다."""
         self.app.focus = self.app.left
-        top = self.app._compose((100, 24))[1]
-        left_half = top[: len(top) // 2]
-        self.assertIn(term.REVERSE, left_half, "초점 패널 제목이 강조되지 않았다")
+        title = self.app._compose((100, 24))[1]
+        self.assertIn(term.REVERSE, title.split("|")[0])
 
     def test_focus_marker_moves_with_tab(self):
         self.app.session = _StubForFocus()

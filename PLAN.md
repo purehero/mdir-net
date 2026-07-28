@@ -52,7 +52,7 @@ mdirnet/
     term.py        raw 모드, 키 디코딩, ANSI 프리미티브
     screen.py      더블 버퍼 렌더러 (변경된 줄만 다시 그림)
     app.py         듀얼 패널 상태 기계, 키 바인딩, 다이얼로그
-                   (두 패널이 테두리 하나를 공유하고 가운데 구분선을 나눠 쓴다)
+                   (MDir 처럼 바깥 벽 없이 가로줄과 가운데 구분선만 쓴다)
 tests/             프로토콜·fsops·세션 왕복 테스트 (pytest 없으면 unittest)
 ```
 
