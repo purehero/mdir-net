@@ -16,6 +16,10 @@ from . import screen, term
 BOX_H, BOX_V = "-", "|"
 BOX_TL, BOX_TR, BOX_BL, BOX_BR = "\u231c", "\u231d", "\u231e", "\u231f"
 
+# \ud328\ub110 \uc704\uc544\ub798 \uac00\ub85c\uc904. `=` \ub294 \uadf8 \uc790\uccb4\ub85c \ub450 \uc904\ucc98\ub7fc \ubcf4\uc774\ubbc0\ub85c `\u2550`(\ud3ed\uc774 \uc560\ub9e4\ud574 \ubabb \uc4f4\ub2e4)
+# \ub300\uc2e0 \uc4f4\ub2e4. \ud55c \uc904\uc774\uba74 \ucda9\ubd84\ud574 \ubcf8\ubb38\uc774 \uadf8\ub9cc\ud07c \ub113\uc5b4\uc9c4\ub2e4
+PANE_RULE = "="
+
 # MDir 처럼 이름, 확장자, 크기, 날짜, 시간을 칸으로 나눠 보여준다.
 #
 # 확장자/크기/날짜/시간은 **폭이 고정**이고, 남는 자리를 이름이 모두 가져간다.
@@ -91,6 +95,11 @@ class Pane:
         self.message = ""
         self.sort_mode = fsops.SORT_NAME
         self._generation = 0  # 늦게 도착한 조회 결과를 버리기 위한 세대 번호
+
+    @property
+    def is_left(self):
+        """왼쪽 자리인가. 줄 앞 여백을 둘지 정하는 데 쓴다."""
+        return self is self.app.left
 
     @property
     def label(self):
@@ -2083,14 +2092,14 @@ class App:
     def _panes(self, cols, height):
         """MDir 처럼 바깥 벽 없이 가로줄과 가운데 구분선만으로 나눈다.
 
-        위아래가 각각 두 줄이다. 제목 줄과 가로줄, 그리고 가로줄과 요약 줄.
+        위아래가 각각 제목 줄과 가로줄, 그리고 가로줄과 요약 줄이다.
         테두리에 제목을 끼워넣던 방식보다 읽기 쉽고 참고 화면과도 같다.
         바깥 벽을 없앤 만큼 두 칸이 내용으로 돌아간다.
 
             내 PC  ~/Documents              | office-pc  /프로젝트
-            --------------------------------+------------------------
+            ================================+========================
               ..            [ Up-Dir ]      |   ..          [ Up-Dir ]
-            --------------------------------+------------------------
+            ================================+========================
             3 File 2 Dir 20 KB . 이름순     | 2 File 1 Dir 13 KB
         """
         content = cols - 1  # 가운데 구분선 한 칸만 뺀다
@@ -2106,9 +2115,9 @@ class App:
         wall = term.FG_GRAY + BOX_V + term.RESET
         rule = (
             term.FG_GRAY
-            + BOX_H * left_width
+            + PANE_RULE * left_width
             + "+"
-            + BOX_H * right_width
+            + PANE_RULE * right_width
             + term.RESET
         )
 
@@ -2128,6 +2137,15 @@ class App:
         )
         return out
 
+    @staticmethod
+    def _lead(pane):
+        """줄 앞 여백. 왼쪽 패널은 화면 끝이라 여백이 필요없다.
+
+        오른쪽은 가운데 구분선 바로 옆이므로 한 칸을 띄워야 `|*메모` 처럼
+        붙어 보이지 않는다.
+        """
+        return "" if pane.is_left else " "
+
     def _pane_head(self, pane, width):
         """패널 제목 줄. 초점이 있으면 반전시킨다.
 
@@ -2136,8 +2154,10 @@ class App:
         """
         focused = pane is self.focus
         label = pane.label
-        room = width - 2 - screen.width(label) - 2
-        title = " %s  %s" % (label, screen.fit_left(pane.location, max(room, 0)))
+        room = width - 2 - screen.width(label) - 2 - len(self._lead(pane))
+        title = "%s%s  %s" % (
+            self._lead(pane), label, screen.fit_left(pane.location, max(room, 0))
+        )
 
         style = term.REVERSE if focused else term.BOLD
         return style + screen.pad(title, width) + term.RESET
@@ -2149,13 +2169,13 @@ class App:
         if position >= len(rows):
             # 항목이 없으면 본문이 통째로 백지라 '로딩 중' 과 구분되지 않는다
             if pane.active and not pane.entries and not pane.message and position == len(rows):
-                return term.FG_GRAY + screen.pad("  (빈 폴더)", width) + term.RESET
+                return term.FG_GRAY + screen.pad(self._lead(pane) + " (빈 폴더)", width) + term.RESET
             return " " * width
 
         return self._entry_line(pane, rows[position], position, width, pane is self.focus)
 
     def _pane_foot(self, pane, width):
-        text = " " + (pane.message or self._pane_summary(pane))
+        text = self._lead(pane) + (pane.message or self._pane_summary(pane))
         return term.FG_GRAY + screen.pad(screen.fit(text, width), width) + term.RESET
 
     @staticmethod
@@ -2204,12 +2224,12 @@ class App:
         else:
             base, ext = item["name"], ""
 
-        used = 2 + SIZE_COL + (EXT_COL + 1 if show_ext else 0)
+        used = 1 + len(self._lead(pane)) + SIZE_COL + (EXT_COL + 1 if show_ext else 0)
         used += (DATE_COL + 1) if show_date else 0
         used += (TIME_COL + 1) if show_time else 0
         name_width = max(inner - used, NAME_MIN)
 
-        parts = [" ", "*" if picked else " ", screen.pad(base, name_width)]
+        parts = [self._lead(pane), "*" if picked else " ", screen.pad(base, name_width)]
         if show_ext:
             parts.append(" " + screen.pad(ext.upper(), EXT_COL))
         parts.append(screen.rjust(size_text, SIZE_COL))

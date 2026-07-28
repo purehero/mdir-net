@@ -775,10 +775,10 @@ class TestMdirFrame(MdirListTestCase):
         lines = self.plain()
         self.assertIn("내 PC", lines[1])          # 제목 줄
         self.assertIn("+", lines[2])              # 가로줄
-        self.assertEqual(set(lines[2]) - {"-", "+"}, set(), lines[2])
+        self.assertEqual(set(lines[2]) - {"=", "+"}, set(), lines[2])
 
         self.assertIn("+", lines[-4])             # 아래 가로줄
-        self.assertEqual(set(lines[-4]) - {"-", "+"}, set(), lines[-4])
+        self.assertEqual(set(lines[-4]) - {"=", "+"}, set(), lines[-4])
         self.assertIn("File", lines[-3])          # 요약 줄
 
     def test_rules_have_a_single_joint(self):
@@ -831,3 +831,69 @@ class _StubForFocus:
 
     def close(self, reason=None):
         pass
+
+
+class TestTighterFrame(MdirListTestCase):
+    """왼쪽 여백 제거와 `=` 가로줄."""
+
+    def plain(self, cols=100, rows=26):
+        return [screen._ANSI.sub("", l) for l in self.app._compose((cols, rows))]
+
+    def rules(self, lines):
+        return [i for i, r in enumerate(lines) if r and set(r) <= {"=", "+"} and "+" in r]
+
+    def test_left_pane_starts_at_column_zero(self):
+        """왼쪽은 화면 끝이라 여백이 필요없다. 제목이 0번 칸에서 시작한다.
+
+        본문 줄의 0번 칸은 선택 표시 자리라 표시가 없으면 빈칸이다. 그쪽은
+        test_selection_mark_is_the_first_column_on_the_left 가 본다.
+        """
+        lines = self.plain()
+        rules = self.rules(lines)
+        title = lines[rules[0] - 1]
+        self.assertNotEqual(title[0], " ", title[:20])
+
+    def test_selection_mark_is_the_first_column_on_the_left(self):
+        self.app.local.selected = {"HWP.CFG"}
+        self.app.local.refresh()
+        marked = [l for l in self.plain() if "HWP" in l][0]
+        self.assertTrue(marked.startswith("*"), marked[:20])
+
+    def test_right_pane_keeps_one_space_after_the_divider(self):
+        """오른쪽은 구분선 바로 옆이라 붙으면 `|*메모` 처럼 읽힌다."""
+        self.app._on_key("=")
+        self.app.right.navigate(self.root)
+        self.app.right.selected = {"HWP.CFG"}
+        self.app.right.refresh()
+
+        lines = self.plain()
+        marked = [l for l in lines if l.count("HWP") and app_module.BOX_V in l][0]
+        after = marked.split(app_module.BOX_V, 1)[1]
+        self.assertTrue(after.startswith(" "), repr(after[:12]))
+
+    def test_horizontal_rule_is_one_row_each(self):
+        """`=` 가 두 줄처럼 보이므로 위아래 각각 한 줄이면 된다."""
+        lines = self.plain()
+        rules = self.rules(lines)
+        self.assertEqual(len(rules), 2, rules)
+
+    def test_top_and_bottom_rules_are_identical(self):
+        lines = self.plain()
+        rules = self.rules(lines)
+        self.assertEqual(lines[rules[0]], lines[rules[1]])
+
+    def test_left_pane_gains_a_column_for_names(self):
+        """여백을 없앤 만큼 이름 칸이 넓어져야 한다."""
+        left_used = 1 + len(self.app._lead(self.app.left))
+        right_used = 1 + len(self.app._lead(self.app.right))
+        self.assertEqual(right_used - left_used, 1)
+
+    def test_widths_stay_exact(self):
+        for cols in range(40, 201, 9):
+            for line in self.app._compose((cols, 26)):
+                self.assertEqual(screen.width(line), cols, "cols=%d" % cols)
+
+    def test_body_takes_everything_but_the_frame(self):
+        """머리글/상태줄/힌트줄 3 + 제목·가로줄·가로줄·요약 4 를 뺀 나머지."""
+        self.app._compose((100, 30))
+        self.assertEqual(self.app._body_height, 30 - 3 - 4)
