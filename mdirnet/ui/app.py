@@ -15,7 +15,13 @@ from . import screen, term
 BOX_H, BOX_V = "-", "|"
 BOX_TL, BOX_TR, BOX_BL, BOX_BR = "\u231c", "\u231d", "\u231e", "\u231f"
 
-SIZE_COL = 10  # 크기를 표시할 우측 열 폭
+# MDir 처럼 이름, 확장자, 크기, 날짜, 시간을 칸으로 나눠 보여준다.
+# 패널이 좁으면 오른쪽 칸부터 접는다 (칸이 잘려 읽을 수 없게 되는 것보다 낫다)
+EXT_COL = 3
+SIZE_COL = 11  # `[ SubDir ]` 과 `1,901,416` 이 모두 들어가는 폭
+DATE_COL = 8   # 93-12-01
+TIME_COL = 5   # 2:11a
+NAME_MIN = 8
 
 
 class Transfer:
@@ -133,7 +139,9 @@ class Pane:
 
         if not self.is_remote:
             try:
-                self.entries = fsops.sort_entries(fsops.list_dir(self.path), self.sort_mode)
+                self.entries = fsops.sort_entries(
+                    self._visible(fsops.list_dir(self.path)), self.sort_mode
+                )
                 self.message = ""
             except OSError as exc:
                 self.entries = []
@@ -159,11 +167,17 @@ class Pane:
 
         threading.Thread(target=work, name="list-%s" % side, daemon=True).start()
 
+    def _visible(self, entries):
+        """숨김 파일(이름이 . 로 시작)을 옵션에 따라 걸러낸다."""
+        if self.app.show_hidden:
+            return entries
+        return [e for e in entries if not e["name"].startswith(".")]
+
     def apply_listing(self, generation, path, entries):
         if generation != self._generation:
             return  # 그 사이 다른 디렉터리로 옮겨갔다. 낡은 결과는 버린다
         self.path = path if self.is_remote else Path(path)
-        self.entries = fsops.sort_entries(entries, self.sort_mode)
+        self.entries = fsops.sort_entries(self._visible(entries), self.sort_mode)
         self.message = ""
         self._clamp()
 
@@ -447,6 +461,163 @@ class ApprovalDialog(Dialog):
             return False
         if key == term.ENTER:
             self.request.decide(self.accept)
+            return True
+        return False
+
+
+class MenuBar(Dialog):
+    """Norton Commander 식 상단 풀다운 메뉴.
+
+    `Left` 와 `Right` 가 각 패널을 설정하고, 가운데 메뉴들이 기능을 모은다.
+    F9 로 열고 화살표로 옮긴다. 일반 다이얼로그와 그리는 방식이 달라
+    render_into() 로 직접 그린다 (제목 줄과 그 아래 상자를 함께 놓는다).
+    """
+
+    SEPARATOR = "-"
+
+    def __init__(self, app):
+        self.app = app
+        self.menu = 1  # 처음에는 Files 를 편다 (NC 도 그랬다)
+        self.item = 0
+        self.menus = self._build()
+
+    def _build(self):
+        """(제목, [(라벨, 키힌트, 동작)]) 목록. 동작이 None 이면 구분선."""
+        app = self.app
+        sep = (self.SEPARATOR, "", None)
+
+        def pane_menu(pane):
+            return [
+                ("이름순 정렬", "", lambda: app.set_sort(pane, fsops.SORT_NAME)),
+                ("확장자순 정렬", "", lambda: app.set_sort(pane, fsops.SORT_EXT)),
+                ("크기순 정렬", "", lambda: app.set_sort(pane, fsops.SORT_SIZE)),
+                ("날짜순 정렬", "", lambda: app.set_sort(pane, fsops.SORT_DATE)),
+                sep,
+                ("새로고침", "r", pane.refresh),
+            ]
+
+        left = pane_menu(app.local)
+        left += [("드라이브 바꾸기", "\\", app._open_drive_picker)]
+        right = pane_menu(app.remote)
+
+        return [
+            ("Left", left),
+            (
+                "Files",
+                [
+                    ("파일 보기", "3", app._view_file),
+                    ("복사", "5", app._start_copy),
+                    ("폴더 만들기", "7", app._ask_mkdir),
+                    ("삭제", "8", app._ask_delete),
+                    sep,
+                    ("도움말", "1", app._show_help),
+                    ("끝내기", "0", app._quit),
+                ],
+            ),
+            (
+                "Commands",
+                [
+                    ("연결할 PC 찾기", "2", app._open_peer_dialog),
+                    ("연결 끊기", "6", app._disconnect),
+                    sep,
+                    ("공유 폴더 관리", "4", app._open_share_manager),
+                ],
+            ),
+            (
+                "Options",
+                [
+                    (
+                        ("숨김 파일 감추기" if app.show_hidden else "숨김 파일 보기"),
+                        "",
+                        app.toggle_hidden,
+                    ),
+                ],
+            ),
+            ("Right", right),
+        ]
+
+    # --- 그리기 ---
+
+    def bar_line(self, cols):
+        """상단 제목 줄. 펼쳐진 메뉴만 반전으로 표시한다."""
+        parts = [" "]
+        for index, (title, _) in enumerate(self.menus):
+            chunk = "  %s  " % title
+            parts.append(term.REVERSE + chunk + term.RESET if index == self.menu else chunk)
+        return screen.pad("".join(parts), cols)
+
+    def _bar_offset(self):
+        """펼쳐진 메뉴의 왼쪽 위치. 상자를 그 아래에 붙인다."""
+        offset = 1
+        for index, (title, _) in enumerate(self.menus):
+            if index == self.menu:
+                return offset
+            offset += screen.width("  %s  " % title)
+        return offset
+
+    def _box(self):
+        title, items = self.menus[self.menu]
+        width = max(screen.width(l) + (len(k) + 2 if k else 0) for l, k, _ in items) + 4
+        width = max(width, 20)
+
+        rows = [BOX_TL + BOX_H * width + BOX_TR]
+        for index, (label, hint, action) in enumerate(items):
+            if action is None:
+                rows.append(BOX_V + BOX_H * width + BOX_V)
+                continue
+            text = " " + label + " " * max(width - screen.width(label) - len(hint) - 2, 1) + hint
+            text = screen.pad(text, width)
+            body = term.REVERSE + text + term.RESET if index == self.item else text
+            rows.append(BOX_V + body + BOX_V)
+        rows.append(BOX_BL + BOX_H * width + BOX_BR)
+        return rows
+
+    def render_into(self, lines, cols, rows):
+        lines[0] = self.bar_line(cols)
+        left = min(self._bar_offset(), max(cols - 24, 0))
+
+        for index, row in enumerate(self._box()):
+            target = 1 + index
+            if target >= rows:
+                break
+            lines[target] = screen.pad(
+                screen.splice(lines[target], left, term.FG_CYAN + row + term.RESET), cols
+            )
+
+    # --- 조작 ---
+
+    def _items(self):
+        return self.menus[self.menu][1]
+
+    def _step(self, delta):
+        items = self._items()
+        for _ in range(len(items)):
+            self.item = (self.item + delta) % len(items)
+            if items[self.item][2] is not None:
+                return  # 구분선은 건너뛴다
+
+    def key(self, key):
+        if key in (term.LEFT, "h"):
+            self.menu = (self.menu - 1) % len(self.menus)
+            self.menus = self._build()
+            self.item = 0
+            self._step(0) if self._items()[0][2] else self._step(1)
+        elif key in (term.RIGHT, "l"):
+            self.menu = (self.menu + 1) % len(self.menus)
+            self.menus = self._build()
+            self.item = 0
+            self._step(0) if self._items()[0][2] else self._step(1)
+        elif key in (term.UP, "k"):
+            self._step(-1)
+        elif key in (term.DOWN, "j"):
+            self._step(1)
+        elif key == term.ENTER:
+            action = self._items()[self.item][2]
+            self.app.modal = None  # 동작이 새 창을 띄울 수 있으므로 먼저 닫는다
+            if action:
+                action()
+            return False
+        elif key in (term.ESC, "q", "F9", "9"):
             return True
         return False
 
@@ -831,6 +1002,7 @@ class App:
         self.status = "F2 를 눌러 연결할 PC 를 찾습니다"
         self.transfer = None
         self.running = True
+        self.show_hidden = False
         self._services_started = False
 
         self.server = session.Server(my_name, platform_name, self.shares, self.events, tcp_port)
@@ -901,6 +1073,29 @@ class App:
             self.shares.save()
         except OSError as exc:
             self.status = "목록을 저장하지 못했습니다: %s" % exc
+
+    def _show_help(self):
+        self.modal = MessageDialog("도움말", _HELP_LINES)
+
+    def _open_peer_dialog(self):
+        self.modal = PeerDialog(self)
+
+    def _open_menu(self):
+        self.modal = MenuBar(self)
+
+    def set_sort(self, pane, mode):
+        """메뉴에서 정렬 기준을 직접 고른다."""
+        pane.sort_mode = mode
+        pane.entries = fsops.sort_entries(pane.entries, mode)
+        pane._clamp()
+        self.status = "%s 정렬: %s 기준" % (pane.label, fsops.SORT_LABELS[mode])
+
+    def toggle_hidden(self):
+        self.show_hidden = not self.show_hidden
+        self.status = "숨김 파일 %s" % ("보임" if self.show_hidden else "감춤")
+        self.local.refresh()
+        if self.session:
+            self.remote.refresh()
 
     def _open_share_manager(self):
         """F4. 연결 중에는 막는다.
@@ -1140,7 +1335,7 @@ class App:
         elif key in ("F5", "c"):
             self._start_copy()
         elif key in ("F2", "n"):
-            self.modal = PeerDialog(self)
+            self._open_peer_dialog()
         elif key in ("F3", "v"):
             self._view_file()
         elif key in ("F4", "o"):
@@ -1151,12 +1346,14 @@ class App:
             self._ask_mkdir()
         elif key in ("F8", term.DELETE):
             self._ask_delete()
-        elif key in ("F9", "s"):
-            self.status = "정렬: %s 기준" % self.focus.cycle_sort()
+        elif key == "F9":
+            self._open_menu()
+        elif key == "s":
+            self.status = "%s 정렬: %s 기준" % (self.focus.label, self.focus.cycle_sort())
         elif key == "r":
             self.focus.refresh()
         elif key in ("F1", "?"):
-            self.modal = MessageDialog("도움말", _HELP_LINES)
+            self._show_help()
 
     def _toggle_focus(self):
         if self.focus is self.local and self.session:
@@ -1469,7 +1666,11 @@ class App:
         lines.append(self._fkey_bar(cols))
 
         if self.modal is not None:
-            self._overlay(lines, cols, rows)
+            # 메뉴바는 제목 줄과 그 아래 상자를 직접 놓는다 (가운데 정렬이 아니다)
+            if hasattr(self.modal, "render_into"):
+                self.modal.render_into(lines, cols, rows)
+            else:
+                self._overlay(lines, cols, rows)
         return lines
 
     def _header(self, cols):
@@ -1539,17 +1740,55 @@ class App:
         out.append(bottom)
         return out
 
+    @staticmethod
+    def _columns(inner):
+        """패널 폭에 맞춰 보여줄 칸을 정한다. 좁으면 오른쪽부터 접는다."""
+        fixed = 2 + EXT_COL + 1 + SIZE_COL  # 표시(2) + 확장자 + 공백 + 크기
+        if inner >= fixed + NAME_MIN + 1 + DATE_COL + 1 + TIME_COL:
+            return True, True, True
+        if inner >= fixed + NAME_MIN + 1 + DATE_COL:
+            return True, True, False
+        if inner >= fixed + NAME_MIN:
+            return True, False, False
+        return False, False, False  # 아주 좁으면 이름과 크기만
+
     def _entry_line(self, pane, item, position, inner, focused):
         is_cursor = position == pane.cursor
         picked = item["name"] in pane.selected and not item.get("up")
+        is_up = bool(item.get("up"))
 
-        mark = "*" if picked else " "
-        name = item["name"] + ("/" if item["is_dir"] and not item.get("up") else "")
-        size = "" if item["is_dir"] else fsops.human_size(item["size"])
+        show_ext, show_date, show_time = self._columns(inner)
 
-        name_width = inner - SIZE_COL - 2
-        text = " %s%s%s" % (mark, screen.pad(name, name_width), screen.rjust(size, SIZE_COL))
-        text = screen.pad(text, inner)
+        # 크기 칸에는 디렉터리면 MDir 처럼 [ SubDir ] / [ Up-Dir ] 이 들어간다
+        if is_up:
+            size_text = "[ Up-Dir ]"
+        elif item["is_dir"]:
+            size_text = "[ SubDir ]"
+        else:
+            size_text = fsops.mdir_size(item["size"])
+
+        if show_ext:
+            base, ext = ("..", "") if is_up else fsops.split_name(item["name"])
+            if item["is_dir"]:
+                base, ext = item["name"], ""  # 폴더는 이름을 쪼개지 않는다
+        else:
+            base, ext = item["name"], ""
+
+        used = 2 + SIZE_COL + (EXT_COL + 1 if show_ext else 0)
+        used += (DATE_COL + 1) if show_date else 0
+        used += (TIME_COL + 1) if show_time else 0
+        name_width = max(inner - used, NAME_MIN)
+
+        parts = [" ", "*" if picked else " ", screen.pad(base, name_width)]
+        if show_ext:
+            parts.append(" " + screen.pad(ext.upper(), EXT_COL))
+        parts.append(screen.rjust(size_text, SIZE_COL))
+        if show_date:
+            parts.append(" " + screen.rjust(fsops.mdir_date(item.get("mtime")), DATE_COL))
+        if show_time:
+            parts.append(" " + screen.rjust(fsops.mdir_time(item.get("mtime")), TIME_COL))
+
+        text = screen.pad("".join(parts), inner)
 
         if is_cursor and focused:
             return term.REVERSE + text + term.RESET
@@ -1559,6 +1798,9 @@ class App:
             return term.FG_YELLOW + text + term.RESET
         if item["is_dir"]:
             return term.FG_CYAN + text + term.RESET
+        # MDir 은 실행 파일을 따로 물들였다
+        if ext.lower() in ("exe", "com", "bat", "sh", "app"):
+            return term.FG_GREEN + text + term.RESET
         return text
 
     def _pane_summary(self, pane):
@@ -1568,11 +1810,17 @@ class App:
             total = sum(e["size"] for e in pane.entries if e["name"] in pane.selected)
             return "%d개 선택 . %s" % (len(pane.selected), fsops.human_size(total))
 
-        count = "%d개 항목" % len(pane.entries)
+        # MDir 하단처럼 파일 수 / 폴더 수 / 전체 바이트를 보여준다
+        files = [e for e in pane.entries if not e["is_dir"]]
+        dirs = [e for e in pane.entries if e["is_dir"]]
+        summary = "%d File  %d Dir  %s Byte" % (
+            len(files), len(dirs), fsops.mdir_size(sum(e["size"] for e in files))
+        )
+
         # C:\ 에서는 '..' 이 없어 더 올라갈 곳이 안 보인다. 나갈 길을 알려준다
         if not pane.is_remote and fsops.is_filesystem_root(pane.path):
-            return count + "   \\ 드라이브 선택"
-        return count
+            return summary + "   \\ 드라이브"
+        return summary
 
     def _status(self, cols):
         return screen.pad(" " + self.status, cols)
@@ -1605,8 +1853,7 @@ class App:
     def _overlay(self, lines, cols, rows):
         """모달을 화면 가운데 띄운다.
 
-        줄 문자열에 ANSI 가 섞여 있어 가로 일부만 정확히 덧씌우기는 까다롭다.
-        그래서 다이얼로그를 화면 폭 가까이 넓게 잡고 해당 줄을 통째로 교체한다.
+        screen.splice() 로 겹쳐 쓰므로 상자 좌우의 패널 테두리가 그대로 남는다.
         """
         box_width = min(max(cols - 8, 30), 96)
         inner = box_width - 4
@@ -1623,14 +1870,16 @@ class App:
             box.append(BOX_V + " " + screen.pad(line, inner) + " " + BOX_V)
         box.append(BOX_BL + BOX_H * (box_width - 2) + BOX_BR)
 
-        left_pad = " " * max((cols - box_width) // 2, 0)
+        left = max((cols - box_width) // 2, 0)
         start = max((rows - len(box)) // 2, 0)
         for index, line in enumerate(box):
             row = start + index
             if 0 <= row < rows:
                 while len(lines) <= row:
                     lines.append("")
-                lines[row] = screen.pad(left_pad + term.FG_CYAN + line + term.RESET, cols)
+                lines[row] = screen.pad(
+                    screen.splice(lines[row], left, term.FG_CYAN + line + term.RESET), cols
+                )
 
 
 # 상단 숫자열 > 기능키. 키패드는 application 모드에서 이스케이프 시퀀스를 보내므로
@@ -1657,7 +1906,7 @@ _FKEYS = [
     ("6", "끊기"),
     ("7", "만들"),
     ("8", "삭제"),
-    ("9", "정렬"),
+    ("9", "메뉴"),
     ("0", "끝내"),
 ]
 
@@ -1689,7 +1938,8 @@ _HELP_LINES = [
     "3 . F3  파일 보기 (v)       4 . F4  공유 폴더 바꾸기 (o)",
     "5 . F5  복사 (c)            6 . F6  연결 끊기 (d)",
     "7 . F7  폴더 만들기 (m)     8 . F8  삭제 (Delete)",
-    "9 . F9  정렬 바꾸기 (s)     0 . F10 종료 (q)",
+    "9 . F9  상단 메뉴           0 . F10 종료 (q)",
+    "s             정렬 바꾸기 (메뉴에서 기준을 직접 고를 수 있습니다)",
     "r             새로고침",
     "",
     "정렬은 이름 > 확장자 > 크기 > 날짜 순으로 돌아갑니다.",

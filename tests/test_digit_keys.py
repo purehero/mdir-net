@@ -114,9 +114,10 @@ class TestDigitsCallTheSameActions(DigitTestCase):
         self.assertIsInstance(self.app.modal, app_module.ConfirmDialog)
         self.assertIn("되돌릴 수 없습니다", "\n".join(self.app.modal.lines(60)))
 
-    def test_9_cycles_sort(self):
+    def test_9_opens_the_menu_bar(self):
+        """NC 처럼 F9(=9)는 상단 메뉴를 연다. 정렬은 s 와 메뉴 안에 있다."""
         self.app._on_key("9")
-        self.assertIn("확장자", self.app.status)
+        self.assertIsInstance(self.app.modal, app_module.MenuBar)
 
     def test_0_quits(self):
         self.app._on_key("0")

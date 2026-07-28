@@ -60,8 +60,11 @@ class TestLayout(AppTestCase):
         lines, _ = self.compose()
         body = "\n".join(lines)
         self.assertIn("문서", body)
-        self.assertIn("보고서.txt", body)
-        self.assertIn("2.0 KB", body)
+        # MDir 처럼 이름과 확장자가 나뉘고 크기는 천 단위로 끊는다
+        self.assertIn("보고서", body)
+        self.assertIn("TXT", body)
+        self.assertIn("2,048", body)
+        self.assertIn("[ SubDir ]", body)
 
     def test_disconnected_pane_invites_connection(self):
         self.assertIn("연결되지 않음", "\n".join(self.compose()[0]))

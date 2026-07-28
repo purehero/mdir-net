@@ -63,7 +63,7 @@ class TestFunctionKeyBar(MdirTestCase):
     def test_bar_appears_in_the_composed_screen(self):
         body = "\n".join(self.app._compose((100, 30)))
         self.assertIn("복사", body)
-        self.assertIn("정렬", body)
+        self.assertIn("메뉴", body)  # NC 처럼 9번은 메뉴다
         self.assertIn("끝내", body)
 
 
@@ -76,9 +76,15 @@ class TestSorting(MdirTestCase):
         self.assertEqual(pane.cycle_sort(), "날짜")
         self.assertEqual(pane.cycle_sort(), "이름")
 
-    def test_f9_reports_the_new_mode(self):
-        self.app._on_key("F9")
+    def test_s_reports_the_new_mode(self):
+        self.app._on_key("s")
         self.assertIn("확장자", self.app.status)
+
+    def test_menu_can_set_a_sort_mode_directly(self):
+        """NC 의 Left/Right 메뉴처럼 기준을 직접 고를 수 있다."""
+        self.app.set_sort(self.app.local, fsops.SORT_SIZE)
+        self.assertEqual(self.app.local.sort_mode, fsops.SORT_SIZE)
+        self.assertIn("크기", self.app.status)
 
     def test_directories_stay_on_top_in_every_mode(self):
         for mode in fsops.SORT_ORDER:
