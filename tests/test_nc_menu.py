@@ -527,3 +527,41 @@ class TestRightArrowEntersFolder(MdirListTestCase):
         self.app._on_key("1")
         rendered = "\n".join(self.app.modal.lines(70))
         self.assertIn("폴더 안으로", rendered)
+
+
+class TestSlashOpensMenu(MdirListTestCase):
+    """'/' 도 9번처럼 상단 메뉴를 연다."""
+
+    def test_slash_opens_the_menu(self):
+        self.app._on_key("/")
+        self.assertIsInstance(self.app.modal, app_module.MenuBar)
+
+    def test_slash_matches_nine_and_f9(self):
+        opened = []
+        for key in ("9", "F9", "/"):
+            self.app.modal = None
+            self.app._on_key(key)
+            opened.append(type(self.app.modal).__name__)
+        self.assertEqual(opened, ["MenuBar"] * 3)
+
+    def test_slash_closes_the_menu_again(self):
+        self.app._on_key("/")
+        self.app._on_key("/")
+        self.assertIsNone(self.app.modal)
+
+    def test_slash_is_typable_in_an_input_box(self):
+        """마스크에 경로 같은 것을 칠 수 있어야 한다. 입력창에서는 메뉴가 열리면 안 된다."""
+        self.app._on_key("+")
+        self.app.modal.text = ""
+        for ch in "a/b":
+            self.app._on_key(ch)
+        self.assertEqual(self.app.modal.text, "a/b")
+        self.assertIsInstance(self.app.modal, app_module.InputDialog)
+
+    def test_slash_does_not_open_the_drive_dialog(self):
+        self.app._on_key("/")
+        self.assertNotIsInstance(self.app.modal, app_module.DriveDialog)
+
+    def test_help_shows_slash_next_to_the_menu(self):
+        self.app._on_key("1")
+        self.assertIn("상단 메뉴 (/)", "\n".join(self.app.modal.lines(70)))
