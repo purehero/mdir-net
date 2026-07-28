@@ -382,7 +382,9 @@ class Session:
         if not path.is_file():
             raise ValueError("파일이 아닙니다: %s" % path.name)
 
-        limit = min(int(header.get("limit") or 0), config.MAX_VIEW_BYTES)
+        # 음수를 그대로 넘기면 read(-1) 이 되어 파일을 통째로 읽는다. 상한이
+        # 우회되므로 0 아래로는 내려가지 않게 잡는다
+        limit = max(min(int(header.get("limit") or 0), config.MAX_VIEW_BYTES), 0)
         self._send(
             {"t": "head.ok", "id": req_id, "size": path.stat().st_size},
             fsops.read_head(path, limit),

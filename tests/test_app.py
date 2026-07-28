@@ -483,14 +483,14 @@ class TestShareSelection(unittest.TestCase):
         app._on_key("F4")
         self.assertIsInstance(app.modal, app_module.ShareDialog)
 
-    def test_f4_is_refused_while_connected(self):
-        """연결 중에 목록을 바꾸면 상대 화면과 어긋난다."""
+    def test_f4_opens_while_connected_too(self):
+        """세션이 목록 객체를 그대로 보므로 연결 중 변경도 곧바로 적용된다."""
         app = self.make(self.root)
         app.session = _StubSession()
 
         app._on_key("F4")
-        self.assertIsNone(app.modal)
-        self.assertIn("연결 중에는", app.status)
+        self.assertIsInstance(app.modal, app_module.ShareDialog)
+        self.assertIn("곧바로 적용", app.status)
 
     def test_local_pane_starts_at_the_first_share(self):
         app = self.make(self.root)
