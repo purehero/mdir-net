@@ -256,10 +256,20 @@ class TestFunctionBarMatchesNc(MdirListTestCase):
         labels = dict(app_module._FKEYS)
         self.assertEqual(labels["9"], "메뉴")
 
+    def test_six_is_rename_like_nc(self):
+        """NC 의 6번은 Rename/Move 다."""
+        self.assertEqual(dict(app_module._FKEYS)["6"], "이름")
+
+    def test_connect_and_disconnect_are_not_on_the_bar(self):
+        """연결과 끊기는 Commands 메뉴와 문자 키로만 둔다."""
+        labels = [l for _, l in app_module._FKEYS]
+        self.assertNotIn("연결", labels)
+        self.assertNotIn("끊기", labels)
+
     def test_bar_order_follows_the_reference(self):
         self.assertEqual(
             [l for _, l in app_module._FKEYS],
-            ["도움", "연결", "보기", "폴더", "복사", "끊기", "만들", "삭제", "메뉴", "끝내"],
+            ["도움", "정렬", "보기", "폴더", "복사", "이름", "만들", "삭제", "메뉴", "끝내"],
         )
 
 
@@ -289,3 +299,126 @@ class TestSplice(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRename(MdirListTestCase):
+    """NC 의 6번 자리(Rename/Move)를 되찾은 기능."""
+
+    def open_rename(self, name):
+        self.app.local.cursor = next(
+            i for i, e in enumerate(self.app.local.rows()) if e["name"] == name
+        )
+        self.app._on_key("6")
+        self.assertIsInstance(self.app.modal, app_module.InputDialog)
+        return self.app.modal
+
+    def test_dialog_starts_with_the_current_name(self):
+        dialog = self.open_rename("HWP.CFG")
+        self.assertEqual(dialog.text, "HWP.CFG")
+
+    def test_renames_a_file(self):
+        dialog = self.open_rename("HWP.CFG")
+        dialog.text = "새이름.CFG"
+        dialog.key(term.ENTER)
+
+        self.assertTrue((self.root / "새이름.CFG").is_file())
+        self.assertFalse((self.root / "HWP.CFG").exists())
+        self.assertIn("새이름.CFG", self.app.status)
+
+    def test_renames_a_directory(self):
+        dialog = self.open_rename("FONT")
+        dialog.text = "글꼴"
+        dialog.key(term.ENTER)
+        self.assertTrue((self.root / "글꼴").is_dir())
+
+    def test_refuses_to_overwrite_an_existing_name(self):
+        """POSIX 의 rename 은 대상이 있으면 조용히 지운다. 반드시 막아야 한다."""
+        dialog = self.open_rename("HWP.CFG")
+        dialog.text = "README"
+        dialog.key(term.ENTER)
+
+        self.assertIsInstance(self.app.modal, app_module.MessageDialog)
+        self.assertTrue((self.root / "HWP.CFG").is_file(), "원본이 사라졌다")
+        self.assertEqual((self.root / "README").read_bytes(), b"x" * 7, "대상이 덮여졌다")
+
+    def test_refuses_path_separators(self):
+        dialog = self.open_rename("HWP.CFG")
+        dialog.text = "sub/nope.cfg"
+        dialog.key(term.ENTER)
+
+        self.assertIsInstance(self.app.modal, app_module.MessageDialog)
+        self.assertTrue((self.root / "HWP.CFG").is_file())
+
+    def test_unchanged_name_does_nothing(self):
+        self.open_rename("HWP.CFG")
+        # 앱을 거쳐 눌러야 모달이 닫힌다 (다이얼로그는 닫으라고 알리기만 한다)
+        self.app._on_key(term.ENTER)
+        self.assertTrue((self.root / "HWP.CFG").is_file())
+        self.assertIsNone(self.app.modal)
+
+    def test_dotdot_cannot_be_renamed(self):
+        self.app.local.navigate(self.root / "FONT")
+        self.app.local.cursor = 0  # '..'
+        self.app._on_key("6")
+        self.assertIsNone(self.app.modal)
+        self.assertIn("커서를 두세요", self.app.status)
+
+    def test_menu_has_rename_too(self):
+        self.app._on_key("F9")
+        labels = [l for l, _, _ in self.app.modal.menus[1][1]]
+        self.assertIn("이름 바꾸기", labels)
+
+
+class TestHiddenToggleKey(MdirListTestCase):
+    """'.' 키로 숨김 파일을 보였다 안 보였다 한다."""
+
+    def test_dot_toggles(self):
+        self.assertNotIn(".hidden", self.body())
+
+        self.app._on_key(".")
+        self.assertIn(".hidden", self.body())
+
+        self.app._on_key(".")
+        self.assertNotIn(".hidden", self.body())
+
+    def test_dot_reports_the_state(self):
+        self.app._on_key(".")
+        self.assertIn("보임", self.app.status)
+        self.app._on_key(".")
+        self.assertIn("감춤", self.app.status)
+
+    def test_dot_stays_typable_in_an_input_box(self):
+        """마스크에 `*.txt` 를 쳐야 하므로 입력창에서는 토글되면 안 된다."""
+        self.app._on_key("+")
+        self.app.modal.text = ""
+        for ch in "*.txt":
+            self.app._on_key(ch)
+
+        self.assertEqual(self.app.modal.text, "*.txt")
+        self.assertFalse(self.app.show_hidden, "입력 중에 토글되었다")
+
+    def test_dot_is_typable_when_renaming(self):
+        self.app.local.cursor = next(
+            i for i, e in enumerate(self.app.local.rows()) if e["name"] == "README"
+        )
+        self.app._on_key("6")
+        self.app.modal.text = "README"
+        for ch in ".md":
+            self.app._on_key(ch)
+        self.assertEqual(self.app.modal.text, "README.md")
+        self.assertFalse(self.app.show_hidden)
+
+    def test_option_menu_shows_the_dot_hint(self):
+        self.app._on_key("F9")
+        menu = self.app.modal
+        menu.menu = 3
+        menu.menus = menu._build()
+        self.assertEqual(menu.menus[3][1][0][1], ".")
+
+    def test_hidden_directories_are_filtered_too(self):
+        (self.root / ".git").mkdir()
+        self.app.local.refresh()
+        self.assertNotIn(".git", self.body())
+
+        self.app._on_key(".")
+        self.assertIn(".git", self.body())

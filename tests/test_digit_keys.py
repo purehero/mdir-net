@@ -79,9 +79,10 @@ class TestDigitsCallTheSameActions(DigitTestCase):
         self.assertIsInstance(self.app.modal, app_module.MessageDialog)
         self.assertEqual(self.app.modal.title, "도움말")
 
-    def test_2_opens_peer_list(self):
+    def test_2_cycles_sort(self):
+        """NC 배치에 맞춰 2번은 정렬이다. 연결은 n 과 Commands 메뉴로 옮겼다."""
         self.app._on_key("2")
-        self.assertIsInstance(self.app.modal, app_module.PeerDialog)
+        self.assertIn("확장자", self.app.status)
 
     def test_3_opens_viewer(self):
         self.cursor_to("메모.txt")
@@ -99,9 +100,12 @@ class TestDigitsCallTheSameActions(DigitTestCase):
         self.app._on_key("5")
         self.assertIsInstance(self.app.modal, app_module.ConfirmDialog)
 
-    def test_6_disconnects(self):
+    def test_6_opens_rename(self):
+        """NC 의 6번은 Rename/Move 다. 끊기는 d 와 Commands 메뉴로 옮겼다."""
+        self.cursor_to("메모.txt")
         self.app._on_key("6")
-        self.assertIn("연결된 상대가 없습니다", self.app.status)
+        self.assertIsInstance(self.app.modal, app_module.InputDialog)
+        self.assertEqual(self.app.modal.title, "이름 바꾸기")
 
     def test_7_opens_mkdir(self):
         self.app._on_key("7")
@@ -124,7 +128,7 @@ class TestDigitsCallTheSameActions(DigitTestCase):
         self.assertFalse(self.app.running)
 
     def test_digit_and_fkey_reach_the_same_place(self):
-        for digit, fkey in (("2", "F2"), ("4", "F4"), ("7", "F7")):
+        for digit, fkey in (("4", "F4"), ("7", "F7")):
             by_digit = self._modal_after(digit)
             by_fkey = self._modal_after(fkey)
             self.assertEqual(type(by_digit), type(by_fkey), digit)
@@ -217,8 +221,8 @@ class TestDigitsAreInputModeProof(DigitTestCase):
 
     def test_digits_work_the_same_regardless_of_hangul_mode(self):
         """IME 는 글자 키만 바꾼다. 숫자는 승인 창을 먹통으로 만든 문제가 없다."""
-        self.app._on_key("2")
-        self.assertIsInstance(self.app.modal, app_module.PeerDialog)
+        self.app._on_key("4")
+        self.assertIsInstance(self.app.modal, app_module.ShareDialog)
 
 
 class TestHelpMentionsDigits(DigitTestCase):
