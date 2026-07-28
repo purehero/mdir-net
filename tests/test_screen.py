@@ -42,6 +42,29 @@ class TestFit(unittest.TestCase):
         self.assertEqual(screen.fit("abc", 0), "")
 
 
+class TestFitLeft(unittest.TestCase):
+    """경로는 뒤를 남겨야 한다. 앞을 남기면 지금 폴더 이름이 사라진다."""
+
+    def test_short_text_untouched(self):
+        self.assertEqual(screen.fit_left("/short", 30), "/short")
+
+    def test_keeps_the_tail_and_marks_the_cut(self):
+        out = screen.fit_left("/private/var/folders/31/abc/Downloads", 20)
+        self.assertTrue(out.endswith("Downloads"))
+        self.assertTrue(out.startswith("~"))
+        self.assertEqual(screen.width(out), 20)
+
+    def test_exact_width_with_hangul(self):
+        for limit in range(2, 20):
+            self.assertLessEqual(screen.width(screen.fit_left("/한글/경로/문서", limit)), limit)
+
+    def test_zero_limit(self):
+        self.assertEqual(screen.fit_left("abc", 0), "")
+
+    def test_ascii_marker(self):
+        self.assertTrue(screen.fit_left("a" * 50, 10).isascii())
+
+
 class TestPadAndRjust(unittest.TestCase):
     def test_pad_reaches_exact_width(self):
         for text in ("abc", "한글 파일", "", "매우매우매우긴한글이름입니다"):

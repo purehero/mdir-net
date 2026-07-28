@@ -6,7 +6,7 @@ import queue
 import threading
 from pathlib import Path
 
-from .. import config, discovery, fsops, session
+from .. import config, discovery, fsops, session, shares as shares_mod
 from . import screen, term
 
 # 테두리 문자. 폭이 정확히 1칸이고 East Asian Width 가 A(Ambiguous)가 아닌 것만
@@ -43,7 +43,9 @@ class Pane:
     def __init__(self, app, is_remote):
         self.app = app
         self.is_remote = is_remote
-        self.path = Path.home()
+        # 로컬은 내 실제 경로(Path), 원격은 공유 상대 경로 문자열이다.
+        # 원격에 호스트 절대 경로를 쓰지 않으므로 OS 경로 규칙이 섞이지 않는다
+        self.path = shares_mod.ROOT if is_remote else Path.home()
         self.entries = []
         self.cursor = 0
         self.offset = 0
@@ -53,24 +55,49 @@ class Pane:
         self._generation = 0  # 늦게 도착한 조회 결과를 버리기 위한 세대 번호
 
     @property
-    def title(self):
-        # 왼쪽은 늘 내 PC, 오른쪽은 늘 상대다. 자리가 바뀌는 일은 없다
+    def label(self):
+        """패널 이름. 왼쪽은 늘 내 PC, 오른쪽은 늘 상대다."""
         if not self.is_remote:
-            return "내 PC  %s" % self.path
-        if not self.app.session:
-            return "상대  (연결되지 않음)"
-        return "%s  %s" % (self.app.session.peer_name, self.path)
+            return "내 PC"
+        return self.app.session.peer_name if self.app.session else "상대"
+
+    @property
+    def location(self):
+        """지금 보고 있는 위치."""
+        if self.is_remote and not self.app.session:
+            return "(연결되지 않음)"
+        return shares_mod.display(self.path) if self.is_remote else str(self.path)
+
+    @property
+    def title(self):
+        return "%s  %s" % (self.label, self.location)
 
     @property
     def active(self):
         return not self.is_remote or self.app.session is not None
+
+    @property
+    def at_top(self):
+        """더 위로 올라갈 수 없는 지점인가."""
+        if self.is_remote:
+            return shares_mod.normalize(self.path) == shares_mod.ROOT
+        return self.path == self.path.parent
+
+    def child(self, name):
+        """이 패널의 경로 공간에서 하위 항목의 경로를 만든다."""
+        if self.is_remote:
+            return shares_mod.join(self.path, name)
+        return self.path / name
+
+    def up(self):
+        return shares_mod.parent(self.path) if self.is_remote else self.path.parent
 
     def rows(self):
         """'..' 항목을 앞에 붙인 표시용 목록."""
         if not self.active:
             return []
         items = []
-        if self.path != self.path.parent:
+        if not self.at_top:
             items.append({"name": "..", "is_dir": True, "size": 0, "up": True})
         return items + self.entries
 
@@ -88,7 +115,7 @@ class Pane:
         return []
 
     def navigate(self, path):
-        self.path = Path(path)
+        self.path = path if self.is_remote else Path(path)
         self.cursor = 0
         self.offset = 0
         self.selected.clear()
@@ -119,17 +146,23 @@ class Pane:
 
         def work():
             try:
-                path, entries = active.remote_list(str(self.path))
+                path, entries = active.remote_list(self.path)
                 self.app.events.put(("listing", side, generation, path, entries))
             except session.SessionError as exc:
                 self.app.events.put(("list_error", side, generation, str(exc)))
+            except Exception as exc:  # noqa: BLE001
+                # 예상 못한 예외를 삼키면 패널이 '불러오는 중...' 에서 멈춘 채
+                # 이유를 알 수 없게 된다. 반드시 화면에 남긴다
+                self.app.events.put(
+                    ("list_error", side, generation, "%s: %s" % (type(exc).__name__, exc))
+                )
 
         threading.Thread(target=work, name="list-%s" % side, daemon=True).start()
 
     def apply_listing(self, generation, path, entries):
         if generation != self._generation:
             return  # 그 사이 다른 디렉터리로 옮겨갔다. 낡은 결과는 버린다
-        self.path = Path(path)
+        self.path = path if self.is_remote else Path(path)
         self.entries = fsops.sort_entries(entries, self.sort_mode)
         self.message = ""
         self._clamp()
@@ -418,6 +451,98 @@ class ApprovalDialog(Dialog):
         return False
 
 
+class ShareDialog(Dialog):
+    """공유 폴더 목록 관리. 추가와 삭제를 여기서 한다.
+
+    상대에게는 이 목록이 가상 루트의 폴더들로 보인다.
+    """
+
+    title = "공유 폴더 관리"
+    VISIBLE = 8
+
+    def __init__(self, app):
+        self.app = app
+        self.cursor = 0
+
+    @property
+    def shares(self):
+        return list(self.app.shares)
+
+    def lines(self, inner):
+        shares = self.shares
+        out = [
+            "상대에게는 이 목록이 최상위 폴더로 보입니다.",
+            term.FG_GRAY + BOX_H * inner + term.RESET,
+        ]
+
+        if not shares:
+            out.append(term.FG_YELLOW + "  아직 공유하는 폴더가 없습니다." + term.RESET)
+            out += [""] * (self.VISIBLE - 1)
+        else:
+            self.cursor = max(0, min(self.cursor, len(shares) - 1))
+            start = max(0, min(self.cursor - self.VISIBLE + 1, len(shares) - self.VISIBLE))
+            start = max(start, 0)
+            for index in range(start, min(start + self.VISIBLE, len(shares))):
+                share = shares[index]
+                # 외장 디스크를 빼면 경로가 없어진다. 지우지 않고 표시만 해준다.
+                # 표시가 경로 뒤에 붙으면 잘려 사라지므로 이름 옆에 둔다
+                mark = "" if share.exists else "(없음)"
+                head = "  %s %s" % (screen.pad(share.name, 16), screen.pad(mark, 6))
+                path_room = inner - screen.width(head)
+                label = screen.pad(head + screen.fit_left(str(share.path), path_room), inner)
+                if index == self.cursor:
+                    out.append(term.REVERSE + label + term.RESET)
+                elif not share.exists:
+                    out.append(term.FG_RED + label + term.RESET)
+                else:
+                    out.append(label)
+            out += [""] * (self.VISIBLE - min(len(shares), self.VISIBLE))
+
+        out += [
+            term.FG_GRAY + BOX_H * inner + term.RESET,
+            term.BOLD + "a 추가" + term.RESET
+            + term.FG_GRAY + "   d 삭제   Esc 닫기" + term.RESET,
+        ]
+        return out
+
+    def key(self, key):
+        shares = self.shares
+
+        if key in (term.UP, "k"):
+            self.cursor = max(0, self.cursor - 1)
+        elif key in (term.DOWN, "j"):
+            self.cursor = min(len(shares) - 1, self.cursor + 1) if shares else 0
+        elif key in ("a", term.INSERT):
+            start = shares[self.cursor].path if shares else Path.home()
+            self.app._show_share_picker(start, on_cancel=lambda: None)
+            return False  # 선택상자가 이 창을 대신한다
+        elif key in ("d", term.DELETE) and shares:
+            self._confirm_remove(shares[self.cursor])
+            return False
+        elif key in (term.ESC, "q"):
+            return True
+        return False
+
+    def _confirm_remove(self, share):
+        def decide(ok):
+            if ok:
+                self.app.remove_share(share.name)
+                self.cursor = max(0, self.cursor - 1)
+            self.app.modal = ShareDialog(self.app)
+            self.app.modal.cursor = self.cursor
+
+        self.app.modal = ConfirmDialog(
+            "공유 폴더 제거",
+            [
+                term.BOLD + share.name + term.RESET,
+                term.FG_GRAY + str(share.path) + term.RESET,
+                "",
+                "목록에서만 빼냅니다. 폴더와 파일은 그대로 남습니다.",
+            ],
+            decide,
+        )
+
+
 class DriveDialog(Dialog):
     """드라이브(볼륨) 선택. Windows 에서 D: 로 넘어가는 유일한 통로다."""
 
@@ -682,19 +807,23 @@ class ProgressDialog(Dialog):
 class App:
     """전체 애플리케이션. 이벤트 큐를 비우고 화면을 그리는 단일 루프."""
 
-    def __init__(self, my_name, root, tcp_port, udp_port, platform_name, use_discovery=True):
+    def __init__(self, my_name, shares, tcp_port, udp_port, platform_name,
+                 use_discovery=True, persist=True):
         self.my_name = my_name
         self.platform_name = platform_name
         self.events = queue.Queue()
 
-        # root 가 None 이면 실행 직후 선택상자로 고르게 한다. 고르기 전에는
-        # 아무것도 공유하지 않아야 하므로 서비스 기동도 그때까지 미룬다
-        self.pick_root_at_start = root is None
-        self.root = Path(root or Path.home()).expanduser().resolve()
+        # 공유 폴더 목록. 비어 있으면 실행 직후 선택상자로 첫 항목을 받는다.
+        # 하나라도 정해지기 전에는 아무것도 열지 않으므로 서비스 기동을 미룬다
+        self.shares = shares
+        self.persist = persist
+        self.pick_root_at_start = len(shares) == 0
 
         self.local = Pane(self, is_remote=False)
         self.remote = Pane(self, is_remote=True)
-        self.local.path = self.root
+        # 왼쪽은 첫 공유 폴더에서 시작한다. 목록이 비었으면 홈에서 시작한다
+        first = next(iter(shares), None)
+        self.local.path = first.path if first else Path.home()
         self.focus = self.local
 
         self.session = None
@@ -704,7 +833,7 @@ class App:
         self.running = True
         self._services_started = False
 
-        self.server = session.Server(my_name, platform_name, self.root, self.events, tcp_port)
+        self.server = session.Server(my_name, platform_name, self.shares, self.events, tcp_port)
         self.port = self.server.bind()
         self.discovery = (
             discovery.Discovery(os.urandom(8).hex(), my_name, self.port, platform_name, udp_port)
@@ -717,8 +846,10 @@ class App:
 
     def run(self):
         if self.pick_root_at_start:
-            # 공유 폴더가 정해지기 전에는 서버를 열지 않는다. 취소하면 종료한다
-            self._show_root_picker(self.root, on_cancel=self._quit, cancel_hint="Esc 종료")
+            # 공유 폴더가 하나도 없으면 서버를 열지 않는다. 취소하면 종료한다
+            self._show_share_picker(
+                Path.home(), on_cancel=self._quit, cancel_hint="Esc 종료", then_start=True
+            )
         else:
             self.start_services()
 
@@ -747,42 +878,64 @@ class App:
     def _quit(self):
         self.running = False
 
-    def _choose_root_and_start(self, path):
-        self.set_root(path)
-        self.start_services()
+    def add_share(self, path):
+        """목록에 폴더를 더한다. Server 가 같은 목록 객체를 보므로 곧바로 반영된다."""
+        try:
+            share = self.shares.add(path)
+        except ValueError as exc:
+            self.modal = MessageDialog("추가할 수 없습니다", str(exc), term.FG_RED)
+            return None
 
-    def set_root(self, path):
-        """공유 폴더를 바꾼다. Server 가 이 값을 읽어 새 세션에 넘긴다."""
-        self.root = Path(path).resolve()
-        self.server.root = self.root
-        self.local.navigate(self.root)
-        self.status = "공유 폴더: %s" % self.root
+        if self.persist:
+            self._save_shares()
+        self.status = "공유 폴더 추가: %s" % share.name
+        return share
 
-    def _open_root_picker(self):
+    def remove_share(self, name):
+        if self.shares.remove(name) and self.persist:
+            self._save_shares()
+        self.status = "공유 폴더 제거: %s" % name
+
+    def _save_shares(self):
+        try:
+            self.shares.save()
+        except OSError as exc:
+            self.status = "목록을 저장하지 못했습니다: %s" % exc
+
+    def _open_share_manager(self):
         """F4. 연결 중에는 막는다.
 
-        Session 은 만들어질 때 공유 루트를 받아 보관하므로, 연결 중에 바꿔도
-        상대가 보는 범위는 그대로다. 사용자는 바뀌었다고 믿는데 실제로는 아닌
-        상태가 되므로 아예 허용하지 않는다.
+        Session 은 만들어질 때 목록 객체를 받으므로 항목을 더하면 반영되지만,
+        상대는 이미 가상 루트를 화면에 띄운 상태다. 목록이 바뀌었는데 상대
+        화면은 그대로여서 혼란스럽다. 끊은 뒤에 바꾸게 한다.
         """
         if self.session:
             self.status = "연결 중에는 바꿀 수 없습니다. F6 으로 끊고 다시 시도하세요"
             return
-        self._show_root_picker(self.root, on_cancel=lambda: None)
+        self.modal = ShareDialog(self)
 
-    def _show_root_picker(self, start, on_cancel, cancel_hint="Esc 취소"):
-        """공유 폴더 선택상자를 띄운다. 드라이브 창으로 오갈 수 있게 엮어둔다."""
+    def _show_share_picker(self, start, on_cancel, cancel_hint="Esc 취소", then_start=False):
+        """공유 폴더로 더할 폴더를 고르는 선택상자. 드라이브 창과 엮어둔다."""
 
         def open_drives():
             # 드라이브를 고르면 그 루트에서 선택상자를 다시 연다
             self.modal = DriveDialog(
                 fsops.list_drives(),
-                lambda path: self._show_root_picker(path, on_cancel, cancel_hint),
+                lambda path: self._show_share_picker(path, on_cancel, cancel_hint, then_start),
             )
+
+        def chosen(path):
+            if self.add_share(path) is None:
+                return
+            if then_start:
+                self.start_services()
+                self.local.navigate(Path(path))
+            else:
+                self.modal = ShareDialog(self)
 
         self.modal = FolderDialog(
             start,
-            on_choose=self._choose_root_and_start if not self._services_started else self.set_root,
+            on_choose=chosen,
             on_cancel=on_cancel,
             cancel_hint=cancel_hint,
             on_drives=open_drives,
@@ -898,9 +1051,9 @@ class App:
 
         def load_home():
             try:
-                home = new_session.remote_home()
-                self.remote.path = Path(home)
-                self.remote.refresh()
+                # 원격 경로는 공유 상대 경로 문자열이다. Path 로 감싸면
+                # JSON 으로 직렬화되지 않아 요청이 조용히 실패한다
+                self.remote.navigate(new_session.remote_home())
             except session.SessionError as exc:
                 self.events.put(("error", "원격 폴더를 열 수 없습니다: %s" % exc))
 
@@ -924,7 +1077,7 @@ class App:
         def work():
             try:
                 new_session = session.connect(
-                    peer, self.my_name, self.platform_name, self.root, self.events
+                    peer, self.my_name, self.platform_name, self.shares, self.events
                 )
                 self.events.put(("connected", new_session))
             except session.SessionError as exc:
@@ -991,7 +1144,7 @@ class App:
         elif key in ("F3", "v"):
             self._view_file()
         elif key in ("F4", "o"):
-            self._open_root_picker()
+            self._open_share_manager()
         elif key in ("F6", "d"):
             self._disconnect()
         elif key in ("F7", "m"):
@@ -1018,13 +1171,12 @@ class App:
         if item.get("up"):
             self._go_up(self.focus)
         elif item["is_dir"]:
-            self.focus.navigate(self.focus.path / item["name"])
+            self.focus.navigate(self.focus.child(item["name"]))
 
     def _go_up(self, pane):
-        # 원격이 공유 루트 밖으로 나가려 하면 상대가 거부하고, 그 사유가
-        # list_error 로 돌아와 패널 아래에 표시된다. 미리 막지 않는다
-        if pane.path != pane.path.parent:
-            pane.navigate(pane.path.parent)
+        # 원격의 최상위는 공유 목록(가상 루트)이다. 그 위는 없다
+        if not pane.at_top:
+            pane.navigate(pane.up())
 
     def _disconnect(self):
         if not self.session:
@@ -1082,7 +1234,7 @@ class App:
             self.status = "폴더는 볼 수 없습니다. Enter 로 들어가세요"
             return
 
-        path = pane.path / item["name"]
+        path = pane.child(item["name"])
         limit = config.MAX_VIEW_BYTES
 
         if not pane.is_remote:
@@ -1100,7 +1252,7 @@ class App:
 
         def work():
             try:
-                data, size = active.remote_head(str(path), limit)
+                data, size = active.remote_head(path, limit)
                 self.events.put(("view", item["name"], data, size))
             except session.SessionError as exc:
                 self.events.put(("error", str(exc)))
@@ -1113,16 +1265,19 @@ class App:
         pane = self.focus
         if not pane.active:
             return
+        if pane.is_remote and pane.at_top:
+            self.status = "공유 목록에는 폴더를 만들 수 없습니다. 안으로 들어가세요"
+            return
 
         def create(name):
             if "/" in name or "\\" in name:
                 self.modal = MessageDialog("이름이 잘못되었습니다", "경로 구분자는 쓸 수 없습니다", term.FG_RED)
                 return
 
-            target = pane.path / name
+            target = pane.child(name)
             if pane.is_remote:
                 self._run_remote(
-                    lambda s: s.remote_mkdir(str(target)), "폴더를 만들었습니다: %s" % name
+                    lambda s: s.remote_mkdir(target), "폴더를 만들었습니다: %s" % name
                 )
                 return
             try:
@@ -1143,6 +1298,9 @@ class App:
     def _ask_delete(self):
         pane = self.focus
         if not pane.active:
+            return
+        if pane.is_remote and pane.at_top:
+            self.status = "공유 폴더는 상대가 목록에서 빼야 합니다 (여기서는 못 지웁니다)"
             return
 
         items = pane.targets()
@@ -1171,12 +1329,12 @@ class App:
         )
 
     def _do_delete(self, pane, items):
-        paths = [pane.path / i["name"] for i in items]
+        paths = [pane.child(i["name"]) for i in items]
 
         if pane.is_remote:
             def work(active):
                 for path in paths:
-                    active.remote_delete(str(path))
+                    active.remote_delete(path)
 
             self._run_remote(work, "%d개 항목을 지웠습니다" % len(paths))
             return
@@ -1207,6 +1365,15 @@ class App:
             self.status = "먼저 F2 로 상대에 연결하세요"
             return
 
+        # 가상 루트에는 파일을 둘 수 없다. 파일마다 오류를 내는 것보다
+        # 미리 알려주는 편이 낫다
+        if dest.is_remote and dest.at_top:
+            self.status = "상대의 공유 폴더 안으로 들어가세요 (Enter)"
+            return
+        if source.is_remote and source.at_top:
+            self.status = "공유 폴더 안으로 들어가 파일을 고르세요 (Enter)"
+            return
+
         items = source.targets()
         if not items:
             self.status = "복사할 항목을 고르세요 (Space 로 선택)"
@@ -1220,7 +1387,7 @@ class App:
                 "",
                 screen.fit(names, 50),
                 "",
-                term.FG_GRAY + "대상: %s" % dest.path + term.RESET,
+                term.FG_GRAY + "대상: %s" % dest.location + term.RESET,
                 term.FG_YELLOW + "같은 이름이 있으면 덮어씁니다." + term.RESET,
             ],
             lambda ok: self._run_copy(source, dest, items) if ok else None,
@@ -1241,15 +1408,15 @@ class App:
 
                 for rel, src_path, size in plan:
                     transfer.current = rel
-                    dest_path = dest.path / rel
+                    dest_path = dest.child(rel)
                     try:
                         if source.is_remote:
                             active.pull_file(
-                                str(src_path), dest_path, on_progress=_adder(transfer)
+                                src_path, dest_path, on_progress=_adder(transfer)
                             )
                         else:
                             active.push_file(
-                                src_path, str(dest_path), on_progress=_adder(transfer)
+                                src_path, dest_path, on_progress=_adder(transfer)
                             )
                     except (session.SessionError, OSError) as exc:
                         errors.append("%s - %s" % (rel, exc))
@@ -1268,18 +1435,24 @@ class App:
         plan = []
         for item in items:
             name = item["name"]
-            src = source.path / name
+            src = source.child(name)
 
             if not item["is_dir"]:
                 plan.append((name, src, item["size"]))
                 continue
 
-            listing = (
-                active.remote_tree(str(src)) if source.is_remote else fsops.walk_tree(src)
-            )
+            # 디렉터리는 여기서 펼친다. tree 는 상대 경로 목록을 돌려주므로
+            # 원본 쪽 경로 공간에 맞춰 다시 붙인다
+            if source.is_remote:
+                listing = active.remote_tree(src)
+                join = lambda base, rel: shares_mod.join(base, rel)
+            else:
+                listing = fsops.walk_tree(src)
+                join = lambda base, rel: base / rel
+
             for entry in listing:
                 plan.append(
-                    ("%s/%s" % (name, entry["path"]), src / entry["path"], entry["size"])
+                    ("%s/%s" % (name, entry["path"]), join(src, entry["path"]), entry["size"])
                 )
         return plan
 
@@ -1334,7 +1507,13 @@ class App:
         focused = pane is self.focus
         edge = term.FG_CYAN if focused else term.FG_GRAY
 
-        title = screen.fit(pane.title, inner - 2)
+        # 라벨은 온전히 두고 경로만 앞을 자른다. 뒤를 자르면 지금 폴더 이름이
+        # 사라져 어디를 보고 있는지 알 수 없다
+        label = pane.label
+        room = inner - 2 - screen.width(label) - 2
+        title = "%s  %s" % (label, screen.fit_left(pane.location, max(room, 0)))
+        title = screen.fit(title, inner - 2)
+
         top = edge + BOX_TL + BOX_H + term.RESET
         top += (term.BOLD if focused else "") + title + term.RESET
         top += edge + BOX_H * max(inner - screen.width(title) - 1, 0) + BOX_TR + term.RESET

@@ -16,6 +16,10 @@ from pathlib import Path
 from mdirnet.ui import app as app_module
 from mdirnet.ui import screen
 
+from .helpers import make_shares, only_name, rpath
+
+
+
 
 SOURCE_DIR = pathlib.Path(__file__).resolve().parent.parent / "mdirnet"
 
@@ -90,7 +94,8 @@ class LayoutTestCase(unittest.TestCase):
         self.root = Path(self.tmp.name).resolve()
         self.app = app_module.App(
             my_name="width-node",
-            root=self.root,
+            shares=make_shares(self.root),
+            persist=False,
             tcp_port=0,
             udp_port=0,
             platform_name="testos",

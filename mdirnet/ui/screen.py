@@ -51,6 +51,27 @@ def fit(text, limit):
     return "".join(out) + "~"
 
 
+def fit_left(text, limit):
+    """앞쪽을 잘라 뒤를 남긴다. 잘렸으면 앞에 '~' 를 붙인다.
+
+    경로에는 이걸 써야 한다. 뒤를 자르면 `/private/var/folders/31/s29gj~` 처럼
+    정작 알고 싶은 지금 폴더 이름이 사라진다.
+    """
+    if limit <= 0:
+        return ""
+    if width(text) <= limit:
+        return text
+
+    kept, used = [], 0
+    for ch in reversed(text):
+        w = char_width(ch)
+        if used + w > limit - 1:
+            break
+        kept.append(ch)
+        used += w
+    return "~" + "".join(reversed(kept))
+
+
 def pad(text, target):
     """오른쪽을 공백으로 채워 정확히 target 칸을 차지하게 만든다."""
     text = fit(text, target)

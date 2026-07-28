@@ -8,6 +8,10 @@ from mdirnet import fsops, session
 from mdirnet.ui import app as app_module
 from mdirnet.ui import term
 
+from .helpers import make_shares, only_name, rpath
+
+
+
 
 class TestCommandKeyNormalisation(unittest.TestCase):
     """두벌식 자판에서 한글 입력이 켜져 있으면 y 대신 'ㅛ' 가 들어온다."""
@@ -112,7 +116,8 @@ class TestApprovalThroughTheApp(unittest.TestCase):
         self.root = Path(self.tmp.name).resolve()
         self.app = app_module.App(
             my_name="ime-node",
-            root=self.root,
+            shares=make_shares(self.root),
+            persist=False,
             tcp_port=0,
             udp_port=0,
             platform_name="testos",
@@ -214,7 +219,8 @@ class TestHangulThroughDeleteFlow(unittest.TestCase):
         (self.root / "지울것.txt").write_bytes(b"x")
         self.app = app_module.App(
             my_name="n",
-            root=self.root,
+            shares=make_shares(self.root),
+            persist=False,
             tcp_port=0,
             udp_port=0,
             platform_name="testos",

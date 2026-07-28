@@ -13,6 +13,10 @@ from mdirnet import fsops
 from mdirnet.ui import app as app_module
 from mdirnet.ui import screen, term
 
+from .helpers import make_shares, only_name, rpath
+
+
+
 
 class TestIsFilesystemRoot(unittest.TestCase):
     def test_posix(self):
@@ -180,7 +184,8 @@ class DriveAppTestCase(unittest.TestCase):
 
         self.app = app_module.App(
             my_name="drive-node",
-            root=self.root,
+            shares=make_shares(self.root),
+            persist=False,
             tcp_port=0,
             udp_port=0,
             platform_name="testos",
@@ -289,11 +294,14 @@ class TestFolderDialogDriveRoute(DriveAppTestCase):
         )
         self.assertIn("드라이브", "\n".join(dialog.lines(60)))
 
-    def test_f4_picker_can_reach_a_drive_and_come_back(self):
-        """F4 → \\ → 드라이브 고르기 → 그 루트에서 선택상자가 다시 열린다."""
+    def test_share_picker_can_reach_a_drive_and_come_back(self):
+        """F4 > a(추가) > \\ > 드라이브 고르기 > 그 루트에서 선택상자가 열린다."""
         fake = [{"path": "/", "label": "/", "kind": "루트"}]
         with mock.patch.object(fsops, "list_drives", return_value=fake):
             self.app._on_key("F4")
+            self.assertIsInstance(self.app.modal, app_module.ShareDialog)
+
+            self.app._on_key("a")  # 추가 → 폴더 선택상자
             self.assertIsInstance(self.app.modal, app_module.FolderDialog)
 
             self.app._on_key("\\")
@@ -304,19 +312,22 @@ class TestFolderDialogDriveRoute(DriveAppTestCase):
         self.assertIsInstance(self.app.modal, app_module.FolderDialog)
         self.assertEqual(self.app.modal.path, Path("/"))
 
-    def test_choosing_a_folder_after_a_drive_hop_sets_the_share_root(self):
+    def test_choosing_a_folder_after_a_drive_hop_adds_a_share(self):
         fake = [{"path": str(self.root), "label": "T:", "kind": "고정"}]
         with mock.patch.object(fsops, "list_drives", return_value=fake):
             self.app._on_key("F4")
+            self.app._on_key("a")
             self.app._on_key("\\")
             self.app._on_key(term.ENTER)  # self.root 로 이동
 
-        self.app.modal.cursor = self.app.modal.rows().index("폴더")
-        self.app.modal.key(term.ENTER)
-        self.app.modal.key("CTRL-D")
+        picker = self.app.modal
+        picker.cursor = picker.rows().index("폴더")
+        picker.key(term.ENTER)
+        picker.key("CTRL-D")
 
-        self.assertEqual(self.app.root, self.root / "폴더")
-        self.assertEqual(self.app.server.root, self.root / "폴더")
+        self.assertIn("폴더", self.app.shares.names)
+        # Server 가 같은 목록 객체를 보므로 새 세션에 곧바로 반영된다
+        self.assertIs(self.app.server.shares, self.app.shares)
 
 
 class _StubSession:
