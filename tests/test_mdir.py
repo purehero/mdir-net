@@ -459,6 +459,18 @@ class TestRemoteOperations(unittest.TestCase):
         data, _ = self.a.remote_head(rpath(self.rb, "huge.bin"), config.MAX_VIEW_BYTES * 10)
         self.assertEqual(len(data), config.MAX_VIEW_BYTES)
 
+    def test_remote_head_refuses_a_negative_limit(self):
+        """음수 limit 은 read(-1) 이 되어 파일을 통째로 읽어버린다."""
+        from mdirnet import config
+
+        target = self.root_b / "big.txt"
+        target.write_bytes(b"0123456789" * 500)
+
+        for limit in (-1, -config.MAX_VIEW_BYTES):
+            data, size = self.a.remote_head(rpath(self.rb, "big.txt"), limit)
+            self.assertEqual(data, b"", limit)
+            self.assertEqual(size, 5000, limit)
+
 
 if __name__ == "__main__":
     unittest.main()

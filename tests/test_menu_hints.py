@@ -356,9 +356,11 @@ class TestNoStaleKeyNamesOnScreen(HintTestCase):
             self.assertIn(number + labels[number], short, short)
         self.assertNotIn("연결", short)  # 연결은 바에서 내려갔다
 
-    def test_disconnect_guidance_uses_the_real_key(self):
+    def test_share_manager_no_longer_sends_users_to_disconnect(self):
+        """연결 중에도 F4 가 열리므로 '끊고 다시' 안내가 남아 있으면 안 된다."""
         app = self.fresh_app()
         app.session = _StubSession()
         app._on_key("F4")
-        self.assertIn("d ", app.status)
-        self.assertNotIn("F6", app.status)
+        self.assertIsInstance(app.modal, app_module.ShareDialog)
+        for stale in ("끊고", "F6", "바꿀 수 없습니다"):
+            self.assertNotIn(stale, app.status, app.status)

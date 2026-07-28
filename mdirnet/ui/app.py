@@ -829,7 +829,9 @@ class ShareDialog(Dialog):
             self.cursor = min(len(shares) - 1, self.cursor + 1) if shares else 0
         elif key in ("a", term.INSERT):
             start = shares[self.cursor].path if shares else Path.home()
-            self.app._show_share_picker(start, on_cancel=lambda: None)
+            # 취소하면 이 창으로 돌아온다. 여러 폴더를 잇달아 더하고 뺄 수
+            # 있어야 하므로, 선택상자를 닫았다고 관리 창까지 닫으면 안 된다
+            self.app._show_share_picker(start, on_cancel=self._reopen)
             return False  # 선택상자가 이 창을 대신한다
         elif key in ("d", term.DELETE) and shares:
             self._confirm_remove(shares[self.cursor])
@@ -838,13 +840,17 @@ class ShareDialog(Dialog):
             return True
         return False
 
+    def _reopen(self):
+        """관리 창을 커서 자리까지 그대로 되돌린다."""
+        self.app.modal = ShareDialog(self.app)
+        self.app.modal.cursor = self.cursor
+
     def _confirm_remove(self, share):
         def decide(ok):
             if ok:
                 self.app.remove_share(share.name)
                 self.cursor = max(0, self.cursor - 1)
-            self.app.modal = ShareDialog(self.app)
-            self.app.modal.cursor = self.cursor
+            self._reopen()
 
         self.app.modal = ConfirmDialog(
             "공유 폴더 제거",
@@ -1289,15 +1295,16 @@ class App:
             self.remote.refresh()
 
     def _open_share_manager(self):
-        """F4. 연결 중에는 막는다.
+        """F4. 연결 중에도 열린다.
 
-        Session 은 만들어질 때 목록 객체를 받으므로 항목을 더하면 반영되지만,
-        상대는 이미 가상 루트를 화면에 띄운 상태다. 목록이 바뀌었는데 상대
-        화면은 그대로여서 혼란스럽다. 끊은 뒤에 바꾸게 한다.
+        `Session` 은 목록 객체를 그대로 들고 있으므로 여기서 더하거나 뺀 것이
+        곧바로 상대의 요청 판정에 적용된다. 상대 화면은 다시 그릴 때까지
+        낡은 목록을 보여주지만, 이미 없어진 공유로 들어가려 하면 거부된다.
         """
         if self.session:
-            self.status = "연결 중에는 바꿀 수 없습니다. d 로 끊고 다시 시도하세요"
-            return
+            self.status = "연결 중입니다. 목록을 바꾸면 %s 에게 곧바로 적용됩니다" % (
+                self.session.peer_name
+            )
         self.modal = ShareDialog(self)
 
     def _show_share_picker(self, start, on_cancel, cancel_hint="Esc 취소", then_start=False):

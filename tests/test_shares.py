@@ -13,6 +13,16 @@ from mdirnet.ui import screen, term
 from .helpers import make_shares
 
 
+class _StubSession:
+    """연결된 것처럼 보이게 하는 최소 대역. 네트워크는 건드리지 않는다."""
+
+    peer_name = "stub-pc"
+    peer_host = "127.0.0.1"
+
+    def close(self, reason=None):
+        pass
+
+
 class ShareTestCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -284,6 +294,59 @@ class TestShareDialog(ShareTestCase):
 
         self.assertIn("추가폴더", self.app.shares.names)
         self.assertIsInstance(self.app.modal, app_module.ShareDialog)
+
+    def test_several_folders_can_be_added_in_a_row(self):
+        """한 번 열어서 여러 폴더를 잇달아 더할 수 있어야 한다."""
+        for name in ("첫폴더", "둘째폴더", "셋째폴더"):
+            (self.base / name).mkdir()
+
+        self.open_dialog()
+        for name in ("첫폴더", "둘째폴더", "셋째폴더"):
+            self.app._on_key("a")
+            picker = self.app.modal
+            picker.path = self.base / name
+            picker.key("CTRL-D")
+            self.assertIsInstance(self.app.modal, app_module.ShareDialog)
+
+        self.assertEqual(
+            self.app.shares.names, ["Downloads", "프로젝트", "첫폴더", "둘째폴더", "셋째폴더"]
+        )
+
+    def test_cancelling_the_picker_returns_to_the_manager(self):
+        """선택상자를 닫았다고 관리 창까지 닫히면 여러 개를 다룰 수 없다."""
+        dialog = self.open_dialog()
+        dialog.cursor = 1
+        self.app._on_key("a")
+        self.app._on_key(term.ESC)
+
+        self.assertIsInstance(self.app.modal, app_module.ShareDialog)
+        self.assertEqual(self.app.modal.cursor, 1, "커서 자리도 지켜야 한다")
+
+    def test_several_folders_can_be_removed_in_a_row(self):
+        self.open_dialog()
+        for _ in range(2):
+            self.app.modal.cursor = 0
+            self.app._on_key("d")
+            self.app._on_key("y")
+            self.assertIsInstance(self.app.modal, app_module.ShareDialog)
+
+        self.assertEqual(self.app.shares.names, [])
+        self.assertTrue(self.downloads.is_dir())
+        self.assertTrue(self.project.is_dir())
+
+    def test_changes_while_connected_apply_to_the_peer_at_once(self):
+        """세션이 목록 객체를 그대로 보므로 판정이 곧바로 달라진다."""
+        self.app.session = _StubSession()
+        session_shares = self.app.shares  # Session 이 받는 것과 같은 객체다
+
+        self.open_dialog()
+        self.app.modal.cursor = 0
+        self.app._on_key("d")
+        self.app._on_key("y")
+
+        self.assertNotIn("Downloads", session_shares.names)
+        with self.assertRaises(fsops.PathDenied):
+            session_shares.resolve("Downloads/무엇이든")
 
     def test_d_asks_before_removing(self):
         dialog = self.open_dialog()
