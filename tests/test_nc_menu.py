@@ -730,3 +730,78 @@ class TestNothingIsTruncatedInFixedColumns(MdirListTestCase):
         body = self.body((82, 24))
         self.assertIn("11:14a", body)
         self.assertIn("HTML", body)
+
+
+class TestSharedDivider(MdirListTestCase):
+    """두 패널이 가운데 구분선을 공유한다. 테두리가 겹쳐 한 칸을 버리지 않는다."""
+
+    def plain(self, cols=100, rows=24):
+        return [screen._ANSI.sub("", l) for l in self.app._compose((cols, rows))]
+
+    def test_only_three_vertical_borders(self):
+        body = self.plain()[2]  # 첫 항목 줄
+        self.assertEqual(body.count(app_module.BOX_V), 3, body)
+
+    def test_no_doubled_border_in_the_middle(self):
+        for line in self.plain()[1:-2]:
+            self.assertNotIn(app_module.BOX_V * 2, line, line[:60])
+
+    def test_top_and_bottom_have_a_single_joint(self):
+        lines = self.plain()
+        top, bottom = lines[1], lines[-3]
+        self.assertEqual(top.count("+"), 1, top)
+        self.assertEqual(bottom.count("+"), 1, bottom)
+        self.assertTrue(top.startswith(app_module.BOX_TL))
+        self.assertTrue(top.endswith(app_module.BOX_TR))
+        self.assertTrue(bottom.startswith(app_module.BOX_BL))
+        self.assertTrue(bottom.endswith(app_module.BOX_BR))
+
+    def test_joint_lines_up_with_the_divider(self):
+        """가운데 `+` 와 본문의 `|` 가 같은 칸에 있어야 세로로 이어져 보인다."""
+        lines = self.plain()
+        top = lines[1]
+        joint_col = screen.width(top[: top.index("+")])
+
+        for row in lines[2:-3]:
+            walls = [i for i, ch in enumerate(row) if ch == app_module.BOX_V]
+            middle = screen.width(row[: walls[1]])
+            self.assertEqual(middle, joint_col, row[:60])
+
+        bottom = lines[-3]
+        self.assertEqual(screen.width(bottom[: bottom.index("+")]), joint_col)
+
+    def test_merging_gives_the_extra_column_to_content(self):
+        """테두리 4개에서 3개로 줄었으니 내용 칸이 1칸 늘어야 한다."""
+        cols = 100
+        line = self.plain(cols)[2]
+        borders = line.count(app_module.BOX_V)
+        self.assertEqual(borders, 3)
+        self.assertEqual(screen.width(line) - borders, cols - 3)
+
+    def test_focused_pane_title_is_highlighted(self):
+        """테두리 색으로 초점을 못 보이므로 제목을 반전시킨다."""
+        self.app.focus = self.app.left
+        top = self.app._compose((100, 24))[1]
+        left_half = top[: len(top) // 2]
+        self.assertIn(term.REVERSE, left_half, "초점 패널 제목이 강조되지 않았다")
+
+    def test_focus_marker_moves_with_tab(self):
+        self.app.session = _StubForFocus()
+        self.app.focus = self.app.left
+        before = self.app._compose((100, 24))[1]
+        self.app._on_key(term.TAB)
+        after = self.app._compose((100, 24))[1]
+        self.assertNotEqual(before, after, "Tab 을 눌러도 강조가 그대로다")
+
+    def test_widths_stay_exact_at_every_size(self):
+        for cols in range(40, 201, 7):
+            for line in self.app._compose((cols, 24)):
+                self.assertEqual(screen.width(line), cols, "cols=%d" % cols)
+
+
+class _StubForFocus:
+    peer_name = "stub"
+    peer_host = "127.0.0.1"
+
+    def close(self, reason=None):
+        pass
