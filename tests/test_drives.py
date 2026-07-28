@@ -201,14 +201,14 @@ class TestDriveKeyInApp(DriveAppTestCase):
         {"path": "/Volumes/USB", "label": "USB", "kind": "볼륨"},
     ]
 
-    def test_backslash_opens_the_drive_dialog(self):
+    def test_slash_opens_the_drive_dialog(self):
         with mock.patch.object(fsops, "list_drives", return_value=self.FAKE):
-            self.app._on_key("\\")
+            self.app._on_key("/")
         self.assertIsInstance(self.app.modal, app_module.DriveDialog)
 
     def test_choosing_moves_the_local_pane(self):
         with mock.patch.object(fsops, "list_drives", return_value=self.FAKE):
-            self.app._on_key("\\")
+            self.app._on_key("/")
             self.app._on_key(term.ENTER)  # '/' 선택
 
         self.assertIsNone(self.app.modal)
@@ -216,7 +216,7 @@ class TestDriveKeyInApp(DriveAppTestCase):
 
     def test_single_drive_reports_nothing_to_switch_to(self):
         with mock.patch.object(fsops, "list_drives", return_value=self.FAKE[:1]):
-            self.app._on_key("\\")
+            self.app._on_key("/")
         self.assertIsNone(self.app.modal)
         self.assertIn("옮겨갈 드라이브가 없습니다", self.app.status)
 
@@ -226,14 +226,14 @@ class TestDriveKeyInApp(DriveAppTestCase):
         self.app.focus = self.app.remote
 
         with mock.patch.object(fsops, "list_drives", return_value=self.FAKE):
-            self.app._on_key("\\")
+            self.app._on_key("/")
 
         self.assertIsNone(self.app.modal)
         self.assertIn("공유 폴더 안으로 제한", self.app.status)
 
     def test_overlay_keeps_line_widths(self):
         with mock.patch.object(fsops, "list_drives", return_value=self.FAKE):
-            self.app._on_key("\\")
+            self.app._on_key("/")
         for size in ((80, 24), (100, 30), (40, 12)):
             for line in self.app._compose(size):
                 self.assertEqual(screen.width(line), size[0])
@@ -280,12 +280,12 @@ class TestFolderDialogDriveRoute(DriveAppTestCase):
         dialog.key(term.ENTER)
         self.assertEqual(opened, [1])
 
-    def test_backslash_also_opens_the_drive_list(self):
+    def test_slash_also_opens_the_drive_list(self):
         opened = []
         dialog = app_module.FolderDialog(
             self.root, on_choose=lambda p: None, on_cancel=lambda: None, on_drives=lambda: opened.append(1)
         )
-        self.assertFalse(dialog.key("\\"))
+        self.assertFalse(dialog.key("/"))
         self.assertEqual(opened, [1])
 
     def test_footer_mentions_the_drive_key(self):
@@ -304,7 +304,7 @@ class TestFolderDialogDriveRoute(DriveAppTestCase):
             self.app._on_key("a")  # 추가 → 폴더 선택상자
             self.assertIsInstance(self.app.modal, app_module.FolderDialog)
 
-            self.app._on_key("\\")
+            self.app._on_key("/")
             self.assertIsInstance(self.app.modal, app_module.DriveDialog)
 
             self.app._on_key(term.ENTER)
@@ -317,7 +317,7 @@ class TestFolderDialogDriveRoute(DriveAppTestCase):
         with mock.patch.object(fsops, "list_drives", return_value=fake):
             self.app._on_key("F4")
             self.app._on_key("a")
-            self.app._on_key("\\")
+            self.app._on_key("/")
             self.app._on_key(term.ENTER)  # self.root 로 이동
 
         picker = self.app.modal
@@ -340,3 +340,38 @@ class _StubSession:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDriveKeyAliases(DriveAppTestCase):
+    """안내는 '/' 하나로 하되, 한글 키보드의 역슬래시 자리가 보내는 값도 받는다."""
+
+    FAKE = [
+        {"path": "/", "label": "/", "kind": "루트"},
+        {"path": "/Volumes/USB", "label": "USB", "kind": "볼륨"},
+    ]
+
+    def test_slash_is_the_documented_key(self):
+        with mock.patch.object(fsops, "list_drives", return_value=self.FAKE):
+            self.app._on_key("/")
+        self.assertIsInstance(self.app.modal, app_module.DriveDialog)
+
+    def test_backslash_still_works(self):
+        with mock.patch.object(fsops, "list_drives", return_value=self.FAKE):
+            self.app._on_key("\\")
+        self.assertIsInstance(self.app.modal, app_module.DriveDialog)
+
+    def test_won_sign_works(self):
+        """한글 키보드에서 그 자리 키가 '₩' 를 보내는 경우가 있다."""
+        with mock.patch.object(fsops, "list_drives", return_value=self.FAKE):
+            self.app._on_key("₩")
+        self.assertIsInstance(self.app.modal, app_module.DriveDialog)
+
+    def test_menu_hint_shows_slash(self):
+        for title, items in app_module.MenuBar(self.app).menus:
+            for label, hint, action in items:
+                if label == "드라이브 바꾸기":
+                    self.assertEqual(hint, "/")
+
+    def test_pane_footer_hint_shows_slash(self):
+        self.app.local.navigate(Path("/"))
+        self.assertIn("/ 드라이브", "\n".join(self.app._compose((100, 30))))

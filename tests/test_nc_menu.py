@@ -475,3 +475,55 @@ class TestOverlayDoesNotInheritStyles(MdirListTestCase):
             if "도움말" in line:
                 head = line.split("도움말")[0]
                 self.assertNotIn(term.REVERSE, head.split(term.RESET)[-1], line[:60])
+
+
+class TestRightArrowEntersFolder(MdirListTestCase):
+    """오른쪽 화살표로 폴더 안으로 들어간다."""
+
+    def cursor_on(self, name):
+        self.app.local.cursor = next(
+            i for i, e in enumerate(self.app.local.rows()) if e["name"] == name
+        )
+
+    def test_right_arrow_enters_a_directory(self):
+        self.cursor_on("FONT")
+        self.app._on_key(term.RIGHT)
+        self.assertEqual(self.app.local.path, self.root / "FONT")
+
+    def test_l_also_enters(self):
+        self.cursor_on("한글폴더")
+        self.app._on_key("l")
+        self.assertEqual(self.app.local.path, self.root / "한글폴더")
+
+    def test_right_arrow_on_a_file_does_nothing(self):
+        self.cursor_on("HWP.CFG")
+        self.app._on_key(term.RIGHT)
+        self.assertEqual(self.app.local.path, self.root)
+
+    def test_right_arrow_on_dotdot_does_not_go_up(self):
+        """위로 가는 것은 왼쪽 화살표의 몫이다. 방향이 어긋나면 안 된다."""
+        self.app.local.navigate(self.root / "FONT")
+        self.app.local.cursor = 0  # '..'
+        self.app._on_key(term.RIGHT)
+        self.assertEqual(self.app.local.path, self.root / "FONT")
+
+    def test_left_arrow_still_goes_up(self):
+        self.app.local.navigate(self.root / "FONT")
+        self.app._on_key(term.LEFT)
+        self.assertEqual(self.app.local.path, self.root)
+
+    def test_round_trip_with_arrows(self):
+        self.cursor_on("FONT")
+        self.app._on_key(term.RIGHT)
+        self.app._on_key(term.LEFT)
+        self.assertEqual(self.app.local.path, self.root)
+
+    def test_enter_still_works_the_same(self):
+        self.cursor_on("FONT")
+        self.app._on_key(term.ENTER)
+        self.assertEqual(self.app.local.path, self.root / "FONT")
+
+    def test_help_mentions_the_arrow(self):
+        self.app._on_key("1")
+        rendered = "\n".join(self.app.modal.lines(70))
+        self.assertIn("폴더 안으로", rendered)
