@@ -206,12 +206,25 @@ class TestPaneFrame(LayoutTestCase):
         lines = [screen._ANSI.sub("", l) for l in self.app._compose((cols, 30))]
         for row in (lines[2], lines[-4]):
             self.assertEqual(screen.width(row), cols)
-            self.assertEqual(set(row) - {"-", "+"}, set(), row)
+            self.assertEqual(set(row) - {"=", "+"}, set(), row)
+
+    @staticmethod
+    def _rule_rows(lines):
+        """가로줄인 행의 번호. 줄 번호를 박아두면 틀이 바뀔 때마다 깨진다."""
+        return [
+            i for i, row in enumerate(lines)
+            if row and set(row) <= {"=", "+"} and "+" in row
+        ]
+
+    def test_there_is_one_rule_above_and_below(self):
+        lines = [screen._ANSI.sub("", l) for l in self.app._compose((100, 30))]
+        rules = self._rule_rows(lines)
+        self.assertEqual(len(rules), 2, rules)
 
     def test_divider_is_present_on_every_body_row(self):
-        cols = 100
-        lines = [screen._ANSI.sub("", l) for l in self.app._compose((cols, 30))]
-        for row in lines[3:-4]:
+        lines = [screen._ANSI.sub("", l) for l in self.app._compose((100, 30))]
+        rules = self._rule_rows(lines)
+        for row in lines[rules[0] + 1 : rules[1]]:
             self.assertIn(app_module.BOX_V, row, row[:50])
 
     def test_no_glyph_on_screen_has_ambiguous_width(self):
