@@ -9,6 +9,10 @@ from mdirnet import fsops, session
 from mdirnet.ui import app as app_module
 from mdirnet.ui import screen, term
 
+from .helpers import make_shares, only_name, rpath
+
+
+
 
 class MdirTestCase(unittest.TestCase):
     def setUp(self):
@@ -25,7 +29,8 @@ class MdirTestCase(unittest.TestCase):
 
         self.app = app_module.App(
             my_name="mdir-node",
-            root=self.root,
+            shares=make_shares(self.root),
+            persist=False,
             tcp_port=0,
             udp_port=0,
             platform_name="testos",
@@ -361,16 +366,20 @@ class TestRemoteOperations(unittest.TestCase):
         self.root_a = Path(self.tmp_a.name).resolve()
         self.root_b = Path(self.tmp_b.name).resolve()
 
+        self.shares_a = make_shares(self.root_a)
+        self.shares_b = make_shares(self.root_b)
+        self.rb = only_name(self.shares_b)
+
         sock_a, sock_b = socket.socketpair()
-        self.a = session.Session(sock_a, "b", "127.0.0.1", self.root_a, queue.Queue())
-        self.b = session.Session(sock_b, "a", "127.0.0.1", self.root_b, queue.Queue())
+        self.a = session.Session(sock_a, "b", "127.0.0.1", self.shares_a, queue.Queue())
+        self.b = session.Session(sock_b, "a", "127.0.0.1", self.shares_b, queue.Queue())
         self.a.start()
         self.b.start()
         self.addCleanup(self.b.close)
         self.addCleanup(self.a.close)
 
     def test_remote_mkdir(self):
-        self.a.remote_mkdir(str(self.root_b / "새폴더"))
+        self.a.remote_mkdir(rpath(self.rb, "새폴더"))
         self.assertTrue((self.root_b / "새폴더").is_dir())
 
     def test_remote_mkdir_outside_root_is_refused(self):
@@ -380,19 +389,19 @@ class TestRemoteOperations(unittest.TestCase):
     def test_remote_mkdir_duplicate_is_refused(self):
         (self.root_b / "있음").mkdir()
         with self.assertRaises(session.SessionError):
-            self.a.remote_mkdir(str(self.root_b / "있음"))
+            self.a.remote_mkdir(rpath(self.rb, "있음"))
 
     def test_remote_delete_file(self):
         target = self.root_b / "지울것.txt"
         target.write_bytes(b"bye")
-        self.a.remote_delete(str(target))
+        self.a.remote_delete(rpath(self.rb, "지울것.txt"))
         self.assertFalse(target.exists())
 
     def test_remote_delete_directory_recursively(self):
         base = self.root_b / "폴더"
         (base / "안쪽").mkdir(parents=True)
         (base / "안쪽" / "f.txt").write_bytes(b"x")
-        self.a.remote_delete(str(base))
+        self.a.remote_delete(rpath(self.rb, "폴더"))
         self.assertFalse(base.exists())
 
     def test_remote_delete_outside_root_is_refused(self):
@@ -402,18 +411,18 @@ class TestRemoteOperations(unittest.TestCase):
     def test_remote_delete_cannot_remove_the_share_root(self):
         """공유 폴더 자체를 지우면 세션이 가리키는 바닥이 사라진다."""
         with self.assertRaises(session.SessionError):
-            self.a.remote_delete(str(self.root_b))
+            self.a.remote_delete(self.rb)
         self.assertTrue(self.root_b.is_dir())
 
     def test_remote_delete_missing_item_is_refused(self):
         with self.assertRaises(session.SessionError):
-            self.a.remote_delete(str(self.root_b / "없음"))
+            self.a.remote_delete(rpath(self.rb, "없음"))
 
     def test_remote_head_returns_prefix_and_total_size(self):
         target = self.root_b / "big.txt"
         target.write_bytes(b"0123456789" * 1000)
 
-        data, size = self.a.remote_head(str(target), 50)
+        data, size = self.a.remote_head(rpath(self.rb, "big.txt"), 50)
         self.assertEqual(len(data), 50)
         self.assertEqual(data[:10], b"0123456789")
         self.assertEqual(size, 10000)
@@ -421,7 +430,7 @@ class TestRemoteOperations(unittest.TestCase):
     def test_remote_head_of_small_file_returns_all(self):
         target = self.root_b / "small.txt"
         target.write_bytes("한 줄\n".encode("utf-8"))
-        data, size = self.a.remote_head(str(target), 4096)
+        data, size = self.a.remote_head(rpath(self.rb, "small.txt"), 4096)
         self.assertEqual(data.decode("utf-8"), "한 줄\n")
         self.assertEqual(size, len("한 줄\n".encode("utf-8")))
 
@@ -432,7 +441,7 @@ class TestRemoteOperations(unittest.TestCase):
     def test_remote_head_of_directory_is_refused(self):
         (self.root_b / "dir").mkdir()
         with self.assertRaises(session.SessionError):
-            self.a.remote_head(str(self.root_b / "dir"), 100)
+            self.a.remote_head(rpath(self.rb, "dir"), 100)
 
     def test_remote_head_respects_the_server_side_cap(self):
         """상대가 터무니없이 큰 limit 을 보내도 서버가 상한을 지킨다."""
@@ -441,7 +450,7 @@ class TestRemoteOperations(unittest.TestCase):
         target = self.root_b / "huge.bin"
         target.write_bytes(b"z" * (config.MAX_VIEW_BYTES + 5000))
 
-        data, _ = self.a.remote_head(str(target), config.MAX_VIEW_BYTES * 10)
+        data, _ = self.a.remote_head(rpath(self.rb, "huge.bin"), config.MAX_VIEW_BYTES * 10)
         self.assertEqual(len(data), config.MAX_VIEW_BYTES)
 
 

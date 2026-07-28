@@ -9,6 +9,10 @@ from mdirnet import session
 from mdirnet.ui import app as app_module
 from mdirnet.ui import screen, term
 
+from .helpers import make_shares, only_name, rpath
+
+
+
 
 class AppTestCase(unittest.TestCase):
     def setUp(self):
@@ -23,7 +27,8 @@ class AppTestCase(unittest.TestCase):
         # 포트 0 으로 커널에 맡기고, 발견 기능은 꺼서 브로드캐스트를 쏘지 않는다
         self.app = app_module.App(
             my_name="test-node",
-            root=self.root,
+            shares=make_shares(self.root),
+            persist=False,
             tcp_port=0,
             udp_port=0,
             platform_name="testos",
@@ -133,8 +138,21 @@ class TestCopyGuards(AppTestCase):
         self.assertIsNone(self.app.modal)
         self.assertIn("연결", self.app.status)
 
+    def test_copy_into_the_virtual_root_is_refused_with_guidance(self):
+        """공유 목록 자체에는 파일을 둘 수 없다. 파일마다 오류를 내지 않고 미리 알린다."""
+        self.app.session = _StubSession()
+        self.app.local.cursor = next(
+            i for i, e in enumerate(self.app.local.rows()) if e["name"] == "photo.jpg"
+        )
+
+        self.app._on_key("F5")
+        self.assertIsNone(self.app.modal)
+        self.assertIn("공유 폴더 안으로", self.app.status)
+
     def test_copy_asks_for_confirmation_when_connected(self):
         self.app.session = _StubSession()
+        # 가상 루트에는 파일을 둘 수 없으므로 공유 폴더 안으로 들어간 상태로 둔다
+        self.app.remote.path = "상대공유"
         self.app.local.cursor = next(
             i for i, e in enumerate(self.app.local.rows()) if e["name"] == "photo.jpg"
         )
@@ -264,11 +282,11 @@ class TestSessionLifecycle(AppTestCase):
         """디렉터리를 바꾼 뒤 도착한 낡은 응답이 화면을 되돌리면 안 된다."""
         pane = self.app.remote
         pane._generation = 5
-        pane.apply_listing(3, "/old", [{"name": "stale", "is_dir": False, "size": 0, "mtime": 0}])
+        pane.apply_listing(3, "낡은공유", [{"name": "stale", "is_dir": False, "size": 0, "mtime": 0}])
         self.assertEqual(pane.entries, [])
 
-        pane.apply_listing(5, str(self.root), [])
-        self.assertEqual(pane.path, self.root)
+        pane.apply_listing(5, "새공유/sub", [])
+        self.assertEqual(pane.path, "새공유/sub")
 
     def test_copy_done_with_errors_opens_message(self):
         self.app.transfer = app_module.Transfer("x", 1)
@@ -384,8 +402,8 @@ class TestFolderDialog(AppTestCase):
                 self.assertEqual(screen.width(line), size[0])
 
 
-class TestRootSelection(unittest.TestCase):
-    """--root 를 생략했을 때의 시작 흐름."""
+class TestShareSelection(unittest.TestCase):
+    """공유 목록이 비었을 때의 시작 흐름."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -393,10 +411,11 @@ class TestRootSelection(unittest.TestCase):
         self.root = Path(self.tmp.name).resolve()
         (self.root / "고른폴더").mkdir()
 
-    def make(self, root):
+    def make(self, *paths):
         app = app_module.App(
             my_name="picker",
-            root=root,
+            shares=make_shares(*paths),
+            persist=False,
             tcp_port=0,
             udp_port=0,
             platform_name="testos",
@@ -405,27 +424,34 @@ class TestRootSelection(unittest.TestCase):
         self.addCleanup(app.shutdown)
         return app
 
-    def test_root_none_defers_service_startup(self):
+    def test_empty_list_defers_service_startup(self):
         """폴더를 고르기 전에는 아무것도 공유하지 않아야 한다."""
-        app = self.make(None)
+        app = self.make()
         self.assertTrue(app.pick_root_at_start)
         self.assertFalse(app._services_started)
 
-    def test_explicit_root_starts_services_without_a_dialog(self):
+    def test_existing_list_starts_without_a_dialog(self):
         app = self.make(self.root)
         self.assertFalse(app.pick_root_at_start)
         app.start_services()
         self.assertTrue(app._services_started)
         self.assertIsNone(app.modal)
 
-    def test_choosing_sets_root_and_starts_services(self):
-        app = self.make(None)
-        app._choose_root_and_start(self.root / "고른폴더")
+    def test_adding_a_share_registers_it(self):
+        app = self.make()
+        share = app.add_share(self.root / "고른폴더")
 
-        self.assertEqual(app.root, self.root / "고른폴더")
-        self.assertEqual(app.server.root, self.root / "고른폴더")
-        self.assertEqual(app.local.path, self.root / "고른폴더")
-        self.assertTrue(app._services_started)
+        self.assertEqual(share.name, "고른폴더")
+        self.assertEqual(app.shares.names, ["고른폴더"])
+        # Server 가 같은 목록 객체를 보므로 곧바로 반영된다
+        self.assertIs(app.server.shares, app.shares)
+
+    def test_removing_a_share(self):
+        app = self.make(self.root, self.root / "고른폴더")
+        self.assertEqual(len(app.shares), 2)
+
+        app.remove_share("고른폴더")
+        self.assertEqual(app.shares.names, [self.root.name])
 
     def test_start_services_is_idempotent(self):
         app = self.make(self.root)
@@ -433,14 +459,13 @@ class TestRootSelection(unittest.TestCase):
         app.start_services()
         self.assertTrue(app._services_started)
 
-    def test_f4_opens_the_picker_when_idle(self):
+    def test_f4_opens_the_share_manager_when_idle(self):
         app = self.make(self.root)
         app._on_key("F4")
-        self.assertIsInstance(app.modal, app_module.FolderDialog)
+        self.assertIsInstance(app.modal, app_module.ShareDialog)
 
     def test_f4_is_refused_while_connected(self):
-        """Session 은 만들어질 때 루트를 보관한다. 연결 중 변경은 상대에게
-        반영되지 않으므로 허용하면 사용자를 속이게 된다."""
+        """연결 중에 목록을 바꾸면 상대 화면과 어긋난다."""
         app = self.make(self.root)
         app.session = _StubSession()
 
@@ -448,14 +473,9 @@ class TestRootSelection(unittest.TestCase):
         self.assertIsNone(app.modal)
         self.assertIn("연결 중에는", app.status)
 
-    def test_cancelling_the_startup_picker_quits(self):
-        app = self.make(None)
-        dialog = app_module.FolderDialog(
-            self.root, on_choose=app._choose_root_and_start, on_cancel=app._quit
-        )
-        dialog.key(term.ESC)
-        self.assertFalse(app.running)
-        self.assertFalse(app._services_started)
+    def test_local_pane_starts_at_the_first_share(self):
+        app = self.make(self.root)
+        self.assertEqual(app.local.path, self.root)
 
 
 class _StubSession:

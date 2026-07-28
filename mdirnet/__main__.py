@@ -6,7 +6,7 @@ import socket
 import sys
 from pathlib import Path
 
-from . import config
+from . import config, shares as shares_mod
 from .ui.app import App
 
 
@@ -23,9 +23,16 @@ def parse_args(argv=None):
     )
     parser.add_argument("--name", default=default_name(), help="상대에게 보여줄 이름")
     parser.add_argument(
+        "--share",
+        action="append",
+        metavar="PATH",
+        default=[],
+        help="상대에게 열어줄 폴더. 여러 번 쓸 수 있다 (이번 실행에만 적용, 저장 안 함)",
+    )
+    parser.add_argument(
         "--root",
         default=None,
-        help="상대에게 열어줄 공유 폴더 (생략하면 실행 후 선택상자로 고른다)",
+        help="--share 하나와 같다 (기존 호환용)",
     )
     parser.add_argument("--port", type=int, default=config.TCP_PORT, help="세션 TCP 포트")
     parser.add_argument("--udp-port", type=int, default=config.UDP_PORT, help="발견용 UDP 포트")
@@ -40,21 +47,30 @@ def parse_args(argv=None):
 def main(argv=None):
     args = parse_args(argv)
 
-    # --root 를 생략하면 None 을 그대로 넘긴다. App 이 실행 직후 선택상자를 띄운다
-    root = None
-    if args.root is not None:
-        root = Path(args.root).expanduser()
-        if not root.is_dir():
-            print("공유 폴더가 없습니다: %s" % root, file=sys.stderr)
-            return 1
-
     if not sys.stdin.isatty():
         print("터미널에서 실행해야 합니다.", file=sys.stderr)
         return 1
 
+    # 인자로 폴더를 줬으면 그것만 쓰고 저장하지 않는다. 저장된 목록을 건드리지
+    # 않으므로 시험용이나 일회성 실행에 안전하다
+    given = list(args.share) + ([args.root] if args.root else [])
+    shares = shares_mod.ShareSet()
+    persist = not given
+
+    if given:
+        for raw in given:
+            path = Path(raw).expanduser()
+            if not path.is_dir():
+                print("공유할 폴더가 없습니다: %s" % path, file=sys.stderr)
+                return 1
+            shares.add(path)
+    else:
+        shares.load()
+
     app = App(
         my_name=args.name,
-        root=root,
+        shares=shares,
+        persist=persist,
         tcp_port=args.port,
         udp_port=args.udp_port,
         platform_name=platform.system().lower() or sys.platform,

@@ -13,6 +13,10 @@ from mdirnet import fsops
 from mdirnet.ui import app as app_module
 from mdirnet.ui import term
 
+from .helpers import make_shares, only_name, rpath
+
+
+
 
 class DigitTestCase(unittest.TestCase):
     def setUp(self):
@@ -24,7 +28,8 @@ class DigitTestCase(unittest.TestCase):
 
         self.app = app_module.App(
             my_name="digit-node",
-            root=self.root,
+            shares=make_shares(self.root),
+            persist=False,
             tcp_port=0,
             udp_port=0,
             platform_name="testos",
@@ -83,12 +88,13 @@ class TestDigitsCallTheSameActions(DigitTestCase):
         self.app._on_key("3")
         self.assertIsInstance(self.app.modal, app_module.ViewerDialog)
 
-    def test_4_opens_share_folder_picker(self):
+    def test_4_opens_share_manager(self):
         self.app._on_key("4")
-        self.assertIsInstance(self.app.modal, app_module.FolderDialog)
+        self.assertIsInstance(self.app.modal, app_module.ShareDialog)
 
     def test_5_starts_copy_flow(self):
         self.app.session = _StubSession()
+        self.app.remote.path = "상대공유"  # 가상 루트가 아니어야 복사가 시작된다
         self.cursor_to("메모.txt")
         self.app._on_key("5")
         self.assertIsInstance(self.app.modal, app_module.ConfirmDialog)

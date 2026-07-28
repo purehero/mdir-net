@@ -7,7 +7,7 @@ import socket
 import threading
 from pathlib import Path
 
-from . import config, fsops, protocol
+from . import config, fsops, protocol, shares as shares_mod
 
 
 class SessionError(Exception):
@@ -51,11 +51,12 @@ class Session:
     이 규칙이 없으면 내 pull 응답과 상대의 push 데이터가 같은 우편함으로 섞인다.
     """
 
-    def __init__(self, sock, peer_name, peer_host, root, events):
+    def __init__(self, sock, peer_name, peer_host, shares, events):
         self._sock = sock
         self.peer_name = peer_name
         self.peer_host = peer_host
-        self._root = Path(root)
+        # 공유 폴더 목록. 원격 경로를 실제 경로로 바꾸는 유일한 관문이다
+        self._shares = shares
         self._events = events
 
         self._reader = protocol.FrameReader(sock)
@@ -299,10 +300,13 @@ class Session:
             _REQUESTS[header["t"]](self, req_id, header, blob, box)
         except fsops.PathDenied as exc:
             self._reply_err(req_id, str(exc))
-        except (OSError, KeyError, ValueError, SessionError) as exc:
-            self._reply_err(req_id, "%s" % exc)
         except protocol.ProtocolError as exc:
             self.close("프로토콜 오류: %s" % exc)
+        except Exception as exc:  # noqa: BLE001
+            # 어떤 예외가 나더라도 **반드시 답을 보낸다.** 답이 없으면 상대는
+            # 요청 타임아웃(30초)까지 그대로 멈춰 있게 된다. 예상 못한 버그가
+            # 상대를 얼어붙게 만드는 것이 조용히 실패하는 것보다 훨씬 나쁘다
+            self._reply_err(req_id, "%s: %s" % (type(exc).__name__, exc))
         finally:
             self._close_box(self._incoming, req_id)
 
@@ -313,24 +317,38 @@ class Session:
             pass  # 오류를 알려주려는 순간 연결이 끊겼다면 더 할 수 있는 게 없다
 
     def _safe(self, raw_path):
-        """원격이 보낸 경로를 공유 루트 안쪽으로 제한한다."""
-        return fsops.resolve_within(self._root, raw_path)
+        """원격이 보낸 상대 경로를 실제 경로로 바꾼다. 목록 밖은 거부된다."""
+        return self._shares.resolve(raw_path)
 
     def _on_home(self, req_id, header, blob, box):
-        self._send({"t": "home.ok", "id": req_id, "path": str(self._root)})
+        # 상대는 늘 가상 루트에서 시작한다. 내 호스트 경로는 알려주지 않는다
+        self._send({"t": "home.ok", "id": req_id, "path": shares_mod.ROOT})
 
     def _on_list(self, req_id, header, blob, box):
-        path = self._safe(header.get("path") or str(self._root))
+        remote_path = header.get("path") or shares_mod.ROOT
+
+        if self._shares.is_root(remote_path):
+            entries = self._shares.root_entries()
+        else:
+            entries = fsops.list_dir(self._safe(remote_path))
+
+        # 돌려주는 path 도 원격 경로 공간이어야 한다. 상대가 그대로 화면에
+        # 쓰고 다음 요청에 다시 보내기 때문이다
         self._send(
             {
                 "t": "list.ok",
                 "id": req_id,
-                "path": str(path),
-                "entries": fsops.list_dir(path),
+                "path": shares_mod.normalize(remote_path),
+                "entries": entries,
             }
         )
 
     def _on_stat(self, req_id, header, blob, box):
+        if self._shares.is_root(header["path"]):
+            self._send(
+                {"t": "stat.ok", "id": req_id, "exists": True, "is_dir": True, "size": 0}
+            )
+            return
         path = self._safe(header["path"])
         exists = path.exists()
         self._send(
@@ -359,15 +377,21 @@ class Session:
         )
 
     def _on_mkdir(self, req_id, header, blob, box):
+        if self._shares.is_root(header["path"]):
+            raise ValueError("공유 목록에는 폴더를 만들 수 없습니다")
         path = self._safe(header["path"])
         path.mkdir(parents=False, exist_ok=False)
         self._send({"t": "mkdir.ok", "id": req_id})
 
     def _on_delete(self, req_id, header, blob, box):
-        """원격 삭제. 공유 루트 자체는 절대 지울 수 없게 막는다."""
+        """원격 삭제. 공유 폴더 자체와 가상 루트는 절대 지울 수 없다."""
+        if self._shares.is_root(header["path"]):
+            raise ValueError("공유 목록은 지울 수 없습니다")
+
         path = self._safe(header["path"])
-        if path == self._root:
-            raise ValueError("공유 폴더 자체는 지울 수 없습니다")
+        share = self._shares.share_of(header["path"])
+        if share is not None and path == share.path:
+            raise ValueError("공유 폴더 자체는 지울 수 없습니다. 목록에서 빼세요")
         if not path.exists() and not path.is_symlink():
             raise ValueError("없는 항목입니다: %s" % path.name)
 
@@ -434,7 +458,7 @@ _REQUESTS = {
 # --- 연결 수립 ---
 
 
-def connect(peer, my_name, platform, root, events):
+def connect(peer, my_name, platform, shares, events):
     """상대에게 연결을 요청하고 승인을 기다린다. 승인되면 Session 을 돌려준다."""
     sock = socket.create_connection((peer.host, peer.port), timeout=config.CONNECT_TIMEOUT)
     try:
@@ -456,7 +480,7 @@ def connect(peer, my_name, platform, root, events):
             raise Rejected("%s 가 연결을 거부했습니다" % peer.name)
 
         sock.settimeout(None)
-        session = Session(sock, str(header.get("name") or peer.name), peer.host, root, events)
+        session = Session(sock, str(header.get("name") or peer.name), peer.host, shares, events)
         session.start()
         return session
     except socket.timeout:
@@ -473,10 +497,11 @@ def connect(peer, my_name, platform, root, events):
 class Server:
     """들어오는 연결을 받아 UI 에 승인을 물어보는 TCP 서버."""
 
-    def __init__(self, my_name, platform, root, events, port=config.TCP_PORT):
+    def __init__(self, my_name, platform, shares, events, port=config.TCP_PORT):
         self.my_name = my_name
         self.platform = platform
-        self.root = root
+        # 목록 객체를 그대로 들고 있으므로, 앱에서 항목을 더하면 곧바로 반영된다
+        self.shares = shares
         self.events = events
         self.port = port
         self._sock = None
@@ -553,7 +578,7 @@ class Server:
             )
             sock.settimeout(None)
 
-            session = Session(sock, peer_name, host, self.root, self.events)
+            session = Session(sock, peer_name, host, self.shares, self.events)
             session.start()
             self.events.put(("connected", session))
         except (OSError, protocol.ProtocolError, protocol.PeerClosed):
