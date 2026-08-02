@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from mdirnet import config, protocol  # noqa: E402
+from mdirnet import config, protocol, shares  # noqa: E402
 
 OUT_DIR = ROOT / "android" / "app" / "src" / "test" / "resources" / "golden"
 
@@ -134,6 +134,62 @@ def write_announce():
     print("%s" % (OUT_DIR / "announce.json"))
 
 
+# 원격 경로 해석은 보안 경계다. 파이썬 결과를 그대로 박아 안드로이드와 대조한다.
+# 여기가 갈리면 공유 밖이 열리거나 멀쩡한 경로가 막힌다.
+PATHS = [
+    ".", "", "/", "//", "./", "./.",
+    "Downloads",
+    "프로젝트/src/main.py",
+    "이름에 공백/있는 폴더/파일 이름.txt",
+    "a/b/c",
+    "a//b///c",
+    "a/./b",
+    "a/../b",
+    "a/b/../..",
+    "a/b/../../c",
+    "..",
+    "../..",
+    "../../../../..",
+    "a/../../..",
+    "../../b",
+    "a/b/../../../../c",
+    r"a\b\c",
+    r"a\b/c",
+    r"..\..\..",
+    r"공유\..\밖",
+    "trailing/",
+    "trailing//",
+    "/leading",
+    "//leading",
+    "...",
+    "....",
+    "a/.../b",
+    "공유/..",
+    "공유/../..",
+]
+
+
+def write_paths():
+    """`_split` 과 그 파생 함수들의 결과를 뽑는다."""
+    rows = []
+    for text in PATHS:
+        rows.append(
+            {
+                "input": text,
+                "parts": shares._split(text),
+                "normalized": shares.normalize(text),
+                "parent": shares.parent(text),
+                "display": shares.display(text),
+                "isRoot": shares._split(text) == [],
+            }
+        )
+
+    (OUT_DIR / "paths.json").write_text(
+        json.dumps(rows, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    print("%s  (%d 가지)" % (OUT_DIR / "paths.json", len(rows)))
+
+
 def main():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -161,6 +217,7 @@ def main():
     print("%s" % (OUT_DIR / "frames.json"))
 
     write_announce()
+    write_paths()
 
 
 if __name__ == "__main__":

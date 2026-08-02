@@ -398,9 +398,25 @@ PC 도 폰을 다룬다), 보안은 현행 유지(승인 다이얼로그만·평
 - [ ] 폰 실기에서의 MulticastLock·Wi-Fi 바인딩 확인 (서비스가 생긴 뒤에)
 
 ### 31.5 SAF 공유 저장소
-- [ ] `Shares.kt` — 트리 URI 영속화, 원격 경로 해석(`..` 처리를 `_split` 과 동일하게)
-- [ ] `SafFs.kt` — 커서 기반 빠른 목록, stat/tree/head, `.part` 쓰기 + rename, 삭제/이름변경
-- [ ] verify: 계측 테스트로 트리 하나 붙여 왕복
+- [x] **`FileStore` 인터페이스를 뒀다.** SAF 는 ContentResolver 가 있어야 해서 JVM
+      테스트에서 못 쓴다. 세션 검증(31.6)이 그것 때문에 기기로 밀려나면 결국 안 하게 된다
+- [x] `RemotePath.kt` — `shares.py` 의 `_split`/`join`/`parent`/`normalize`/`display` 포팅
+- [x] `ShareList.kt` — 이름 겹침 처리, 깨진 저장본 건너뛰기 (JVM 테스트 가능)
+- [x] `SafFileStore.kt` — 커서 기반 목록 한 번 쿼리 (`DocumentFile.listFiles()` 는
+      자식마다 쿼리를 날려 느리다), tree/head/mkdir/delete/rename, `.part` + rename
+- [x] `SharesStore.kt` — `takePersistableUriPermission`, SharedPreferences 저장
+- [x] SAF 는 경로 탈출이 **구조적으로 불가능**하다. 트리 루트에서 표시 이름을 따라
+      내려가는 것 말고 원시 경로를 밀어넣을 통로가 없다 (`resolve_within` 불필요)
+- [x] **차분 검증이 divergence 를 잡았다** — 파이썬은 슬래시가 정확히 두 개로
+      시작하면 `//` 를 조각으로 남긴다 (`PurePosixPath` 의 POSIX 규칙). 내 포팅은
+      `[]` 로 접고 있었다. 보안 경계라 파이썬에 맞추고 PROTOCOL.md 6.1 에 명시
+- [x] `LocalFileStore` (테스트 전용) — 진짜 파일시스템. 메모리 가짜가 아니라
+      `.part` 후 rename, 부모 자동 생성, 재귀 삭제를 실제로 겪는다
+- [x] verify: Kotlin 79개 — 경로 11 + 차분 2 + 공유목록 8 + FileStore 규약 27
+      (보호 규칙 전수: 가상 루트·공유 폴더 자체·`..` 탈출·심링크 범위·덮어쓰기 거부)
+- [x] verify: 차분 테스트가 실제로 걸리는지 두 가지로 확인 — `//` 처리 제거,
+      `..` 을 '그냥 버리기'로 되돌리기. 둘 다 잡혔다
+- [ ] SAF 구현 자체는 기기 실측이 필요하다 (표시 이름 변형, 원자적 교체 없음)
 
 ### 31.6 세션
 - [ ] `Session.kt` — q 규칙, 우편함 2개, 읽기 루프 선등록, 요청 10종, 어떤 예외에도 err
