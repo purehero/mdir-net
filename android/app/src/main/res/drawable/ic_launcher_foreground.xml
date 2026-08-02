@@ -1,0 +1,26 @@
+<!-- 런처 아이콘 전경 — 두 패널과 그 사이를 오가는 화살표 (MDir 의 양쪽 패널) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 왼쪽 패널 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M32,28 H50 V60 H32 Z" />
+
+    <!-- 오른쪽 패널 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M58,28 H76 V60 H58 Z" />
+
+    <!-- 전송 화살표 -->
+    <path
+        android:fillColor="#7FD1AE"
+        android:pathData="M34,67.5 H67 V72.5 H34 Z" />
+    <path
+        android:fillColor="#7FD1AE"
+        android:pathData="M65,63 L76,70 L65,77 Z" />
+
+</vector>

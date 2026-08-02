@@ -336,9 +336,18 @@ PC 도 폰을 다룬다), 보안은 현행 유지(승인 다이얼로그만·평
 - [x] verify: 601개 통과 (기존 597 + 신규 4)
 
 ### 31.2 Gradle 뼈대
-- [ ] `android/` 프로젝트 + wrapper, compileSdk 36 / minSdk 26
-- [ ] 매니페스트 권한 (INTERNET, CHANGE_WIFI_MULTICAST_STATE, FOREGROUND_SERVICE_DATA_SYNC 등)
-- [ ] verify: `./gradlew :app:assembleDebug`
+- [x] `android/` 프로젝트 + wrapper, compileSdk 36 / minSdk 26
+- [x] 버전을 이 머신의 Gradle 캐시에 맞췄다 — Gradle 8.13, AGP 8.13.0, Kotlin 2.1.21,
+      Compose BOM 2024.09.00. 새로 내려받은 것 없이 빌드된다
+- [x] 매니페스트 권한 7개 (INTERNET, ACCESS_NETWORK_STATE, ACCESS_WIFI_STATE,
+      CHANGE_WIFI_MULTICAST_STATE, FOREGROUND_SERVICE, FOREGROUND_SERVICE_DATA_SYNC,
+      POST_NOTIFICATIONS)
+- [x] 계획에서 바꾼 것 — DataStore 대신 SharedPreferences (캐시에 없고 저장할 게
+      트리 URI 목록 하나뿐), JSON 은 `org.json` (프레임워크 내장이라 런타임 의존성 0)
+- [x] 런처 아이콘은 벡터 어댑티브로 (바이너리 에셋 없음)
+- [x] `Theme.Material.DayNight` 는 플랫폼에 없다 — `values-night` 로 나눴다.
+      나누지 않으면 다크 모드에서 첫 프레임에 흰 화면이 번쩍인다
+- [x] verify: `./gradlew :app:assembleDebug` 성공, aapt2 로 권한·패키지·targetSdk 확인
 
 ### 31.3 프레이밍 계층
 - [ ] `Config.kt` / `Frame.kt` — encode, FrameReader, 상한 검사 양방향
