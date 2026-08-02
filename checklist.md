@@ -316,6 +316,71 @@ fable 모델 검토에서 나온 버그를 전부 수정.
 - [ ] 전송 중 취소 (Esc) — 현재는 끝날 때까지 기다려야 한다
 - [ ] 덮어쓰기를 항목별로 묻기 — 현재는 일괄 확인 한 번
 
+## 31. 안드로이드 클라이언트 (2026-08-02)
+
+폰도 MDirNet 노드가 되게 한다. 네이티브 Kotlin 앱, 양방향 전체(폰이 PC 를 다루고
+PC 도 폰을 다룬다), 보안은 현행 유지(승인 다이얼로그만·평문), 탐색은 UDP 브로드캐스트만.
+기존 프로토콜이 이미 대칭이라 **`mdirnet/` 은 건드리지 않는다.**
+
+### 31.1 프로토콜 문서화
+- [x] `PROTOCOL.md` — 구현체가 둘이 되었으므로 어느 쪽 코드도 아닌 문서가 기준이다
+- [x] 위협 모델을 0절로 맨 앞에 (평문·인증 없음·홈 LAN 전용)
+- [x] 탐색 데이터그램과 프레임 헤더의 **JSON 인코딩이 다르다**는 것을 명시
+      (탐색은 기본 `json.dumps` 라 한글이 `\uXXXX`, 프레임은 `ensure_ascii=False` 압축)
+- [x] `q` 규칙과 "우편함을 읽기 루프에서 먼저 등록" 함정을 별도 절로
+- [x] 10절에 새 구현체용 체크리스트
+- [x] `tests/test_protocol_doc.py` — 문서가 조용히 낡는 것을 막는다.
+      상수 12개 대조 + config 에 상수를 더하고 문서를 잊는 경우 + 요청 타입 목록 +
+      포트 상한(bind 재시도 횟수에서 유도)
+- [x] verify: 문서를 일부러 틀리게 고쳐 테스트가 실제로 걸리는 것까지 확인
+- [x] verify: 601개 통과 (기존 597 + 신규 4)
+
+### 31.2 Gradle 뼈대
+- [ ] `android/` 프로젝트 + wrapper, compileSdk 36 / minSdk 26
+- [ ] 매니페스트 권한 (INTERNET, CHANGE_WIFI_MULTICAST_STATE, FOREGROUND_SERVICE_DATA_SYNC 등)
+- [ ] verify: `./gradlew :app:assembleDebug`
+
+### 31.3 프레이밍 계층
+- [ ] `Config.kt` / `Frame.kt` — encode, FrameReader, 상한 검사 양방향
+- [ ] verify: 파이썬으로 뽑은 골든 바이트 벡터와 바이트 단위 일치
+
+### 31.4 탐색
+- [ ] `Discovery.kt` — announcer + listener, `NetworkInterface` 로 실제 브로드캐스트 주소
+- [ ] MulticastLock (없으면 Wi-Fi 스택이 브로드캐스트를 걸러낸다)
+- [ ] Wi-Fi 네트워크에 소켓 바인딩 (셀룰러로 새어나가는 것을 막는다)
+- [ ] verify: 맥에서 `nc -ul 9601` 로 페이로드 확인 + 양쪽 목록에 서로 잡히는지
+
+### 31.5 SAF 공유 저장소
+- [ ] `Shares.kt` — 트리 URI 영속화, 원격 경로 해석(`..` 처리를 `_split` 과 동일하게)
+- [ ] `SafFs.kt` — 커서 기반 빠른 목록, stat/tree/head, `.part` 쓰기 + rename, 삭제/이름변경
+- [ ] verify: 계측 테스트로 트리 하나 붙여 왕복
+
+### 31.6 세션
+- [ ] `Session.kt` — q 규칙, 우편함 2개, 읽기 루프 선등록, 요청 10종, 어떤 예외에도 err
+- [ ] `Server.kt` / `Connector.kt` — hello, 승인 대기, 포트 9600~9609
+- [ ] verify: 로컬 소켓 쌍에 Session 둘을 물려 **동시 양방향 전송**으로 id 충돌 확인
+
+### 31.7 포그라운드 서비스
+- [ ] `MDirService.kt` — dataSync 타입, MulticastLock 수명, 알림에 "중지"
+- [ ] 백그라운드 승인 알림 (Accept/Reject, 30초 만료)
+- [ ] verify: 앱을 백그라운드로 보낸 상태에서 맥이 붙는지
+
+### 31.8 Compose UI
+- [ ] 피어 화면 / 공유 화면 / `내 폰`·`상대` 브라우저 / 진행률 / 승인 다이얼로그
+- [ ] 첫 실행 화면에 평문 경고
+- [ ] verify: 실기에서 각 동작
+
+### 31.9 실기 상호운용
+- [ ] 맥 ↔ 폰 양방향 재귀 복사 (한글·공백 이름, 2MB 이상 바이너리), 해시 비교
+- [ ] 거부 경로 — 승인 거부, 30초 만료, 전송 중 Wi-Fi 끊김, 버전 불일치
+- [ ] verify: 파이썬 테스트가 그대로 통과하는지
+
+### 알아둔 제약
+- 에뮬레이터는 NAT 뒤라 UDP 브로드캐스트가 호스트 LAN 에 닿지 않는다.
+  수동 IP 입력을 넣지 않기로 했으므로 **실기기가 반드시 필요하다**
+- 맥 방화벽 인바운드 차단이 켜져 있으면 폰이 붙지 못한다 (`tools/allow-firewall.sh`)
+- 폰의 `tree` 는 SAF 재귀라 느릴 수 있다. 깊은 트리는 `REQUEST_TIMEOUT` 에 걸릴 수 있어 실측 필요
+
 ## 검증 기록 (2026-07-27)
 - `python3 -m unittest discover -s tests -t .` → 540개 통과
 - pty 스모크 — 첫 화면·F1 모달·커서 이동·선택 렌더링 확인, `q` 종료 코드 0, 터미널 복원 확인
