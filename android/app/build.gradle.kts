@@ -37,6 +37,17 @@ android {
     }
 }
 
+tasks.withType<Test>().configureEach {
+    // `-Dmdirnet.live=1` 은 Gradle JVM 에만 붙는다. 테스트 JVM 으로 넘겨야
+    // LiveLanTest 의 assumeTrue 가 통과한다
+    for (key in listOf("mdirnet.live", "mdirnet.live.mode")) {
+        System.getProperty(key)?.let { systemProperty(key, it) }
+    }
+    testLogging {
+        showStandardStreams = true
+    }
+}
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

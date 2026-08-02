@@ -362,7 +362,7 @@ PC 도 폰을 다룬다), 보안은 현행 유지(승인 다이얼로그만·평
 - [x] 계획 수정 — "바이트 단위 일치" 는 헤더에 대해서는 잘못된 기준이다.
       JSON 키 순서는 구현마다 다르고(Maven org.json 은 HashMap, 안드로이드는
       LinkedHashMap) 의미에 영향이 없다. **양방향 디코딩**으로 바꿨다
-- [x] `tools/gen-golden-frames.py` — 프레임 11개를 **이어붙여** 내보낸다.
+- [x] `tools/gen-golden.py` — 프레임 11개를 **이어붙여** 내보낸다.
       하나씩 두면 프레임 경계를 넘는 버퍼 처리를 못 잡는다
 - [x] verify: Kotlin 15개 — 골든 디코딩, 규격 위반 7종 거부, 끊긴 연결 3종,
       왕복, 헤더 불변, 빈 blob 경계
@@ -371,10 +371,31 @@ PC 도 폰을 다룬다), 보안은 현행 유지(승인 다이얼로그만·평
 - [x] verify: 파이썬 603개 통과
 
 ### 31.4 탐색
-- [ ] `Discovery.kt` — announcer + listener, `NetworkInterface` 로 실제 브로드캐스트 주소
-- [ ] MulticastLock (없으면 Wi-Fi 스택이 브로드캐스트를 걸러낸다)
-- [ ] Wi-Fi 네트워크에 소켓 바인딩 (셀룰러로 새어나가는 것을 막는다)
-- [ ] verify: 맥에서 `nc -ul 9601` 로 페이로드 확인 + 양쪽 목록에 서로 잡히는지
+- [x] `Discovery.kt` — announcer + listener. **안드로이드 클래스를 쓰지 않는다.**
+      그래야 JVM 단위 테스트에서 진짜 소켓으로 검증된다
+- [x] `NetworkInterface.getInterfaceAddresses()` 로 **실제** 브로드캐스트 주소.
+      파이썬의 `/24` 추측이 필요 없다
+- [x] **버그 발견** — `JSONObject(text)` 는 첫 객체만 읽고 뒤에 남은 것을 버린다.
+      `{"v":1,...}쓰레기` 가 통과했다. 파이썬 `json.loads` 는 거부하므로 맞췄다
+      (`JSONTokener` + `more()`, 뒤쪽 공백만 허용)
+- [x] `optInt("v")` 는 문자열 `"1"` 을 숫자로 바꿔 받아준다. 파이썬은 엄격 비교라
+      거부하므로 타입을 직접 본다
+- [x] `announcePort` / `listenPort` 분리 — 한 JVM 에서 양쪽을 세우려면 필요하다.
+      같은 포트에 소켓 둘은 SO_REUSEPORT 가 필요한데 `setOption` 은 API 33 부터다
+- [x] `WifiLan.kt` — MulticastLock (없으면 Wi-Fi 스택이 브로드캐스트를 걸러낸다) +
+      `registerNetworkCallback` 으로 Wi-Fi 네트워크 추적, 소켓 바인딩
+- [x] `NET_CAPABILITY_INTERNET` 은 요구하지 않는다. 인터넷 안 되는 공유기에서도
+      LAN 파일 교환은 된다
+- [x] verify: Kotlin 14개 — 골든 알림 해석, 규격 위반 10종, TTL, 정렬,
+      **실제 UDP 소켓** 송수신·자기 필터·포트 실패
+- [x] verify: `tests/test_kotlin_interop.py` — Kotlin 알림을 파이썬 `Discovery._on_packet`
+      에 통과시켜 확인 (파서만이 아니라 실제 경로로)
+- [x] **verify: 진짜 LAN 양방향 실측** (`tools/lan-probe.py` + `LiveLanTest`)
+      - Kotlin 이 파이썬을 찾음 — `파이썬 탐침 192.168.219.107:9600 (darwin)`
+      - 파이썬이 Kotlin 을 찾음 — `안드로이드 탐침 192.168.219.107:9600 (android)`
+      - 경로 열거가 `192.168.219.107 -> 255.255.255.255, 192.168.219.255` 로 정확
+- [x] verify: 파이썬 606개 통과, Kotlin 31개 (라이브 2개는 기본 건너뜀)
+- [ ] 폰 실기에서의 MulticastLock·Wi-Fi 바인딩 확인 (서비스가 생긴 뒤에)
 
 ### 31.5 SAF 공유 저장소
 - [ ] `Shares.kt` — 트리 URI 영속화, 원격 경로 해석(`..` 처리를 `_split` 과 동일하게)

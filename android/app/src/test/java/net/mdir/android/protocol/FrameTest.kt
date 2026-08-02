@@ -217,7 +217,7 @@ class FrameTest {
 
     private fun resource(name: String) =
         checkNotNull(javaClass.classLoader!!.getResourceAsStream("golden/$name")) {
-            "golden/$name 이 없습니다. tools/gen-golden-frames.py 를 실행하세요"
+            "golden/$name 이 없습니다. tools/gen-golden.py 를 실행하세요"
         }
 
     private fun goldenBytes() = resource("frames.bin").use { it.readBytes() }

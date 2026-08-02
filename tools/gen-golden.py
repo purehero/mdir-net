@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-# 파이썬 구현이 만드는 프레임 바이트를 뽑아 안드로이드 테스트의 골든 벡터로 박아둔다
+# 파이썬 구현이 만드는 바이트를 뽑아 안드로이드 테스트의 골든 벡터로 박아둔다
 #
-#   python3 tools/gen-golden-frames.py
+#   python3 tools/gen-golden.py
 #
-# 프레임을 하나의 파일에 **이어붙여** 내보낸다. 프레임 경계를 넘는 버퍼 처리가
+# 두 가지를 내보낸다.
+#   frames.bin / frames.json      세션 프레임 (PROTOCOL.md 3절)
+#   announce.bin / announce.json  탐색 데이터그램 (PROTOCOL.md 2절)
+#
+# 프레임은 하나의 파일에 **이어붙여** 내보낸다. 프레임 경계를 넘는 버퍼 처리가
 # 프레이밍 버그가 사는 곳이라, 한 개씩 따로 두면 정작 중요한 것을 못 잡는다.
 
 import hashlib
@@ -103,6 +107,33 @@ CASES = [
 ]
 
 
+def write_announce():
+    """탐색 데이터그램. 프레임 헤더와 JSON 인코딩 규칙이 다르다는 것이 요점이다.
+
+    `discovery.py` 는 기본 옵션 `json.dumps` 를 쓴다. 그래서 한글이 `\\uXXXX` 로
+    escape 되고 구분자에 공백이 들어간다. 프레임 헤더(`ensure_ascii=False` + 압축)와
+    다르므로, 안드로이드가 프레임 규칙만 보고 파서를 만들면 여기서 어긋난다.
+    """
+    fields = {
+        "v": config.PROTOCOL_VERSION,
+        "id": "a1b2c3d4e5f60718",
+        "name": "거실 맥북",
+        "port": 9603,
+        "platform": "darwin",
+    }
+    # discovery.py 의 _announce_loop 와 **똑같이** 만든다
+    payload = json.dumps(fields).encode("utf-8")
+
+    (OUT_DIR / "announce.bin").write_bytes(payload)
+    (OUT_DIR / "announce.json").write_text(
+        json.dumps(fields, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+    assert b"\\uac70" in payload, "한글이 escape 되지 않았다. 규칙이 바뀌었는지 확인하라"
+    print("%s  (%d 바이트)" % (OUT_DIR / "announce.bin", len(payload)))
+    print("%s" % (OUT_DIR / "announce.json"))
+
+
 def main():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -128,6 +159,8 @@ def main():
 
     print("%s  (%d 프레임, %d 바이트)" % (OUT_DIR / "frames.bin", len(manifest), len(stream)))
     print("%s" % (OUT_DIR / "frames.json"))
+
+    write_announce()
 
 
 if __name__ == "__main__":
