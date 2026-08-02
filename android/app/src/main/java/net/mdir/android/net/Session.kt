@@ -15,10 +15,12 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import net.mdir.android.protocol.Config
 import net.mdir.android.protocol.Frame
@@ -119,14 +121,24 @@ class Session(
 
     // --- 저수준 송수신 ---
 
+    /**
+     * 프레임 하나를 내보낸다.
+     *
+     * **반드시 IO 디스패처로 옮긴다.** 소켓 쓰기는 블로킹이고, 안드로이드는 메인
+     * 스레드에서 그러면 `NetworkOnMainThreadException` 을 던진다. 그 예외는 메시지가
+     * 없어서 화면에는 그냥 "읽지 못했습니다" 로만 보인다 — 실기에서 이걸로 한참
+     * 헤맸다. 호출하는 쪽이 조심하게 두지 않고, 소켓을 가진 여기서 보장한다.
+     */
     private suspend fun send(header: JSONObject, blob: ByteArray? = null) {
         sendLock.withLock {
-            try {
-                Frame.send(output, header, blob)
-            } catch (exc: IOException) {
-                // 닫힌 소켓에 쓰면 IOException 이 난다. 그대로 올려보내면 워커에서
-                // 터져 나오므로 호출하는 쪽이 한 종류만 잡도록 바꿔준다
-                throw SessionError("연결이 끊어졌습니다: ${exc.message}")
+            withContext(Dispatchers.IO) {
+                try {
+                    Frame.send(output, header, blob)
+                } catch (exc: IOException) {
+                    // 닫힌 소켓에 쓰면 IOException 이 난다. 그대로 올려보내면 워커에서
+                    // 터져 나오므로 호출하는 쪽이 한 종류만 잡도록 바꿔준다
+                    throw SessionError("연결이 끊어졌습니다: ${exc.message}")
+                }
             }
         }
     }
@@ -295,7 +307,8 @@ class Session(
         onProgress: ((Int) -> Unit)? = null,
     ): Long {
         val (id, box) = openBox()
-        val writer = store.beginWrite(destPath)
+        // 저장소 접근도 블로킹이다. 메인에서 부르면 SAF 쿼리가 ANR 로 이어진다
+        val writer = withContext(Dispatchers.IO) { store.beginWrite(destPath) }
         var received = 0L
 
         try {
@@ -304,15 +317,15 @@ class Session(
                 val frame = await(box)
                 if (frame.header.optString("t") == "data.end") break
                 frame.blob?.let {
-                    writer.write(it, it.size)
+                    withContext(Dispatchers.IO) { writer.write(it, it.size) }
                     received += it.size
                     onProgress?.invoke(it.size)
                 }
             }
-            writer.commit()
+            withContext(Dispatchers.IO) { writer.commit() }
             return received
         } catch (exc: Throwable) {
-            writer.abort()
+            withContext(NonCancellable + Dispatchers.IO) { writer.abort() }
             throw exc
         } finally {
             closeBox(outgoing, id)
@@ -326,7 +339,7 @@ class Session(
         remotePath: String,
         onProgress: ((Int) -> Unit)? = null,
     ): Long {
-        val size = store.stat(sourcePath).size
+        val size = withContext(Dispatchers.IO) { store.stat(sourcePath).size }
         val (id, box) = openBox()
 
         try {
@@ -337,10 +350,10 @@ class Session(
             await(box) // push.ok. 경로가 거부되면 여기서 예외가 난다
 
             var sent = 0L
-            store.openRead(sourcePath).use { source ->
+            withContext(Dispatchers.IO) { store.openRead(sourcePath) }.use { source ->
                 val buffer = ByteArray(Config.CHUNK_SIZE)
                 while (true) {
-                    val got = source.read(buffer)
+                    val got = withContext(Dispatchers.IO) { source.read(buffer) }
                     if (got <= 0) break
                     // 대화를 시작한 쪽이 계속 보내는 것이므로 q 가 붙는다
                     sendQ(JSONObject().put("t", "data").put("id", id), buffer.copyOf(got))

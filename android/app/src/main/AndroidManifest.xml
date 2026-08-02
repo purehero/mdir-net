@@ -41,6 +41,15 @@
             </intent-filter>
         </activity>
 
+        <!--
+          화면이 꺼져도 상대가 내 파일을 가져갈 수 있어야 하므로 리스너가 살아있어야 한다.
+          API 34 부터 foregroundServiceType 선언이 필수다
+        -->
+        <service
+            android:name=".service.MDirService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
     </application>
 
 </manifest>
