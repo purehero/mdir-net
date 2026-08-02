@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 세션 TCP 와 탐색 UDP -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <!--
+      Wi-Fi 스택은 자기 앞으로 오지 않은 패킷을 기본으로 걸러낸다. MulticastLock 을
+      잡아야 브로드캐스트 알림이 올라온다. 이게 없으면 보내는 건 되는데 못 받는다
+    -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+
+    <!-- 화면이 꺼져도 상대가 내 파일을 가져갈 수 있어야 하므로 리스너가 살아있어야 한다 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <!-- 앱이 앞에 없을 때 들어온 연결의 승인을 알림으로 묻는다 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- LAN 전용이다. Wi-Fi 없는 기기에 설치될 이유가 없다 -->
+    <uses-feature android:name="android.hardware.wifi" android:required="false" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.MDirNet">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.MDirNet">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          화면이 꺼져도 상대가 내 파일을 가져갈 수 있어야 하므로 리스너가 살아있어야 한다.
+          API 34 부터 foregroundServiceType 선언이 필수다
+        -->
+        <service
+            android:name=".service.MDirService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+    </application>
+
+</manifest>

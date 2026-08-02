@@ -316,6 +316,176 @@ fable 모델 검토에서 나온 버그를 전부 수정.
 - [ ] 전송 중 취소 (Esc) — 현재는 끝날 때까지 기다려야 한다
 - [ ] 덮어쓰기를 항목별로 묻기 — 현재는 일괄 확인 한 번
 
+## 31. 안드로이드 클라이언트 (2026-08-02)
+
+폰도 MDirNet 노드가 되게 한다. 네이티브 Kotlin 앱, 양방향 전체(폰이 PC 를 다루고
+PC 도 폰을 다룬다), 보안은 현행 유지(승인 다이얼로그만·평문), 탐색은 UDP 브로드캐스트만.
+기존 프로토콜이 이미 대칭이라 **`mdirnet/` 은 건드리지 않는다.**
+
+### 31.1 프로토콜 문서화
+- [x] `PROTOCOL.md` — 구현체가 둘이 되었으므로 어느 쪽 코드도 아닌 문서가 기준이다
+- [x] 위협 모델을 0절로 맨 앞에 (평문·인증 없음·홈 LAN 전용)
+- [x] 탐색 데이터그램과 프레임 헤더의 **JSON 인코딩이 다르다**는 것을 명시
+      (탐색은 기본 `json.dumps` 라 한글이 `\uXXXX`, 프레임은 `ensure_ascii=False` 압축)
+- [x] `q` 규칙과 "우편함을 읽기 루프에서 먼저 등록" 함정을 별도 절로
+- [x] 10절에 새 구현체용 체크리스트
+- [x] `tests/test_protocol_doc.py` — 문서가 조용히 낡는 것을 막는다.
+      상수 12개 대조 + config 에 상수를 더하고 문서를 잊는 경우 + 요청 타입 목록 +
+      포트 상한(bind 재시도 횟수에서 유도)
+- [x] verify: 문서를 일부러 틀리게 고쳐 테스트가 실제로 걸리는 것까지 확인
+- [x] verify: 601개 통과 (기존 597 + 신규 4)
+
+### 31.2 Gradle 뼈대
+- [x] `android/` 프로젝트 + wrapper, compileSdk 36 / minSdk 26
+- [x] 버전을 이 머신의 Gradle 캐시에 맞췄다 — Gradle 8.13, AGP 8.13.0, Kotlin 2.1.21,
+      Compose BOM 2024.09.00. 새로 내려받은 것 없이 빌드된다
+- [x] 매니페스트 권한 7개 (INTERNET, ACCESS_NETWORK_STATE, ACCESS_WIFI_STATE,
+      CHANGE_WIFI_MULTICAST_STATE, FOREGROUND_SERVICE, FOREGROUND_SERVICE_DATA_SYNC,
+      POST_NOTIFICATIONS)
+- [x] 계획에서 바꾼 것 — DataStore 대신 SharedPreferences (캐시에 없고 저장할 게
+      트리 URI 목록 하나뿐), JSON 은 `org.json` (프레임워크 내장이라 런타임 의존성 0)
+- [x] 런처 아이콘은 벡터 어댑티브로 (바이너리 에셋 없음)
+- [x] `Theme.Material.DayNight` 는 플랫폼에 없다 — `values-night` 로 나눴다.
+      나누지 않으면 다크 모드에서 첫 프레임에 흰 화면이 번쩍인다
+- [x] verify: `./gradlew :app:assembleDebug` 성공, aapt2 로 권한·패키지·targetSdk 확인
+
+### 31.3 프레이밍 계층
+- [x] `Config.kt` — `config.py` 의 거울
+- [x] `Frame.kt` — `encode`, `FrameReader`, `ProtocolError`, `PeerClosed`, 상한 양방향 검사
+- [x] 길이 접두어를 **부호 없이** 읽는다. Int 로 담으면 0x80000000 이상이 음수가 되어
+      상한 검사를 그냥 통과한다
+- [x] blob 길이가 정수인지 확인한다. `optInt` 로 읽으면 문자열이 0 으로 조용히 넘어가
+      blob 을 못 읽고 스트림이 어긋난다
+- [x] **엄격한 UTF-8 디코딩** — `String(bytes, UTF_8)` 은 잘못된 바이트를 U+FFFD 로
+      바꿔치우고 넘어간다. 파이썬은 연결을 끊으므로 `CodingErrorAction.REPORT` 로 맞췄다
+- [x] 헤더 객체를 복사해 `blob` 을 넣는다 (원본에 남으면 재전송 때 길이가 어긋난다)
+- [x] 계획 수정 — "바이트 단위 일치" 는 헤더에 대해서는 잘못된 기준이다.
+      JSON 키 순서는 구현마다 다르고(Maven org.json 은 HashMap, 안드로이드는
+      LinkedHashMap) 의미에 영향이 없다. **양방향 디코딩**으로 바꿨다
+- [x] `tools/gen-golden.py` — 프레임 11개를 **이어붙여** 내보낸다.
+      하나씩 두면 프레임 경계를 넘는 버퍼 처리를 못 잡는다
+- [x] verify: Kotlin 15개 — 골든 디코딩, 규격 위반 7종 거부, 끊긴 연결 3종,
+      왕복, 헤더 불변, 빈 blob 경계
+- [x] verify: `tests/test_kotlin_frames.py` — Kotlin 이 만든 11개를 파이썬
+      FrameReader 가 읽어 매니페스트와 일치. 손상·절단시 실제로 걸리는 것까지 확인
+- [x] verify: 파이썬 603개 통과
+
+### 31.4 탐색
+- [x] `Discovery.kt` — announcer + listener. **안드로이드 클래스를 쓰지 않는다.**
+      그래야 JVM 단위 테스트에서 진짜 소켓으로 검증된다
+- [x] `NetworkInterface.getInterfaceAddresses()` 로 **실제** 브로드캐스트 주소.
+      파이썬의 `/24` 추측이 필요 없다
+- [x] **버그 발견** — `JSONObject(text)` 는 첫 객체만 읽고 뒤에 남은 것을 버린다.
+      `{"v":1,...}쓰레기` 가 통과했다. 파이썬 `json.loads` 는 거부하므로 맞췄다
+      (`JSONTokener` + `more()`, 뒤쪽 공백만 허용)
+- [x] `optInt("v")` 는 문자열 `"1"` 을 숫자로 바꿔 받아준다. 파이썬은 엄격 비교라
+      거부하므로 타입을 직접 본다
+- [x] `announcePort` / `listenPort` 분리 — 한 JVM 에서 양쪽을 세우려면 필요하다.
+      같은 포트에 소켓 둘은 SO_REUSEPORT 가 필요한데 `setOption` 은 API 33 부터다
+- [x] `WifiLan.kt` — MulticastLock (없으면 Wi-Fi 스택이 브로드캐스트를 걸러낸다) +
+      `registerNetworkCallback` 으로 Wi-Fi 네트워크 추적, 소켓 바인딩
+- [x] `NET_CAPABILITY_INTERNET` 은 요구하지 않는다. 인터넷 안 되는 공유기에서도
+      LAN 파일 교환은 된다
+- [x] verify: Kotlin 14개 — 골든 알림 해석, 규격 위반 10종, TTL, 정렬,
+      **실제 UDP 소켓** 송수신·자기 필터·포트 실패
+- [x] verify: `tests/test_kotlin_interop.py` — Kotlin 알림을 파이썬 `Discovery._on_packet`
+      에 통과시켜 확인 (파서만이 아니라 실제 경로로)
+- [x] **verify: 진짜 LAN 양방향 실측** (`tools/lan-probe.py` + `LiveLanTest`)
+      - Kotlin 이 파이썬을 찾음 — `파이썬 탐침 192.168.219.107:9600 (darwin)`
+      - 파이썬이 Kotlin 을 찾음 — `안드로이드 탐침 192.168.219.107:9600 (android)`
+      - 경로 열거가 `192.168.219.107 -> 255.255.255.255, 192.168.219.255` 로 정확
+- [x] verify: 파이썬 606개 통과, Kotlin 31개 (라이브 2개는 기본 건너뜀)
+- [ ] 폰 실기에서의 MulticastLock·Wi-Fi 바인딩 확인 (서비스가 생긴 뒤에)
+
+### 31.5 SAF 공유 저장소
+- [x] **`FileStore` 인터페이스를 뒀다.** SAF 는 ContentResolver 가 있어야 해서 JVM
+      테스트에서 못 쓴다. 세션 검증(31.6)이 그것 때문에 기기로 밀려나면 결국 안 하게 된다
+- [x] `RemotePath.kt` — `shares.py` 의 `_split`/`join`/`parent`/`normalize`/`display` 포팅
+- [x] `ShareList.kt` — 이름 겹침 처리, 깨진 저장본 건너뛰기 (JVM 테스트 가능)
+- [x] `SafFileStore.kt` — 커서 기반 목록 한 번 쿼리 (`DocumentFile.listFiles()` 는
+      자식마다 쿼리를 날려 느리다), tree/head/mkdir/delete/rename, `.part` + rename
+- [x] `SharesStore.kt` — `takePersistableUriPermission`, SharedPreferences 저장
+- [x] SAF 는 경로 탈출이 **구조적으로 불가능**하다. 트리 루트에서 표시 이름을 따라
+      내려가는 것 말고 원시 경로를 밀어넣을 통로가 없다 (`resolve_within` 불필요)
+- [x] **차분 검증이 divergence 를 잡았다** — 파이썬은 슬래시가 정확히 두 개로
+      시작하면 `//` 를 조각으로 남긴다 (`PurePosixPath` 의 POSIX 규칙). 내 포팅은
+      `[]` 로 접고 있었다. 보안 경계라 파이썬에 맞추고 PROTOCOL.md 6.1 에 명시
+- [x] `LocalFileStore` (테스트 전용) — 진짜 파일시스템. 메모리 가짜가 아니라
+      `.part` 후 rename, 부모 자동 생성, 재귀 삭제를 실제로 겪는다
+- [x] verify: Kotlin 79개 — 경로 11 + 차분 2 + 공유목록 8 + FileStore 규약 27
+      (보호 규칙 전수: 가상 루트·공유 폴더 자체·`..` 탈출·심링크 범위·덮어쓰기 거부)
+- [x] verify: 차분 테스트가 실제로 걸리는지 두 가지로 확인 — `//` 처리 제거,
+      `..` 을 '그냥 버리기'로 되돌리기. 둘 다 잡혔다
+- [ ] SAF 구현 자체는 기기 실측이 필요하다 (표시 이름 변형, 원자적 교체 없음)
+
+### 31.6 세션
+- [x] `Session.kt` — `q` 규칙, 우편함 2개, 읽기 루프 선등록, 요청 10종, pull/push
+- [x] 어떤 예외에도 `err` 를 회신한다. 답이 없으면 상대가 30초 얼어붙는다
+- [x] `Server.kt` — hello, 승인 대기, 만료 알림, 포트 9600~9609 순차 바인드
+- [x] `connect()` — 승인 대기에 `APPROVAL_TIMEOUT + 5초`
+- [x] 전송 자리도 원격 경로 공간이다. 폰은 SAF 트리 밖에 쓸 수 없으므로 호스트
+      경로를 받을 이유가 없다
+- [x] verify: SessionTest 24개 — 요청 10종, 대용량 전송, 오류 9종이 **타임아웃 없이**
+      즉시 돌아오는지, 끊김 처리
+- [x] verify: HandshakeTest 8개 — 승인/거부/만료/늦은 승인/버전 불일치/포트 올리기
+- [x] **verify: 규칙을 일부러 깨뜨려 테스트가 잡는지 확인**
+      - 우편함을 하나로 합침 → `양쪽이 동시에 주고받아도 섞이지 않는다` 만 실패 (의도대로)
+      - 선등록 제거 → 처음엔 **아무것도 안 잡혔다.** `push.begin`→`push.ok`→`data`
+        왕복이 우연히 순서를 보장하고 있었다. `push.ok` 를 안 기다리는 상대를 흉내내는
+        테스트를 새로 넣으니 그때 잡혔다
+- [x] **verify: 진짜 파이썬 구현과 종단 실측** (`tools/peer-probe.py` + LiveLanTest)
+      - 탐색 → 승인 → home/list → 1.5MB 내려받기 → 700KB 올려보내기 → mkdir/rename/delete
+      - 양방향 SHA-256 일치, `.part` 잔여물 없음, 파이썬 쪽 이벤트 로그 정상
+- [x] verify: Kotlin 112개 (라이브 3개 제외), 파이썬 606개 통과
+
+### 31.7 포그라운드 서비스
+- [x] `MDirNode` — 서버·탐색·세션·전송을 한 곳에서 든다. 서비스와 화면이 각자 상태를
+      들면 어긋나므로 하나로 모았다
+- [x] `MDirService.kt` — dataSync 타입, MulticastLock 수명, 알림에 "중지",
+      상태 줄을 세션/포트/Wi-Fi 에 따라 고쳐 쓴다
+- [x] 백그라운드 승인 알림 (수락/거부 액션, IMPORTANCE_HIGH, category=call).
+      전체화면 인텐트는 안드로이드 14 제한이라 쓰지 않는다
+- [x] 화면이 앞에 있으면 다이얼로그, 없으면 알림 (`MDirNode.uiVisible`)
+- [x] verify: 실기에서 앱을 백그라운드로 두고 맥이 붙음 → 알림 뜸(channel=approval,
+      importance=4) → 수락 탭 → 세션 성립까지 확인
+- [x] verify: 30초 안에 안 누르면 만료되고 거부로 끝나는 것도 실측 (한 번 늦어서 걸렸다)
+
+### 31.8 Compose UI
+- [x] 홈 — 켜기/끄기, 기기 이름, 상태, 찾은 기기 목록, 연결
+- [x] 공유 — SAF 폴더 추가/빼기. "목록에서만 빠집니다" 를 확인 창에 분명히
+- [x] 브라우저 — MDir 의 양쪽 패널을 탭 둘로. 복사 방향은 보고 있는 탭이 정한다
+- [x] 진행률 막대 + 취소, 승인 다이얼로그, 알림 스낵바
+- [x] 평문 경고를 홈 화면에 상시 표시 (임시 문구가 아니다)
+- [x] 경로는 왼쪽을 잘라 뒤를 남긴다 (데스크톱과 같은 규칙)
+- [x] `TextOverflow.MiddleEllipsis` 는 Compose 1.8+ 라 못 쓴다. 직접 잘랐다
+- [x] verify: 실기에서 전 과정 (아래 31.9)
+
+### 31.9 실기 상호운용 (Galaxy Z Fold7 / SM-F966N, Android 16, API 36)
+- [x] **버그 발견 — `NetworkOnMainThreadException`.** Compose 의 `rememberCoroutineScope`
+      는 Main 디스패처다. 거기서 `Session` 의 suspend 함수를 부르면 소켓 쓰기가
+      메인 스레드에서 일어나 예외가 난다. **메시지가 null 이라** 화면에는 그냥
+      "읽지 못했습니다" 로만 보였다. JVM 테스트로는 절대 안 잡히는 종류다.
+      호출하는 쪽이 조심하게 두지 않고 `Session.send` 안에서 IO 로 옮겼다
+- [x] 폰이 맥을 찾음 / 맥이 폰을 찾음 (실제 Wi-Fi, MulticastLock 동작 확인)
+- [x] 맥 → 폰 접속 (앱은 백그라운드) → 알림 승인 → 폰 SAF 목록 →
+      폰에서 900KB 내려받고 640KB 올려보냄, 양쪽 해시 일치
+- [x] 폰 → 맥 접속 (UI) → 맥 공유 목록 → **UI 로** 1.2MB 내려받기, 해시 일치
+- [x] **UI 로 재귀 폴더 업로드** — `폰폴더/안쪽/메모.txt` 와 `폰폴더/빈폴더` 가
+      모두 넘어갔다. 빈 폴더는 `tree` 의 dirs 가 없으면 조용히 사라지는 부분이다
+- [x] SAF 의 `.part` → rename 확인, 잔여물 없음
+- [x] 원격 mkdir / rename / delete 를 SAF 위에서 확인
+- [x] 세션이 끊기면 브라우저가 홈으로 자동 복귀
+- [x] 공유 목록이 앱 재시작 후에도 남는다 (SharedPreferences + 영구 URI 권한)
+- [x] verify: 파이썬 606개, Kotlin 112개 통과
+- [x] 뒷정리 — 폰의 테스트 폴더·스크린샷 삭제, 앱 데이터 초기화(공유·권한 제거).
+      앱 자체는 남겨뒀다
+
+### 알아둔 제약
+- 에뮬레이터는 NAT 뒤라 UDP 브로드캐스트가 호스트 LAN 에 닿지 않는다.
+  수동 IP 입력을 넣지 않기로 했으므로 **실기기가 반드시 필요하다**
+- 맥 방화벽 인바운드 차단이 켜져 있으면 폰이 붙지 못한다 (`tools/allow-firewall.sh`)
+- 폰의 `tree` 는 SAF 재귀라 느릴 수 있다. 깊은 트리는 `REQUEST_TIMEOUT` 에 걸릴 수 있어 실측 필요
+
 ## 검증 기록 (2026-07-27)
 - `python3 -m unittest discover -s tests -t .` → 540개 통과
 - pty 스모크 — 첫 화면·F1 모달·커서 이동·선택 렌더링 확인, `q` 종료 코드 0, 터미널 복원 확인

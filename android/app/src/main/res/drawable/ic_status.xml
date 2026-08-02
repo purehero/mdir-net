@@ -1,0 +1,27 @@
+<!-- 알림 표시줄 아이콘 — 단색 실루엣이어야 한다 (색은 시스템이 입힌다) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFF">
+
+    <!-- 왼쪽 패널 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M3,4 H10 V14 H3 Z" />
+
+    <!-- 오른쪽 패널 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M14,4 H21 V14 H14 Z" />
+
+    <!-- 전송 화살표 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M4,17.5 H17 V19.5 H4 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M16,15.5 L21,18.5 L16,21.5 Z" />
+
+</vector>

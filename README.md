@@ -247,6 +247,21 @@ Filenames containing ambiguous characters cannot be avoided, so **anything ambig
 - **Connection** — an incoming request raises an approval dialog on the peer's screen. No answer within 30 seconds counts as a refusal.
 - **Transfer** — data lands in a `.part` file that is renamed on completion, so a broken transfer never leaves a half file behind.
 
+## Android
+
+An Android client lives in [`android/`](android/). It speaks the same protocol, so a phone
+is a full peer: it can browse, download from and upload to a PC, and a PC can do the same
+to the phone.
+
+- Shared folders are picked with the system folder picker (Storage Access Framework).
+  Only the folders you pick are opened, and nothing outside them can be reached.
+- A foreground service keeps the listener alive so a PC can fetch files while the app is
+  in the background. Approval is asked with a notification when the app is not on screen.
+- Build it with `cd android && ./gradlew :app:assembleDebug`, or open `android/` in
+  Android Studio.
+
+The wire format both implementations follow is written down in [PROTOCOL.md](PROTOCOL.md).
+
 ## Security scope
 
 This was built for the inside of one router. There is no protection beyond that line.
