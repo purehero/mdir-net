@@ -350,8 +350,25 @@ PC 도 폰을 다룬다), 보안은 현행 유지(승인 다이얼로그만·평
 - [x] verify: `./gradlew :app:assembleDebug` 성공, aapt2 로 권한·패키지·targetSdk 확인
 
 ### 31.3 프레이밍 계층
-- [ ] `Config.kt` / `Frame.kt` — encode, FrameReader, 상한 검사 양방향
-- [ ] verify: 파이썬으로 뽑은 골든 바이트 벡터와 바이트 단위 일치
+- [x] `Config.kt` — `config.py` 의 거울
+- [x] `Frame.kt` — `encode`, `FrameReader`, `ProtocolError`, `PeerClosed`, 상한 양방향 검사
+- [x] 길이 접두어를 **부호 없이** 읽는다. Int 로 담으면 0x80000000 이상이 음수가 되어
+      상한 검사를 그냥 통과한다
+- [x] blob 길이가 정수인지 확인한다. `optInt` 로 읽으면 문자열이 0 으로 조용히 넘어가
+      blob 을 못 읽고 스트림이 어긋난다
+- [x] **엄격한 UTF-8 디코딩** — `String(bytes, UTF_8)` 은 잘못된 바이트를 U+FFFD 로
+      바꿔치우고 넘어간다. 파이썬은 연결을 끊으므로 `CodingErrorAction.REPORT` 로 맞췄다
+- [x] 헤더 객체를 복사해 `blob` 을 넣는다 (원본에 남으면 재전송 때 길이가 어긋난다)
+- [x] 계획 수정 — "바이트 단위 일치" 는 헤더에 대해서는 잘못된 기준이다.
+      JSON 키 순서는 구현마다 다르고(Maven org.json 은 HashMap, 안드로이드는
+      LinkedHashMap) 의미에 영향이 없다. **양방향 디코딩**으로 바꿨다
+- [x] `tools/gen-golden-frames.py` — 프레임 11개를 **이어붙여** 내보낸다.
+      하나씩 두면 프레임 경계를 넘는 버퍼 처리를 못 잡는다
+- [x] verify: Kotlin 15개 — 골든 디코딩, 규격 위반 7종 거부, 끊긴 연결 3종,
+      왕복, 헤더 불변, 빈 blob 경계
+- [x] verify: `tests/test_kotlin_frames.py` — Kotlin 이 만든 11개를 파이썬
+      FrameReader 가 읽어 매니페스트와 일치. 손상·절단시 실제로 걸리는 것까지 확인
+- [x] verify: 파이썬 603개 통과
 
 ### 31.4 탐색
 - [ ] `Discovery.kt` — announcer + listener, `NetworkInterface` 로 실제 브로드캐스트 주소

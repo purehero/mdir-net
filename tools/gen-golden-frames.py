@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+# 파이썬 구현이 만드는 프레임 바이트를 뽑아 안드로이드 테스트의 골든 벡터로 박아둔다
+#
+#   python3 tools/gen-golden-frames.py
+#
+# 프레임을 하나의 파일에 **이어붙여** 내보낸다. 프레임 경계를 넘는 버퍼 처리가
+# 프레이밍 버그가 사는 곳이라, 한 개씩 따로 두면 정작 중요한 것을 못 잡는다.
+
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from mdirnet import config, protocol  # noqa: E402
+
+OUT_DIR = ROOT / "android" / "app" / "src" / "test" / "resources" / "golden"
+
+
+def filler(n, seed):
+    """되풀이 가능한 바이트. os.urandom 을 쓰면 매번 벡터가 바뀐다."""
+    out = bytearray()
+    block = seed.encode("utf-8")
+    while len(out) < n:
+        block = hashlib.sha256(block).digest()
+        out.extend(block)
+    return bytes(out[:n])
+
+
+# (설명, 헤더, blob)
+CASES = [
+    (
+        "핸드셰이크. 순수 ASCII, blob 없음",
+        {"t": "hello", "v": config.PROTOCOL_VERSION, "name": "맥북", "platform": "darwin"},
+        None,
+    ),
+    (
+        "한글과 공백이 든 경로. q 가 붙은 요청",
+        {"t": "list", "id": 1, "q": 1, "path": "내 문서/사진 모음"},
+        None,
+    ),
+    (
+        "목록 응답. bool 과 실수 mtime 이 섞인 배열",
+        {
+            "t": "list.ok",
+            "id": 1,
+            "path": "내 문서/사진 모음",
+            "entries": [
+                {"name": "2024년", "is_dir": True, "size": 0, "mtime": 1722000000.5},
+                {"name": "a b c.txt", "is_dir": False, "size": 15210, "mtime": 1722000123.25},
+                {"name": "따옴표\"와\\역슬래시", "is_dir": False, "size": 1, "mtime": 0.0},
+            ],
+        },
+        None,
+    ),
+    (
+        "뷰어. 파일 전체 크기와 앞부분 blob",
+        {"t": "head.ok", "id": 2, "size": 1048576},
+        filler(1024, "head"),
+    ),
+    (
+        "전송의 보통 경우. CHUNK_SIZE 짜리 blob",
+        {"t": "data", "id": 3},
+        filler(config.CHUNK_SIZE, "chunk"),
+    ),
+    (
+        "1바이트 blob. 경계값",
+        {"t": "data", "id": 3},
+        b"\x00",
+    ),
+    (
+        "빈 blob. 헤더에 blob:0 이 들어가고 뒤에 바이트는 없다",
+        {"t": "data", "id": 3},
+        b"",
+    ),
+    (
+        "전송 끝",
+        {"t": "data.end", "id": 3},
+        None,
+    ),
+    (
+        "재귀 복사용 트리. 빈 배열도 섞는다",
+        {
+            "t": "tree.ok",
+            "id": 4,
+            "files": [{"path": "2024년/사진.jpg", "size": 102400}],
+            "dirs": ["2024년", "2024년/원본"],
+        },
+        None,
+    ),
+    (
+        "오류 회신. 한글 메시지",
+        {"t": "err", "id": 5, "msg": "공유 목록에 없습니다: 없는것"},
+        None,
+    ),
+    (
+        "종료 인사",
+        {"t": "bye"},
+        None,
+    ),
+]
+
+
+def main():
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    stream = bytearray()
+    manifest = []
+
+    for note, header, blob in CASES:
+        stream.extend(protocol.encode(header, blob))
+        manifest.append(
+            {
+                "note": note,
+                # 리더가 blob 키를 꺼내 없애므로 기대 헤더에도 넣지 않는다
+                "header": header,
+                "blobLen": len(blob) if blob else 0,
+                "blobSha256": hashlib.sha256(blob).hexdigest() if blob else None,
+            }
+        )
+
+    (OUT_DIR / "frames.bin").write_bytes(bytes(stream))
+    (OUT_DIR / "frames.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+    print("%s  (%d 프레임, %d 바이트)" % (OUT_DIR / "frames.bin", len(manifest), len(stream)))
+    print("%s" % (OUT_DIR / "frames.json"))
+
+
+if __name__ == "__main__":
+    main()
