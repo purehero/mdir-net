@@ -768,7 +768,7 @@ class ShareDialog(Dialog):
     """
 
     title = "공유 폴더 관리"
-    VISIBLE = 8
+    VISIBLE = 8  # 화면이 낮으면 이보다 줄어든다
 
     def __init__(self, app):
         self.app = app
@@ -778,8 +778,14 @@ class ShareDialog(Dialog):
     def shares(self):
         return list(self.app.shares)
 
+    def _visible(self):
+        """실제로 보여줄 공유 줄 수. 낮은 화면에서 아래쪽이 잘리지 않게 줄인다."""
+        # 안내·가로줄 2줄과 아래 가로줄·키 안내 2줄을 뺀 자리가 목록 몫이다
+        return max(min(self.VISIBLE, (self.max_body or 18) - 4), 1)
+
     def lines(self, inner):
         shares = self.shares
+        visible = self._visible()
         out = [
             "상대에게는 이 목록이 최상위 폴더로 보입니다.",
             term.FG_GRAY + BOX_H * inner + term.RESET,
@@ -787,12 +793,12 @@ class ShareDialog(Dialog):
 
         if not shares:
             out.append(term.FG_YELLOW + "  아직 공유하는 폴더가 없습니다." + term.RESET)
-            out += [""] * (self.VISIBLE - 1)
+            out += [""] * (visible - 1)
         else:
             self.cursor = max(0, min(self.cursor, len(shares) - 1))
-            start = max(0, min(self.cursor - self.VISIBLE + 1, len(shares) - self.VISIBLE))
+            start = max(0, min(self.cursor - visible + 1, len(shares) - visible))
             start = max(start, 0)
-            for index in range(start, min(start + self.VISIBLE, len(shares))):
+            for index in range(start, min(start + visible, len(shares))):
                 share = shares[index]
                 # 외장 디스크를 빼면 경로가 없어진다. 지우지 않고 표시만 해준다.
                 # 표시가 경로 뒤에 붙으면 잘려 사라지므로 이름 옆에 둔다
@@ -806,7 +812,7 @@ class ShareDialog(Dialog):
                     out.append(term.FG_RED + label + term.RESET)
                 else:
                     out.append(label)
-            out += [""] * (self.VISIBLE - min(len(shares), self.VISIBLE))
+            out += [""] * (visible - min(len(shares), visible))
 
         out += [
             term.FG_GRAY + BOX_H * inner + term.RESET,
@@ -906,7 +912,7 @@ class FolderDialog(Dialog):
     """
 
     title = "공유할 폴더 선택"
-    VISIBLE = 10  # 한 번에 보여줄 폴더 수
+    VISIBLE = 10  # 한 번에 보여줄 폴더 수. 화면이 낮으면 이보다 줄어든다
 
     DRIVE_ROW = "[드라이브]"
 
@@ -941,22 +947,40 @@ class FolderDialog(Dialog):
         # 최상위에서는 '..' 대신 드라이브 목록으로 나가는 문을 둔다
         return ([self.DRIVE_ROW] if self._on_drives else []) + self.entries
 
+    def _layout(self):
+        """(목록 줄 수, 여유 줄을 지킬지).
+
+        10줄로 고정해 그리면 상자가 화면보다 커져 **아래쪽이 잘린다.** 그러면 맨
+        아래 안내줄이 통째로 사라져서, 폴더를 결정하는 키가 무엇인지 알 방법이
+        없어진다. 폰의 터미널처럼 낮은 화면에서 실제로 그런 일이 있었다.
+
+        그래서 화면이 낮으면 목록을 줄이고, 그것으로도 좁으면 자리만 지키던
+        줄(개수·빈 줄)까지 목록에 내준다. 안내줄은 어느 높이에서도 남는다.
+        """
+        room = (self.max_body or 18) - 3  # 경로·가로줄·안내줄을 뺀 자리
+        if room - 3 >= 4:
+            return min(self.VISIBLE, room - 3), True
+        return max(room, 1), False
+
     def lines(self, inner):
         rows = self.rows()
+        visible, roomy = self._layout()
 
         if self.cursor < self.offset:
             self.offset = self.cursor
-        elif self.cursor >= self.offset + self.VISIBLE:
-            self.offset = self.cursor - self.VISIBLE + 1
+        elif self.cursor >= self.offset + visible:
+            self.offset = self.cursor - visible + 1
 
         out = [
             term.BOLD + screen.fit_left(str(self.path), inner) + term.RESET,
             term.FG_GRAY + BOX_H * inner + term.RESET,
         ]
 
+        shown = 0
         if not rows:
             out.append(term.FG_GRAY + "  (하위 폴더가 없습니다)" + term.RESET)
-        for index in range(self.offset, min(self.offset + self.VISIBLE, len(rows))):
+            shown = 1
+        for index in range(self.offset, min(self.offset + visible, len(rows))):
             name = rows[index]
             plain = name in ("..", self.DRIVE_ROW)
             label = screen.pad("  " + (name if plain else name + "/"), inner)
@@ -966,27 +990,34 @@ class FolderDialog(Dialog):
                 out.append(term.FG_YELLOW + label + term.RESET)
             else:
                 out.append(term.FG_CYAN + label + term.RESET)
+            shown += 1
 
         # 목록이 짧아도 상자 높이를 유지해 다이얼로그가 들썩이지 않게 한다
-        for _ in range(self.VISIBLE - max(len(rows), 1)):
+        for _ in range(visible - shown):
             out.append(" " * inner)
 
-        # 아래 두 줄은 내용이 없어도 자리를 지킨다. 폴더를 옮길 때마다 상자
-        # 높이가 달라지면 화면이 들썩여 눈에 거슬린다
-        if len(rows) > self.VISIBLE:
-            out.append(term.FG_GRAY + "  (%d/%d)" % (self.cursor + 1, len(rows)) + term.RESET)
-        else:
-            out.append(" " * inner)
-        out.append(
-            term.FG_RED + screen.fit(self.message, inner) + term.RESET
-            if self.message
-            else " " * inner
-        )
+        if roomy:
+            # 아래 두 줄은 내용이 없어도 자리를 지킨다. 폴더를 옮길 때마다 상자
+            # 높이가 달라지면 화면이 들썩여 눈에 거슬린다
+            if len(rows) > visible:
+                out.append(term.FG_GRAY + "  (%d/%d)" % (self.cursor + 1, len(rows)) + term.RESET)
+            else:
+                out.append(" " * inner)
+            out.append(
+                term.FG_RED + screen.fit(self.message, inner) + term.RESET
+                if self.message
+                else " " * inner
+            )
+            out.append("")
+        elif self.message:
+            # 자리만 지키던 줄은 내줬지만 읽지 못한 이유는 그래도 알려야 한다
+            out.append(term.FG_RED + screen.fit(self.message, inner) + term.RESET)
 
         drive_hint = "   \\ 드라이브" if self._on_drives else ""
         out += [
-            "",
-            term.BOLD + "Ctrl-D 이 폴더로 결정" + term.RESET
+            # Ctrl 이 없는 자판(폰의 터미널, 일부 블루투스 키보드)에서도 결정할 수
+            # 있어야 한다. 그래서 Space 를 앞에 세운다. Ctrl-D 도 그대로 받는다
+            term.BOLD + "Space 이 폴더로 결정" + term.RESET
             + term.FG_GRAY
             + "   Enter 열기   < 상위%s   %s" % (drive_hint, self.cancel_hint)
             + term.RESET,
@@ -995,20 +1026,21 @@ class FolderDialog(Dialog):
 
     def key(self, key):
         rows = self.rows()
+        visible = self._layout()[0]
 
         if key in (term.UP, "k"):
             self.cursor = max(0, self.cursor - 1)
         elif key in (term.DOWN, "j"):
             self.cursor = min(len(rows) - 1, self.cursor + 1) if rows else 0
         elif key == term.PGUP:
-            self.cursor = max(0, self.cursor - self.VISIBLE)
+            self.cursor = max(0, self.cursor - visible)
         elif key == term.PGDN:
-            self.cursor = min(len(rows) - 1, self.cursor + self.VISIBLE) if rows else 0
+            self.cursor = min(len(rows) - 1, self.cursor + visible) if rows else 0
         elif key == term.ENTER:
             self._descend(rows)
         elif key in (term.LEFT, "h"):
             self._go_up()
-        elif key == "CTRL-D":
+        elif key in (term.SPACE, term.INSERT, "CTRL-D"):
             self._on_choose(self.path)
             return True
         elif key == "\\" and self._on_drives:
@@ -2388,6 +2420,10 @@ class App:
 
         left = max((cols - box_width) // 2, 0)
         start = max((rows - len(box)) // 2, 0)
+        # 상자가 화면보다 크면 아래쪽이 잘린다. 표시가 없으면 거기까지가 전부인 줄
+        # 안다. 다이얼로그마다 높이를 줄여 맞추지만 최소 높이 아래로는 방법이 없다
+        cut = start + len(box) > rows
+
         for index, line in enumerate(box):
             row = start + index
             if 0 <= row < rows:
@@ -2396,6 +2432,16 @@ class App:
                 lines[row] = screen.pad(
                     screen.splice(lines[row], left, term.FG_CYAN + line + term.RESET), cols
                 )
+                if cut and row == rows - 1:
+                    # 오른쪽 테두리는 남기고 그 앞에 표시만 얹는다
+                    lines[row] = screen.pad(
+                        screen.splice(
+                            lines[row],
+                            max(left + box_width - 3, 0),
+                            term.FG_YELLOW + "~~" + term.RESET,
+                        ),
+                        cols,
+                    )
 
 
 # 상단 숫자열 > 기능키. 키패드는 application 모드에서 이스케이프 시퀀스를 보내므로
