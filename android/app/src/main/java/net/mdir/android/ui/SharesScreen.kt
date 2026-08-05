@@ -2,6 +2,8 @@
 
 package net.mdir.android.ui
 
+import android.net.Uri
+import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -30,6 +32,20 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import net.mdir.android.node.MDirNode
 
+/**
+ * 피커를 열 위치. 내장 저장공간의 다운로드 폴더다.
+ *
+ * 시작 위치를 주지 않으면(`launch(null)`) 피커가 마지막 위치나 루트 목록에서 열린다.
+ * 거기서 왼쪽의 **'다운로드'** 를 누르면 `externalstorage` 가 아니라 DownloadManager 가
+ * 가진 목록이 열리는데, **파일 관리자로 만든 폴더가 거기엔 없어서 빈 화면처럼 보이고**
+ * 트리로 고를 수도 없다. 그래서 진짜 파일시스템 쪽 다운로드 폴더를 못 박는다.
+ * 다른 곳을 고르려면 피커 위쪽 경로에서 한 칸 올라가면 된다.
+ *
+ * 없는 폴더를 가리키면 피커가 기본 위치에서 열린다 — 예전과 같아지므로 손해는 없다.
+ */
+private val PICKER_START: Uri =
+    DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:Download")
+
 @Composable
 fun SharesScreen() {
     val shares by remember { MDirNode.shares.shares }.collectAsState()
@@ -39,10 +55,23 @@ fun SharesScreen() {
     val pick = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree(),
     ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
+        // 아무 말도 없이 돌아오면 사용자는 앱이 먹통이라고 느낀다. 그만뒀는지
+        // 시스템이 결과를 흘렸는지도 구분할 수 없다 (접었다 펴면 실제로 흘린다)
+        if (uri == null) {
+            MDirNode.notify("폴더를 고르지 않았습니다")
+            return@rememberLauncherForActivityResult
+        }
+
+        // 같은 폴더를 다시 고른 것은 실수지 새 공유가 아니다. add 가 기존 것을
+        // 돌려주므로 목록이 그대로인데, 그걸 알려주지 않으면 선택이 안 먹은 줄 안다
+        val already = shares.any { it.key == uri.toString() }
         val added = MDirNode.shares.add(uri)
         MDirNode.notify(
-            if (added == null) "권한을 받지 못했습니다" else "${added.name} 을(를) 공유합니다",
+            when {
+                added == null -> "권한을 받지 못했습니다"
+                already -> "${added.name} 은(는) 이미 공유 중입니다"
+                else -> "${added.name} 을(를) 공유합니다"
+            },
         )
     }
 
@@ -53,7 +82,16 @@ fun SharesScreen() {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        Button(onClick = { pick.launch(null) }) { Text("폴더 추가") }
+        Button(onClick = { pick.launch(PICKER_START) }) { Text("폴더 추가") }
+
+        // 안드로이드 11 부터 시스템이 아예 막는 곳이 있다. 눌러도 안 되는 이유를
+        // 모르면 앱이 고장난 것으로 보인다
+        Text(
+            "다운로드 폴더와 저장소 최상위는 시스템이 공유 대상으로 고르지 못하게 막습니다. " +
+                "그 안에 폴더를 하나 만들어 고르세요.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
 
         if (running) {
             Text(
