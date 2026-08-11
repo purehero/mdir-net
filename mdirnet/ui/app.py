@@ -2436,8 +2436,11 @@ class App:
         """(글자색, 밝게 할지). 커서 줄의 바탕색도 이 색에서 나온다."""
         if picked:
             return term.YELLOW, True
+        # 폴더는 밝은빨강. BLACK.COL 의 '디렉토리명' 슬롯이 0c(밝은빨강 on 검정)이고
+        # BLUE.COL 에서 1c 로 배경만 바뀐다. MSET.DOC 가 디렉토리명을 파일목록
+        # 배경 묶음에 넣어 설명하는 것과 맞아떨어진다
         if item["is_dir"]:
-            return term.WHITE, True
+            return term.RED, True
         low = ext.lower()
         for extensions, color, bright in FILE_COLORS:
             if low in extensions:

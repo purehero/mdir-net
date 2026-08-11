@@ -134,8 +134,18 @@ class TestFileColorsByType(ThemeTestCase):
         self.app.local.refresh()
         self.assertTrue(self._line_for("메모.qqq").startswith(term.ink(term.WHITE, False)))
 
-    def test_directory_is_bright_white(self):
-        self.assertTrue(self._line_for("폴더").startswith(term.ink(term.WHITE)))
+    def test_directory_is_bright_red(self):
+        """BLACK.COL 의 '디렉토리명' 슬롯이 밝은빨강이다 (0c)."""
+        self.assertTrue(self._line_for("폴더").startswith(term.ink(term.RED, True)))
+
+    def test_directory_is_not_confused_with_backup_files(self):
+        """폴더는 밝은빨강, 백업.임시 파일은 어두운 빨강이다."""
+        (self.root / "옛것.bak").write_bytes(b"x")
+        self.app.local.refresh()
+        self.assertNotEqual(
+            term.ink(term.RED, True), term.ink(term.RED, False)
+        )
+        self.assertTrue(self._line_for("옛것.bak").startswith(term.ink(term.RED, False)))
 
 
 class TestCursorLineInvertsTheEntryColor(ThemeTestCase):
@@ -156,7 +166,7 @@ class TestCursorLineInvertsTheEntryColor(ThemeTestCase):
             ("모음.lzh", term.MAGENTA, True),
             ("run.sh", term.YELLOW, True),
             ("문서.txt", term.CYAN, False),
-            ("폴더", term.WHITE, True),
+            ("폴더", term.RED, True),
         ):
             line = self._cursor_line(name)
             self.assertTrue(
