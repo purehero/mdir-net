@@ -2392,14 +2392,25 @@ class App:
         else:
             base, ext = item["name"], ""
 
+        # 폴더는 확장자가 없으니 그 칸까지 이름에 내준다. 크기 칸부터는 자리가
+        # 그대로라 [ SubDir ] 과 날짜.시간은 파일 줄과 계속 맞춰 선다.
+        # 확장자 없는 파일(Makefile 같은)은 지금 그대로 둔다 - 폴더만 넓힌다
+        name_takes_ext = show_ext and (item["is_dir"] or is_up)
+
         # 선택 표시 한 칸 + 고정 칸들. 양쪽 패널 모두 0번 칸에서 시작한다
-        used = 1 + SIZE_COL + (EXT_COL + 1 if show_ext else 0)
+        used = 1 + SIZE_COL
+        if show_ext:
+            # 확장자 칸을 이름에 내줄 때도 한 칸은 남긴다. [ SubDir ] 이 크기 칸을
+            # 꽉 채우므로, 긴 이름이 거기에 붙어버리면 읽기 나쁘다
+            used += 1 if name_takes_ext else (EXT_COL + 1)
         used += (DATE_COL + 1) if show_date else 0
         used += (TIME_COL + 1) if show_time else 0
         name_width = max(inner - used, NAME_MIN)
 
         parts = ["*" if picked else " ", screen.pad(base, name_width)]
-        if show_ext:
+        if show_ext and name_takes_ext:
+            parts.append(" ")
+        elif show_ext:
             parts.append(" " + screen.pad(ext.upper(), EXT_COL))
         parts.append(screen.rjust(size_text, SIZE_COL))
         if show_date:

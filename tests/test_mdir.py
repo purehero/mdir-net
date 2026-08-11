@@ -474,3 +474,143 @@ class TestRemoteOperations(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFolderNameTakesTheExtensionColumn(MdirTestCase):
+    """폴더는 확장자가 없으니 그 칸까지 이름에 내준다."""
+
+    INNER = 62
+
+    def _row(self, name):
+        rows = self.app.local.rows()
+        index = next(i for i, e in enumerate(rows) if e["name"] == name)
+        line = self.app._entry_line(self.app.local, rows[index], index, self.INNER, False)
+        return screen._ANSI.sub("", line)
+
+    @staticmethod
+    def _ends_at(row, needle):
+        """needle 이 끝나는 표시 칸. 한글이 섞이므로 글자 수로는 못 센다."""
+        cut = row.index(needle) + len(needle)
+        return screen.width(row[:cut])
+
+    @staticmethod
+    def _starts_at(row, needle):
+        return screen.width(row[:row.index(needle)])
+
+    def test_folder_name_room_is_wider_by_the_extension_column(self):
+        """이름 칸이 확장자 칸만큼 넓어진다. 구분 한 칸은 그대로 남는다.
+
+        이름 길이를 눈대중으로 정하면 폭이 넉넉할 때 아무것도 증명하지 못한다.
+        실제 자리를 재서 '파일 칸에는 안 들어가고 폴더 칸에는 들어가는' 길이를
+        만들어 쓴다.
+        """
+        size_start = self._starts_at(self._row("문서"), "[ SubDir ]")
+        folder_room = size_start - 2  # 맨 앞 선택 표시 한 칸, 뒤에 구분 한 칸
+        file_room = size_start - 1 - (app_module.EXT_COL + 1)
+        self.assertEqual(folder_room - file_room, app_module.EXT_COL)
+
+        name = "a" * folder_room
+        (self.root / name).mkdir()
+        self.app.local.refresh()
+
+        self.assertGreater(screen.width(name), file_room, "전제가 깨졌다")
+        self.assertIn(name, self._row(name), "폴더 이름이 온전히 나와야 한다")
+
+    def test_the_name_never_touches_the_size_column(self):
+        """[ SubDir ] 이 크기 칸을 꽉 채우므로 이름이 붙으면 읽기 나쁘다."""
+        size_start = self._starts_at(self._row("문서"), "[ SubDir ]")
+        for name in ("a" * (size_start - 2), "가" * 80, "docs", "my.folder"):
+            path = self.root / name
+            if not path.exists():
+                path.mkdir()
+            self.app.local.refresh()
+            row = self._row(name)
+            cut = row.index("[ SubDir ]")
+            self.assertEqual(row[cut - 1], " ", "%r 앞에 빈칸이 없다: %r" % (name, row))
+
+    def test_a_name_that_fills_the_room_leaves_exactly_one_space(self):
+        """딱 맞게 채운 이름이면 한 칸이다.
+
+        두 칸 문자가 잘릴 때는 반쪽을 남길 수 없어 빈칸이 두 개가 될 수 있다.
+        그건 폭 계산상 어쩔 수 없으므로 여기서는 ASCII 로 딱 맞춰 확인한다.
+        """
+        size_start = self._starts_at(self._row("문서"), "[ SubDir ]")
+        name = "a" * (size_start - 2)
+        (self.root / name).mkdir()
+        self.app.local.refresh()
+
+        row = self._row(name)
+        cut = row.index("[ SubDir ]")
+        self.assertEqual(row[cut - 1], " ")
+        self.assertNotEqual(row[cut - 2], " ", row)
+
+    def test_the_gap_survives_truncation(self):
+        name = "가" * 80
+        (self.root / name).mkdir()
+        self.app.local.refresh()
+        row = self._row(name)
+        cut = row.index("[ SubDir ]")
+        self.assertIn("~", row[:cut], "잘렸으면 표시가 남아야 한다")
+        self.assertEqual(row[cut - 1], " ", row)
+
+    def test_a_name_too_long_for_even_the_wider_room_is_truncated(self):
+        name = "나" * 80
+        (self.root / name).mkdir()
+        self.app.local.refresh()
+        row = self._row(name)
+        self.assertIn("~", row, "잘렸으면 표시가 남아야 한다")
+        self.assertEqual(screen.width(row), self.INNER)
+
+    def test_a_dotted_folder_name_is_not_split(self):
+        (self.root / "my.folder").mkdir()
+        self.app.local.refresh()
+        row = self._row("my.folder")
+        self.assertIn("my.folder", row)
+        self.assertNotIn("FOLDER", row, "확장자로 떼어내면 안 된다")
+
+    def test_the_size_column_stays_aligned_with_file_rows(self):
+        folder = self._row("문서")
+        a_file = self._row("a.txt")
+        # 크기 칸은 오른쪽 정렬이므로 두 줄에서 같은 칸에서 끝나야 한다
+        self.assertEqual(
+            self._ends_at(folder, "[ SubDir ]"), self._ends_at(a_file, "100 B")
+        )
+
+    def test_the_up_row_gets_the_same_treatment(self):
+        row = self._row("..")
+        self.assertEqual(
+            self._ends_at(row, "[ Up-Dir ]"), self._ends_at(self._row("a.txt"), "100 B")
+        )
+
+    def test_file_rows_still_show_the_extension_column(self):
+        row = self._row("a.txt")
+        self.assertIn("TXT", row)
+        self.assertIn(" a ", row[:12], row)
+
+    def test_extensionless_files_keep_the_column_for_now(self):
+        """확장자 없는 파일은 폴더와 달리 지금 그대로 둔다 (요청 범위)."""
+        (self.root / "Makefile").write_bytes(b"x")
+        self.app.local.refresh()
+        row = self._row("Makefile")
+        folder = self._row("문서")
+        self.assertLess(
+            self._starts_at(row, "Makefile") + screen.width("Makefile") + app_module.EXT_COL,
+            self._starts_at(folder, "[ SubDir ]"),
+            "확장자 칸이 비어 있어야 한다",
+        )
+        # 크기 칸은 여전히 같은 자리에서 끝난다
+        self.assertEqual(
+            self._ends_at(row, "1 B"), self._ends_at(folder, "[ SubDir ]")
+        )
+
+    def test_every_row_keeps_the_exact_width(self):
+        (self.root / "아주아주아주긴폴더이름입니다").mkdir()
+        (self.root / "my.folder").mkdir()
+        self.app.local.refresh()
+        for inner in (30, 40, 62, 80, 120):
+            for index, entry in enumerate(self.app.local.rows()):
+                line = self.app._entry_line(self.app.local, entry, index, inner, False)
+                self.assertEqual(
+                    screen.width(screen._ANSI.sub("", line)), inner,
+                    "inner=%d %s" % (inner, entry["name"]),
+                )
