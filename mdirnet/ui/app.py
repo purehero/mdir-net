@@ -34,6 +34,23 @@ NAME_MIN = 6
 # 고정 칸이 차지하는 총 폭 (표시 2 + 확장자 5 + 크기 10 + 날짜 9 + 시간 7)
 FIXED_COLS = 2 + (EXT_COL + 1) + SIZE_COL + (DATE_COL + 1) + (TIME_COL + 1)
 
+# MDir 은 파일 종류마다 글자색이 달랐다. 확장자로 종류를 가른다.
+# 여기 없는 확장자는 보통 흰색이고, 폴더는 밝은 흰색이다
+FILE_COLORS = (
+    (("exe", "com", "bat", "cmd", "sh", "app", "bin", "msi"), term.GREEN),
+    (("zip", "rar", "7z", "gz", "tgz", "bz2", "xz", "tar", "lzh", "arj", "z"), term.RED),
+    (
+        ("jpg", "jpeg", "png", "gif", "bmp", "pcx", "tif", "tiff", "webp", "heic",
+         "mp3", "mp4", "avi", "mkv", "mov", "wav", "flac"),
+        term.MAGENTA,
+    ),
+    (
+        ("c", "h", "cpp", "hpp", "cc", "py", "js", "ts", "java", "kt", "swift",
+         "rs", "go", "rb", "pl", "asm", "pas", "bas", "json", "xml", "yml", "yaml"),
+        term.CYAN,
+    ),
+)
+
 
 class Transfer:
     """진행 중인 복사 작업. 워커가 갱신하고 UI 가 매 프레임 읽어간다.
@@ -2334,19 +2351,29 @@ class App:
 
         text = screen.pad("".join(parts), inner)
 
+        color, bright = self._entry_color(item, ext, picked)
+
+        # 커서 줄은 그 항목의 글자색을 바탕으로 깔고 글자를 검정으로 뒤집는다.
+        # 한 색으로 고정하면 커서가 놓인 순간 종류를 알 수 없게 된다
         if is_cursor and focused:
-            return term.BAR + text + term.RESET
+            return term.bar(color) + text + term.RESET
+        # 초점이 없는 쪽도 커서 자리는 보여야 한다. 색은 그대로 두고 밝게만 한다
         if is_cursor:
-            return term.BOLD + text + term.RESET
+            return term.ink(color, bright=True) + term.BOLD + text + term.RESET
+        return term.ink(color, bright) + text + term.RESET
+
+    @staticmethod
+    def _entry_color(item, ext, picked):
+        """(글자색, 밝게 할지). 커서 줄의 바탕색도 이 색에서 나온다."""
         if picked:
-            return term.MARK + text + term.RESET
-        # 테두리가 청록이 되었으므로 폴더는 밝은 흰색으로 세운다 (NC/MDir 관례)
+            return term.YELLOW, True
         if item["is_dir"]:
-            return term.BOLD + text + term.RESET
-        # MDir 은 실행 파일을 따로 물들였다
-        if ext.lower() in ("exe", "com", "bat", "sh", "app"):
-            return term.GOOD + text + term.RESET
-        return text
+            return term.WHITE, True
+        low = ext.lower()
+        for extensions, color in FILE_COLORS:
+            if low in extensions:
+                return color, True
+        return term.WHITE, False
 
     def _pane_summary(self, pane):
         if not pane.active:
