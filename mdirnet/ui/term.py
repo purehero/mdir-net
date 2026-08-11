@@ -26,44 +26,94 @@ ALT_SCREEN_ON = "\x1b[?1049h"
 ALT_SCREEN_OFF = "\x1b[?1049l"
 
 # 색상. 256색이 아니라 기본 16색만 써서 어느 터미널에서나 같게 보이게 한다.
-# MDir 의 바닥은 검정이다. 파란 바닥은 Norton Commander 쪽이므로 섞지 않는다.
-# 사용자 터미널이 흰 바탕일 수도 있으니 물려받지 않고 검정을 직접 칠한다
-NORMAL = "\x1b[37;40m"  # 바탕 - 검은 배경 위 흰 글자
+# 사용자 터미널이 흰 바탕일 수도 있으니 물려받지 않고 바닥을 직접 칠한다
 HARD_RESET = "\x1b[0m"  # 터미널을 원래 색으로. 화면을 떠날 때만 쓴다
+BOLD = "\x1b[1m"  # 어두운 바닥에서는 밝은 흰색이 된다 - 제목
 
-# 그리는 동안의 '보통 상태'. app.py 곳곳의 RESET 이 바탕색을 지우지 않고
-# 되돌아오게 하려면 이것이 바탕을 함께 들고 있어야 한다. 이 한 줄 덕분에
-# 줄 끝의 \x1b[K 도, 화면 지우기도, splice() 도 검은 바닥을 유지한다
-RESET = HARD_RESET + NORMAL
+# 글자색 번호. MDir 은 같은 색의 어두운 것과 밝은 것을 둘 다 썼다
+# (문서는 청록, COM 은 하늘색=밝은청록). 그래서 색을 숫자로 들고 ink() 가
+# 밝기를 붙인다. 배경은 색상셋이 정한다
+BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE = 30, 31, 32, 33, 34, 35, 36, 37
 
-BOLD = "\x1b[1m"  # 검은 바닥에서는 밝은 흰색이 된다 - 제목
-DIM = "\x1b[36;40m"  # 청록 - 테두리, 가로줄, 안내 문구
-BAR = "\x1b[30;47m"  # 밝은 바탕 검은 글자 - 패널 제목, 기능키 라벨, 상자 선택
-MARK = "\x1b[1;33;40m"  # 밝은 노랑 - 고른 항목, 경고
-GOOD = "\x1b[1;32;40m"  # 밝은 초록 - 연결됨, 진행바
-BAD = "\x1b[1;31;40m"  # 밝은 빨강 - 오류
-
-# 목록의 글자색. MDir 은 파일 종류마다 색이 달랐고, 같은 색의 어두운 것과
-# 밝은 것을 둘 다 썼다 (예: 문서는 청록, COM 은 하늘색=밝은청록).
-# 그래서 색은 숫자로 들고 ink() 가 밝기를 붙인다
-WHITE, RED, GREEN, CYAN, MAGENTA, YELLOW, BLUE = 37, 31, 32, 36, 35, 33, 34
+# 색상셋. MDir 3.06 배포판에 든 것이 이 둘뿐이다.
+#   BLACK.COL - 검은 바닥. 배포판 초기치
+#   BLUE.COL  - 파란 바닥. 같이 들어있던 예제
+# 두 파일의 글자색은 완전히 같고 배경만 다르다. 다른 곳은 딱 한 군데인데,
+# 파란 바닥에서 파랑 글자(H OBJ LIB)가 안 보이므로 검정으로 바꿔놓았다.
+# 그 조정을 ink() 가 규칙으로 한다
+THEMES = ("black", "blue")
+_bg = BLACK  # 배경을 '같은 색의 글자색 번호' 로 들고 있는다. +10 하면 배경 코드다
 
 
 def ink(color, bright=True):
-    """검은 바닥 위의 글자색."""
-    return "\x1b[%s%d;40m" % ("1;" if bright else "", color)
+    """지금 색상셋의 바닥 위에 얹는 글자색.
+
+    글자색이 배경색과 같으면 안 보이므로 바꿔치운다. MSET.DOC 도 MDir 이
+    "사용자가 지정한 색깔에 문제가 있을경우는 최대한 자동으로 조정" 한다고
+    적어두었고, BLUE.COL 의 H OBJ LIB 가 실제로 그렇게 조정된 값이다.
+    """
+    color, bright = _visible(color, bright)
+    return "\x1b[%s%d;%dm" % ("1;" if bright else "", color, _bg + 10)
 
 
-def bar(color):
-    """커서 줄. 그 항목의 글자색을 바탕으로 깔고 글자를 검정으로 뒤집는다.
+def bar(color, bright=True):
+    """커서 줄. 그 항목의 글자색을 바탕으로 깔고 글자를 뒤집는다.
 
-    MDir 의 커서 줄이 이 모양이다. 색을 하나로 고정하면 커서가 놓인 순간
-    그 파일이 무슨 종류였는지 알 수 없게 된다.
+    색을 하나로 고정하면 커서가 놓인 순간 그 파일이 무슨 종류였는지 알 수
+    없게 된다. 그래서 바탕색이 항목마다 달라진다.
 
     밝기는 배경에 실을 수 없다. VGA 텍스트 모드의 속성 바이트에서 그 자리는
-    깜빡임이었고 배경은 8색뿐이었다. MDir 도 같은 제약 아래 있었다.
+    깜빡임이었고 배경은 8색뿐이었다. MDir 도 같은 제약 아래 있었다. 그래서
+    어두운 갈래는 바탕이 어두워지고, 그 위의 글자는 검정이면 안 읽힌다.
+    어두운 색에는 흰 글자를 얹는다.
+
+    밝은회색만 예외다. 밝기 표시가 없어 '어두운' 쪽으로 분류되지만 바탕은
+    밝게 깔리므로 검은 글자가 맞다. BLACK.COL 의 `70`(검정 on 밝은회색)이
+    바로 이 값이다.
     """
-    return "\x1b[30;%dm" % (color + 10)
+    color, bright = _visible(color, bright)
+    text = BLACK if bright or color == WHITE else WHITE
+    return "\x1b[%d;%dm" % (text, color + 10)
+
+
+def _visible(color, bright):
+    """배경에 묻히는 글자색을 보이는 색으로 바꿔준다.
+
+    밝은 것은 묻히지 않는다. DOS 에서 밝은파랑(9)과 파랑(1)은 다른 색이고,
+    배경은 어두운 8색뿐이므로 파란 바닥 위의 밝은파랑은 잘 보인다. BLUE.COL 도
+    소스(밝은파랑)는 그대로 두고 H OBJ LIB(파랑)만 검정으로 바꿔놓았다.
+    """
+    if bright or color != _bg:
+        return color, bright
+    return (WHITE if _bg == BLACK else BLACK), False
+
+
+def use_theme(name):
+    """색상셋을 갈아끼운다. 이름은 THEMES 중 하나다."""
+    global _bg, NORMAL, RESET, DIM, BAR, MARK, GOOD, BAD
+    if name not in THEMES:
+        raise ValueError("모르는 색상셋입니다: %s" % name)
+
+    _bg = BLACK if name == "black" else BLUE
+
+    NORMAL = ink(WHITE, False)  # 바탕이자 '나머지 파일' 색. BLACK.COL 의 07
+    # 그리는 동안의 '보통 상태'. app.py 곳곳의 RESET 이 바탕색을 지우지 않고
+    # 되돌아오게 하려면 이것이 바탕을 함께 들고 있어야 한다. 이 한 줄 덕분에
+    # 줄 끝의 \x1b[K 도, 화면 지우기도, splice() 도 바닥을 유지한다
+    RESET = HARD_RESET + NORMAL
+    DIM = ink(CYAN, False)  # 테두리, 가로줄, 안내 문구. '메인화면 선' 색이다
+    BAR = bar(WHITE, False)  # 패널 제목, 기능키 라벨, 상자 선택
+    MARK = ink(YELLOW, True)  # 고른 항목, 경고
+    GOOD = ink(GREEN, True)  # 연결됨, 진행바
+    BAD = ink(RED, True)  # 오류
+
+
+def theme():
+    """지금 쓰는 색상셋 이름."""
+    return "black" if _bg == BLACK else "blue"
+
+
+use_theme("black")  # MDir 배포판 초기치
 
 
 # 키 이름 상수
