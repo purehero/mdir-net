@@ -15,7 +15,7 @@ class TestWidth(unittest.TestCase):
 
     def test_ansi_sequences_do_not_count(self):
         self.assertEqual(screen.width(term.BOLD + "abc" + term.RESET), 3)
-        self.assertEqual(screen.width(term.REVERSE + "한글" + term.RESET), 4)
+        self.assertEqual(screen.width(term.BAR + "한글" + term.RESET), 4)
 
     def test_empty(self):
         self.assertEqual(screen.width(""), 0)

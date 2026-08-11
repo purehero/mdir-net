@@ -312,7 +312,7 @@ class InputDialog(Dialog):
         head = self.text[: self.cursor]
         at = self.text[self.cursor : self.cursor + 1] or " "
         tail = self.text[self.cursor + 1 :]
-        body = term.BOLD + head + term.RESET + term.REVERSE + at + term.RESET
+        body = term.BOLD + head + term.RESET + term.BAR + at + term.RESET
         body += term.BOLD + tail + term.RESET
         return screen.pad(body, inner)
 
@@ -320,7 +320,7 @@ class InputDialog(Dialog):
         return (
             self._prompt
             + ["", self._rendered(inner), ""]
-            + [term.FG_GRAY + "Enter 확인   Esc 취소   < > Home End 이동" + term.RESET]
+            + [term.DIM + "Enter 확인   Esc 취소   < > Home End 이동" + term.RESET]
         )
 
     def key(self, key):
@@ -393,7 +393,7 @@ class ViewerDialog(Dialog):
 
         out = []
         for index in range(self.offset, min(self.offset + height, len(self.body))):
-            number = term.FG_GRAY + "%5d " % (index + 1) + term.RESET
+            number = term.DIM + "%5d " % (index + 1) + term.RESET
             out.append(number + screen.fit(self.body[index].rstrip("\r"), inner - 6))
         while len(out) < height:
             out.append("")
@@ -406,8 +406,8 @@ class ViewerDialog(Dialog):
             note += " (앞 %s 만)" % fsops.human_size(self.shown_bytes)
 
         out += [
-            term.FG_GRAY + BOX_H * inner + term.RESET,
-            term.FG_GRAY
+            term.DIM + BOX_H * inner + term.RESET,
+            term.DIM
             + screen.pad("%s   %d/%d 줄   ^v PgUp/PgDn 스크롤   q 닫기" % (
                 note, min(self.offset + height, len(self.body)), len(self.body)), inner)
             + term.RESET,
@@ -459,14 +459,14 @@ class MessageDialog(Dialog):
         if not self.scrollable:
             return [self._color + line + term.RESET for line in self._body] + [
                 "",
-                term.FG_GRAY + "아무 키나 누르면 닫힙니다" + term.RESET,
+                term.DIM + "아무 키나 누르면 닫힙니다" + term.RESET,
             ]
 
         self.offset = max(0, min(self.offset, len(self._body) - room))
         window = self._body[self.offset : self.offset + room]
         return [self._color + line + term.RESET for line in window] + [
             "",
-            term.FG_GRAY
+            term.DIM
             + "%d-%d / %d줄   위아래로 스크롤   q 닫기"
             % (self.offset + 1, self.offset + len(window), len(self._body))
             + term.RESET,
@@ -509,14 +509,14 @@ class ConfirmDialog(Dialog):
 
     def lines(self, inner_width):
         def button(text, chosen):
-            style = term.REVERSE if chosen else term.FG_GRAY
+            style = term.BAR if chosen else term.DIM
             return style + "  %s  " % text + term.RESET
 
         return self._body + [
             "",
             button("진행(Y)", self.proceed) + "   " + button("취소(N)", not self.proceed),
             "",
-            term.FG_GRAY + "< > 선택   Enter 확정   Esc 취소" + term.RESET,
+            term.DIM + "< > 선택   Enter 확정   Esc 취소" + term.RESET,
         ]
 
     def key(self, key):
@@ -553,19 +553,19 @@ class ApprovalDialog(Dialog):
 
     def lines(self, inner_width):
         def button(text, chosen):
-            style = term.REVERSE if chosen else term.FG_GRAY
+            style = term.BAR if chosen else term.DIM
             return style + "  %s  " % text + term.RESET
 
         return [
             term.BOLD + self.request.name + term.RESET,
-            term.FG_GRAY + "%s . %s" % (self.request.host, self.request.platform) + term.RESET,
+            term.DIM + "%s . %s" % (self.request.host, self.request.platform) + term.RESET,
             "",
             "이 PC 의 공유 폴더를 열어줍니다.",
             "",
             button("수락(Y)", self.accept) + "   " + button("거부(N)", not self.accept),
             "",
-            term.FG_GRAY + self._deadline_text() + term.RESET,
-            term.FG_GRAY + "< > 선택   Enter 확정   Esc 거부" + term.RESET,
+            term.DIM + self._deadline_text() + term.RESET,
+            term.DIM + "< > 선택   Enter 확정   Esc 거부" + term.RESET,
         ]
 
     def _deadline_text(self):
@@ -682,7 +682,7 @@ class MenuBar(Dialog):
         parts = [" "]
         for index, (title, _) in enumerate(self.menus):
             chunk = "  %s  " % title
-            parts.append(term.REVERSE + chunk + term.RESET if index == self.menu else chunk)
+            parts.append(term.BAR + chunk + term.RESET if index == self.menu else chunk)
         return screen.pad("".join(parts), cols)
 
     def _bar_offset(self):
@@ -706,7 +706,7 @@ class MenuBar(Dialog):
                 continue
             text = " " + label + " " * max(width - screen.width(label) - len(hint) - 2, 1) + hint
             text = screen.pad(text, width)
-            body = term.REVERSE + text + term.RESET if index == self.item else text
+            body = term.BAR + text + term.RESET if index == self.item else text
             rows.append(BOX_V + body + BOX_V)
         rows.append(BOX_BL + BOX_H * width + BOX_BR)
         return rows
@@ -720,7 +720,7 @@ class MenuBar(Dialog):
             if target >= rows:
                 break
             lines[target] = screen.pad(
-                screen.splice(lines[target], left, term.FG_CYAN + row + term.RESET), cols
+                screen.splice(lines[target], left, term.DIM + row + term.RESET), cols
             )
 
     # --- 조작 ---
@@ -788,11 +788,11 @@ class ShareDialog(Dialog):
         visible = self._visible()
         out = [
             "상대에게는 이 목록이 최상위 폴더로 보입니다.",
-            term.FG_GRAY + BOX_H * inner + term.RESET,
+            term.DIM + BOX_H * inner + term.RESET,
         ]
 
         if not shares:
-            out.append(term.FG_YELLOW + "  아직 공유하는 폴더가 없습니다." + term.RESET)
+            out.append(term.MARK + "  아직 공유하는 폴더가 없습니다." + term.RESET)
             out += [""] * (visible - 1)
         else:
             self.cursor = max(0, min(self.cursor, len(shares) - 1))
@@ -807,17 +807,17 @@ class ShareDialog(Dialog):
                 path_room = inner - screen.width(head)
                 label = screen.pad(head + screen.fit_left(str(share.path), path_room), inner)
                 if index == self.cursor:
-                    out.append(term.REVERSE + label + term.RESET)
+                    out.append(term.BAR + label + term.RESET)
                 elif not share.exists:
-                    out.append(term.FG_RED + label + term.RESET)
+                    out.append(term.BAD + label + term.RESET)
                 else:
                     out.append(label)
             out += [""] * (visible - min(len(shares), visible))
 
         out += [
-            term.FG_GRAY + BOX_H * inner + term.RESET,
+            term.DIM + BOX_H * inner + term.RESET,
             term.BOLD + "a 추가" + term.RESET
-            + term.FG_GRAY + "   d 삭제   Esc 닫기" + term.RESET,
+            + term.DIM + "   d 삭제   Esc 닫기" + term.RESET,
         ]
         return out
 
@@ -857,7 +857,7 @@ class ShareDialog(Dialog):
             "공유 폴더 제거",
             [
                 term.BOLD + share.name + term.RESET,
-                term.FG_GRAY + str(share.path) + term.RESET,
+                term.DIM + str(share.path) + term.RESET,
                 "",
                 "목록에서만 빼냅니다. 폴더와 파일은 그대로 남습니다.",
             ],
@@ -877,16 +877,16 @@ class DriveDialog(Dialog):
 
     def lines(self, inner):
         if not self.drives:
-            return [term.FG_GRAY + "고를 수 있는 드라이브가 없습니다." + term.RESET]
+            return [term.DIM + "고를 수 있는 드라이브가 없습니다." + term.RESET]
 
         self.cursor = max(0, min(self.cursor, len(self.drives) - 1))
         out = []
         for index, drive in enumerate(self.drives):
             kind = (" . %s" % drive["kind"]) if drive["kind"] else ""
             label = screen.pad("  %-4s %s%s" % (drive["label"], drive["path"], kind), inner)
-            out.append(term.REVERSE + label + term.RESET if index == self.cursor else label)
+            out.append(term.BAR + label + term.RESET if index == self.cursor else label)
 
-        out += ["", term.FG_GRAY + "Enter 이동   Esc 취소" + term.RESET]
+        out += ["", term.DIM + "Enter 이동   Esc 취소" + term.RESET]
         return out
 
     def key(self, key):
@@ -973,23 +973,23 @@ class FolderDialog(Dialog):
 
         out = [
             term.BOLD + screen.fit_left(str(self.path), inner) + term.RESET,
-            term.FG_GRAY + BOX_H * inner + term.RESET,
+            term.DIM + BOX_H * inner + term.RESET,
         ]
 
         shown = 0
         if not rows:
-            out.append(term.FG_GRAY + "  (하위 폴더가 없습니다)" + term.RESET)
+            out.append(term.DIM + "  (하위 폴더가 없습니다)" + term.RESET)
             shown = 1
         for index in range(self.offset, min(self.offset + visible, len(rows))):
             name = rows[index]
             plain = name in ("..", self.DRIVE_ROW)
             label = screen.pad("  " + (name if plain else name + "/"), inner)
             if index == self.cursor:
-                out.append(term.REVERSE + label + term.RESET)
+                out.append(term.BAR + label + term.RESET)
             elif name == self.DRIVE_ROW:
-                out.append(term.FG_YELLOW + label + term.RESET)
+                out.append(term.MARK + label + term.RESET)
             else:
-                out.append(term.FG_CYAN + label + term.RESET)
+                out.append(term.BOLD + label + term.RESET)  # 폴더는 패널과 같은 색
             shown += 1
 
         # 목록이 짧아도 상자 높이를 유지해 다이얼로그가 들썩이지 않게 한다
@@ -1000,25 +1000,25 @@ class FolderDialog(Dialog):
             # 아래 두 줄은 내용이 없어도 자리를 지킨다. 폴더를 옮길 때마다 상자
             # 높이가 달라지면 화면이 들썩여 눈에 거슬린다
             if len(rows) > visible:
-                out.append(term.FG_GRAY + "  (%d/%d)" % (self.cursor + 1, len(rows)) + term.RESET)
+                out.append(term.DIM + "  (%d/%d)" % (self.cursor + 1, len(rows)) + term.RESET)
             else:
                 out.append(" " * inner)
             out.append(
-                term.FG_RED + screen.fit(self.message, inner) + term.RESET
+                term.BAD + screen.fit(self.message, inner) + term.RESET
                 if self.message
                 else " " * inner
             )
             out.append("")
         elif self.message:
             # 자리만 지키던 줄은 내줬지만 읽지 못한 이유는 그래도 알려야 한다
-            out.append(term.FG_RED + screen.fit(self.message, inner) + term.RESET)
+            out.append(term.BAD + screen.fit(self.message, inner) + term.RESET)
 
         drive_hint = "   \\ 드라이브" if self._on_drives else ""
         out += [
             # Ctrl 이 없는 자판(폰의 터미널, 일부 블루투스 키보드)에서도 결정할 수
             # 있어야 한다. 그래서 Space 를 앞에 세운다. Ctrl-D 도 그대로 받는다
             term.BOLD + "Space 이 폴더로 결정" + term.RESET
-            + term.FG_GRAY
+            + term.DIM
             + "   Enter 열기   < 상위%s   %s" % (drive_hint, self.cancel_hint)
             + term.RESET,
         ]
@@ -1087,14 +1087,14 @@ class PeerDialog(Dialog):
             return [
                 term.BOLD + self.waiting + term.RESET + " 에게 연결을 요청했습니다.",
                 "",
-                term.FG_YELLOW + "상대가 승인할 때까지 기다리는 중..." + term.RESET,
-                term.FG_GRAY + "최대 %d초" % config.APPROVAL_TIMEOUT + term.RESET,
+                term.MARK + "상대가 승인할 때까지 기다리는 중..." + term.RESET,
+                term.DIM + "최대 %d초" % config.APPROVAL_TIMEOUT + term.RESET,
             ]
 
         self.peers = self.app.discovery.peers() if self.app.discovery else []
         if not self.peers:
             return [
-                term.FG_GRAY + "같은 네트워크에서 아직 아무도 찾지 못했습니다." + term.RESET,
+                term.DIM + "같은 네트워크에서 아직 아무도 찾지 못했습니다." + term.RESET,
                 "",
                 "상대 PC 에서도 MDirNet 을 실행했는지 확인하세요.",
                 "방화벽이 UDP %d 를 막고 있을 수도 있습니다." % config.UDP_PORT,
@@ -1103,11 +1103,11 @@ class PeerDialog(Dialog):
         self.cursor = min(self.cursor, len(self.peers) - 1)
         out = []
         for index, peer in enumerate(self.peers):
-            mark = term.REVERSE if index == self.cursor else ""
+            mark = term.BAR if index == self.cursor else ""
             out.append(
                 mark + screen.pad("  %s   %s" % (peer.name, peer.host), inner_width) + term.RESET
             )
-        out += ["", term.FG_GRAY + "Enter 연결 요청   Esc 취소" + term.RESET]
+        out += ["", term.DIM + "Enter 연결 요청   Esc 취소" + term.RESET]
         return out
 
     def key(self, key):
@@ -1142,13 +1142,13 @@ class ProgressDialog(Dialog):
         bar = "#" * filled + "." * (bar_width - filled)
         return [
             screen.fit(t.label, inner_width),
-            term.FG_GRAY + screen.fit(t.current, inner_width) + term.RESET,
+            term.DIM + screen.fit(t.current, inner_width) + term.RESET,
             "",
-            term.FG_GREEN + bar + term.RESET + " %3d%%" % int(t.ratio * 100),
+            term.GOOD + bar + term.RESET + " %3d%%" % int(t.ratio * 100),
             "%s / %s   %s"
             % (fsops.human_size(t.done), fsops.human_size(t.total), t.rate_text()),
             "",
-            term.FG_GRAY
+            term.DIM
             + ("취소하는 중..." if t.cancelled else "Esc 취소")
             + term.RESET,
         ]
@@ -1267,8 +1267,8 @@ class App:
                 body.append("      ~ 외 %d개" % (len(state.blocks) - 5))
         body += [
             "",
-            term.FG_GRAY + "관리자 권한이 필요해 Windows 동의 창이 한 번 뜹니다." + term.RESET,
-            term.FG_GRAY + "공용 네트워크 프로필은 열지 않습니다." + term.RESET,
+            term.DIM + "관리자 권한이 필요해 Windows 동의 창이 한 번 뜹니다." + term.RESET,
+            term.DIM + "공용 네트워크 프로필은 열지 않습니다." + term.RESET,
             "",
             "지금 허용할까요?",
         ]
@@ -1318,7 +1318,7 @@ class App:
         try:
             share = self.shares.add(path)
         except ValueError as exc:
-            self.modal = MessageDialog("추가할 수 없습니다", str(exc), term.FG_RED)
+            self.modal = MessageDialog("추가할 수 없습니다", str(exc), term.BAD)
             return None
 
         if self.persist:
@@ -1487,7 +1487,7 @@ class App:
             self._on_connected(payload[0])
 
         elif kind == "connect_failed":
-            self.modal = MessageDialog("연결 실패", payload[0], term.FG_RED)
+            self.modal = MessageDialog("연결 실패", payload[0], term.BAD)
 
         elif kind == "disconnected":
             self._on_disconnected(payload[0])
@@ -1516,7 +1516,7 @@ class App:
             count, errors = payload
             if errors:
                 self.modal = MessageDialog(
-                    "전송 완료 (오류 %d건)" % len(errors), errors[:8], term.FG_YELLOW
+                    "전송 완료 (오류 %d건)" % len(errors), errors[:8], term.MARK
                 )
             else:
                 self.status = "%d개 항목을 전송했습니다" % count
@@ -1536,7 +1536,7 @@ class App:
             self._refresh_local_panes(Path(payload[0]))
 
         elif kind == "error":
-            self.modal = MessageDialog("오류", payload[0], term.FG_RED)
+            self.modal = MessageDialog("오류", payload[0], term.BAD)
 
     def _refresh_panes(self):
         """두 패널을 갱신한다. 원격은 세션이 있을 때만, 로컬은 언제나.
@@ -1765,7 +1765,7 @@ class App:
             "선택 마스크" if add else "선택 해제 마스크",
             [
                 "패턴에 맞는 항목을 한꺼번에 %s합니다." % ("선택" if add else "해제"),
-                term.FG_GRAY + "예) *.txt   보고서*   *.jp*g" + term.RESET,
+                term.DIM + "예) *.txt   보고서*   *.jp*g" + term.RESET,
             ],
             apply,
             initial="*.",
@@ -1797,7 +1797,7 @@ class App:
         try:
             fsops.launch(self.focus.child(name))
         except OSError as exc:
-            self.modal = MessageDialog("실행할 수 없습니다", str(exc), term.FG_RED)
+            self.modal = MessageDialog("실행할 수 없습니다", str(exc), term.BAD)
             return
         self.status = "%s 를 실행했습니다" % name
 
@@ -1819,7 +1819,7 @@ class App:
             try:
                 data = fsops.read_head(path, limit)
             except OSError as exc:
-                self.modal = MessageDialog("열 수 없습니다", str(exc), term.FG_RED)
+                self.modal = MessageDialog("열 수 없습니다", str(exc), term.BAD)
                 return
             self.modal = ViewerDialog(item["name"], data, item["size"])
             return
@@ -1849,7 +1849,7 @@ class App:
 
         def create(name):
             if "/" in name or "\\" in name:
-                self.modal = MessageDialog("이름이 잘못되었습니다", "경로 구분자는 쓸 수 없습니다", term.FG_RED)
+                self.modal = MessageDialog("이름이 잘못되었습니다", "경로 구분자는 쓸 수 없습니다", term.BAD)
                 return
 
             target = pane.child(name)
@@ -1863,7 +1863,7 @@ class App:
                 self.status = "폴더를 만들었습니다: %s" % name
                 pane.refresh()
             except OSError as exc:
-                self.modal = MessageDialog("만들 수 없습니다", str(exc), term.FG_RED)
+                self.modal = MessageDialog("만들 수 없습니다", str(exc), term.BAD)
 
         self.modal = InputDialog(
             "폴더 만들기",
@@ -1893,7 +1893,7 @@ class App:
                 return
             if "/" in new_name or "\\" in new_name or new_name in (".", ".."):
                 self.modal = MessageDialog(
-                    "이름이 잘못되었습니다", "경로 구분자는 쓸 수 없습니다", term.FG_RED
+                    "이름이 잘못되었습니다", "경로 구분자는 쓸 수 없습니다", term.BAD
                 )
                 return
 
@@ -1908,7 +1908,7 @@ class App:
             # 덮어쓰지 않는다. POSIX 의 rename 은 대상이 있으면 조용히 지운다
             if target.exists() or target.is_symlink():
                 self.modal = MessageDialog(
-                    "바꿀 수 없습니다", "같은 이름이 이미 있습니다: %s" % new_name, term.FG_RED
+                    "바꿀 수 없습니다", "같은 이름이 이미 있습니다: %s" % new_name, term.BAD
                 )
                 return
             try:
@@ -1917,12 +1917,12 @@ class App:
                 pane.selected.discard(old)
                 pane.refresh()
             except OSError as exc:
-                self.modal = MessageDialog("바꿀 수 없습니다", str(exc), term.FG_RED)
+                self.modal = MessageDialog("바꿀 수 없습니다", str(exc), term.BAD)
 
         self.modal = InputDialog(
             "이름 바꾸기",
             [
-                term.FG_GRAY + screen.fit_left(pane.location, 46) + term.RESET,
+                term.DIM + screen.fit_left(pane.location, 46) + term.RESET,
                 "",
                 "%s 의 새 이름을 입력하세요." % old,
             ],
@@ -1953,13 +1953,13 @@ class App:
             term.BOLD + "%s 에서 %d개 항목을 지웁니다." % (where, len(items)) + term.RESET,
             "",
         ]
-        body += [term.FG_YELLOW + "  " + n + term.RESET for n in names[:6]]
+        body += [term.MARK + "  " + n + term.RESET for n in names[:6]]
         if len(names) > 6:
-            body.append(term.FG_GRAY + "  ~ 외 %d개" % (len(names) - 6) + term.RESET)
+            body.append(term.DIM + "  ~ 외 %d개" % (len(names) - 6) + term.RESET)
         body += [""]
         if has_dir:
-            body.append(term.FG_RED + "폴더는 안에 든 것까지 함께 지워집니다." + term.RESET)
-        body.append(term.FG_RED + "되돌릴 수 없습니다." + term.RESET)
+            body.append(term.BAD + "폴더는 안에 든 것까지 함께 지워집니다." + term.RESET)
+        body.append(term.BAD + "되돌릴 수 없습니다." + term.RESET)
 
         self.modal = ConfirmDialog(
             "삭제", body, lambda ok: self._do_delete(pane, items) if ok else None
@@ -1986,7 +1986,7 @@ class App:
         pane.selected.clear()
         pane.refresh()
         if failed:
-            self.modal = MessageDialog("일부를 지우지 못했습니다", failed[:8], term.FG_YELLOW)
+            self.modal = MessageDialog("일부를 지우지 못했습니다", failed[:8], term.MARK)
         else:
             self.status = "%d개 항목을 지웠습니다" % len(paths)
 
@@ -2029,14 +2029,14 @@ class App:
             "",
             screen.fit(names, 50),
             "",
-            term.FG_GRAY + "대상: %s" % dest.location + term.RESET,
+            term.DIM + "대상: %s" % dest.location + term.RESET,
         ]
 
         # 매번 뜨는 경고는 아무도 읽지 않는다. 실제로 겹칠 때만 알린다
         clashes = self._clashing_names(dest, items)
         if clashes:
             body.append(
-                term.FG_RED
+                term.BAD
                 + "기존 %d개를 덮어씁니다: %s"
                 % (len(clashes), screen.fit(", ".join(clashes), 36))
                 + term.RESET
@@ -2175,14 +2175,14 @@ class App:
         # 좁은 터미널에서도 연결 상태는 보여야 한다. 긴 형태부터 시도해
         # 들어가는 것을 고른다
         if self.session:
-            color, variants = term.FG_GREEN, [
+            color, variants = term.GOOD, [
                 "* %s 연결됨" % self.session.peer_name,
                 "* %s" % self.session.peer_name,
                 "*",
             ]
         else:
             found = len(self.discovery.peers()) if self.discovery else 0
-            color, variants = term.FG_GRAY, [
+            color, variants = term.DIM, [
                 "o 연결 없음 . 발견 %d대 . 포트 %d" % (found, self.port),
                 "o 발견 %d대" % found,
                 "o",
@@ -2216,9 +2216,9 @@ class App:
         for pane in (left, right):
             pane.scroll_into_view(body_height)
 
-        wall = term.FG_GRAY + BOX_V + term.RESET
+        wall = term.DIM + BOX_V + term.RESET
         rule = (
-            term.FG_GRAY
+            term.DIM
             + PANE_RULE * left_width
             + "+"
             + PANE_RULE * right_width
@@ -2252,7 +2252,7 @@ class App:
         room = width - 2 - screen.width(label) - 2
         title = "%s  %s" % (label, screen.fit_left(pane.location, max(room, 0)))
 
-        style = term.REVERSE if focused else term.BOLD
+        style = term.BAR if focused else term.BOLD
         return style + screen.pad(title, width) + term.RESET
 
     def _pane_row(self, pane, index, width):
@@ -2262,14 +2262,14 @@ class App:
         if position >= len(rows):
             # 항목이 없으면 본문이 통째로 백지라 '로딩 중' 과 구분되지 않는다
             if pane.active and not pane.entries and not pane.message and position == len(rows):
-                return term.FG_GRAY + screen.pad(" (빈 폴더)", width) + term.RESET
+                return term.DIM + screen.pad(" (빈 폴더)", width) + term.RESET
             return " " * width
 
         return self._entry_line(pane, rows[position], position, width, pane is self.focus)
 
     def _pane_foot(self, pane, width):
         text = pane.message or self._pane_summary(pane)
-        return term.FG_GRAY + screen.pad(screen.fit(text, width), width) + term.RESET
+        return term.DIM + screen.pad(screen.fit(text, width), width) + term.RESET
 
     @staticmethod
     def _columns(inner):
@@ -2335,16 +2335,17 @@ class App:
         text = screen.pad("".join(parts), inner)
 
         if is_cursor and focused:
-            return term.REVERSE + text + term.RESET
+            return term.BAR + text + term.RESET
         if is_cursor:
             return term.BOLD + text + term.RESET
         if picked:
-            return term.FG_YELLOW + text + term.RESET
+            return term.MARK + text + term.RESET
+        # 테두리가 청록이 되었으므로 폴더는 밝은 흰색으로 세운다 (NC/MDir 관례)
         if item["is_dir"]:
-            return term.FG_CYAN + text + term.RESET
+            return term.BOLD + text + term.RESET
         # MDir 은 실행 파일을 따로 물들였다
         if ext.lower() in ("exe", "com", "bat", "sh", "app"):
-            return term.FG_GREEN + text + term.RESET
+            return term.GOOD + text + term.RESET
         return text
 
     def _pane_summary(self, pane):
@@ -2382,16 +2383,16 @@ class App:
         if cell < 7:
             # 손으로 적으면 키를 옮길 때마다 어긋난다. 늘 _FKEYS 에서 만든다
             picked = [n + l for n, l in _FKEYS if n in ("1", "2", "3", "5", "9", "0")]
-            return term.FG_GRAY + screen.pad(" " + " ".join(picked), cols) + term.RESET
+            return term.DIM + screen.pad(" " + " ".join(picked), cols) + term.RESET
 
         parts = []
         for number, label in _FKEYS:
-            # 번호는 흐리게, 라벨은 반전. 옛 화면의 그 모양이다
+            # 번호는 파란 바닥에 밝은 흰색, 라벨은 청록 바닥. 옛 화면의 그 모양이다
             parts.append(
-                term.FG_GRAY
+                term.BOLD
                 + number
                 + term.RESET
-                + term.REVERSE
+                + term.BAR
                 + screen.pad(label, cell - len(number) - 1)
                 + term.RESET
                 + " "
@@ -2410,7 +2411,7 @@ class App:
 
         content = [
             term.BOLD + screen.fit(self.modal.title, inner) + term.RESET,
-            term.FG_GRAY + BOX_H * inner + term.RESET,
+            term.DIM + BOX_H * inner + term.RESET,
         ] + body
 
         box = [BOX_TL + BOX_H * (box_width - 2) + BOX_TR]
@@ -2430,7 +2431,7 @@ class App:
                 while len(lines) <= row:
                     lines.append("")
                 lines[row] = screen.pad(
-                    screen.splice(lines[row], left, term.FG_CYAN + line + term.RESET), cols
+                    screen.splice(lines[row], left, term.DIM + line + term.RESET), cols
                 )
                 if cut and row == rows - 1:
                     # 오른쪽 테두리는 남기고 그 앞에 표시만 얹는다
@@ -2438,7 +2439,7 @@ class App:
                         screen.splice(
                             lines[row],
                             max(left + box_width - 3, 0),
-                            term.FG_YELLOW + "~~" + term.RESET,
+                            term.MARK + "~~" + term.RESET,
                         ),
                         cols,
                     )

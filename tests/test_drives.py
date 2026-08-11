@@ -168,11 +168,11 @@ class TestDriveDialog(unittest.TestCase):
     def test_highlight_moves_with_the_cursor(self):
         _, dialog = self.make()
         first = dialog.lines(60)
-        self.assertIn(term.REVERSE, first[0])
+        self.assertIn(term.BAR, first[0])
         dialog.key(term.DOWN)
         second = dialog.lines(60)
-        self.assertNotIn(term.REVERSE, second[0])
-        self.assertIn(term.REVERSE, second[1])
+        self.assertNotIn(term.BAR, second[0])
+        self.assertIn(term.BAR, second[1])
 
 
 class DriveAppTestCase(unittest.TestCase):
