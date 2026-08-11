@@ -164,24 +164,38 @@ class TestCursorLineInvertsTheEntryColor(ThemeTestCase):
             )
             self.assertIn(";%d" % (color + 10), line[:12], name)
 
-    def test_dark_entries_get_white_text_on_the_bar(self):
-        """어두운 갈래는 바탕도 어두워지므로 검은 글자로는 안 읽힌다."""
-        for color in (term.CYAN, term.RED, term.GREEN, term.BLUE, term.YELLOW):
-            self.assertTrue(
-                term.bar(color, False).startswith("\x1b[%d;" % term.WHITE),
-                (color, term.bar(color, False)),
-            )
+    def test_dark_backgrounds_get_white_text(self):
+        """바탕이 어두우면 검은 글자로는 안 읽힌다.
 
-    def test_bright_entries_keep_black_text_on_the_bar(self):
-        for color in (term.CYAN, term.RED, term.GREEN, term.BLUE, term.YELLOW, term.MAGENTA):
-            self.assertTrue(
-                term.bar(color, True).startswith("\x1b[%d;" % term.BLACK),
-                (color, term.bar(color, True)),
-            )
+        밝기는 배경에 실을 수 없으므로, 글자색이 밝든 어둡든 바탕은 어두운
+        색으로 깔린다. 밝은자홍(압축)의 바탕은 자홍이고 밝은파랑(소스)의 바탕은
+        파랑이다. 그래서 밝은 갈래도 흰 글자를 받는다.
+        """
+        # 검정은 빼둔다. 검은 바닥에서는 _visible() 이 밝은회색으로 바꿔치우므로
+        # 바탕이 밝아진다. 그 경우는 test_the_bar_is_never_invisible 이 지킨다
+        colors = (term.CYAN, term.RED, term.GREEN, term.BLUE, term.YELLOW, term.MAGENTA)
+        for color in colors:
+            for bright in (True, False):
+                code = term.bar(color, bright)
+                self.assertTrue(
+                    code.startswith("\x1b[%d;" % term.WHITE),
+                    "%s bright=%s -> %r" % (color, bright, code),
+                )
 
-    def test_light_gray_is_the_exception_and_keeps_black_text(self):
-        """밝은회색은 밝기 표시가 없지만 바탕이 밝게 깔린다. BLACK.COL 의 70 이다."""
+    def test_light_gray_is_the_only_one_with_black_text(self):
+        """밝은회색만 바탕이 밝게 깔린다. BLACK.COL 의 70 이 이 값이다."""
         self.assertEqual(term.bar(term.WHITE, False), "\x1b[30;47m")
+        self.assertEqual(term.bar(term.WHITE, True), "\x1b[30;47m")
+
+    def test_the_bar_is_never_invisible(self):
+        """바탕색과 글자색이 같아지는 조합이 없어야 한다."""
+        for color in (term.WHITE, term.RED, term.GREEN, term.YELLOW, term.BLUE,
+                      term.MAGENTA, term.CYAN, term.BLACK):
+            for bright in (True, False):
+                text, background = _SGR.fullmatch(term.bar(color, bright)).group(1).split(";")
+                self.assertNotEqual(
+                    int(text) + 10, int(background), (color, bright, term.bar(color, bright))
+                )
 
     def test_bright_and_dark_share_one_bar_background(self):
         """밝기는 배경에 실을 수 없다. VGA 에서 그 자리는 깜빡임이었다."""
