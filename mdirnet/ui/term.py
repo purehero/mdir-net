@@ -24,17 +24,23 @@ HIDE_CURSOR = "\x1b[?25l"
 SHOW_CURSOR = "\x1b[?25h"
 ALT_SCREEN_ON = "\x1b[?1049h"
 ALT_SCREEN_OFF = "\x1b[?1049l"
-RESET = "\x1b[0m"
 
-# 색상. 256색이 아니라 기본 16색만 써서 어느 터미널에서나 같게 보이게 한다
-BOLD = "\x1b[1m"
-DIM = "\x1b[2m"
-REVERSE = "\x1b[7m"
-FG_CYAN = "\x1b[36m"
-FG_YELLOW = "\x1b[33m"
-FG_GREEN = "\x1b[32m"
-FG_RED = "\x1b[31m"
-FG_GRAY = "\x1b[90m"
+# 색상. 256색이 아니라 기본 16색만 써서 어느 터미널에서나 같게 보이게 한다.
+# MDir 의 인상은 파란 바닥에서 나오므로 모든 색은 그 위에서 읽히는 것만 고른다
+NORMAL = "\x1b[37;44m"  # 바탕 - 파란 배경 위 흰 글자
+HARD_RESET = "\x1b[0m"  # 터미널을 원래 색으로. 화면을 떠날 때만 쓴다
+
+# 그리는 동안의 '보통 상태'. app.py 곳곳의 RESET 이 바탕색을 지우지 않고
+# 되돌아오게 하려면 이것이 바탕을 함께 들고 있어야 한다. 이 한 줄 덕분에
+# 줄 끝의 \x1b[K 도, 화면 지우기도, splice() 도 파란 바닥을 유지한다
+RESET = HARD_RESET + NORMAL
+
+BOLD = "\x1b[1m"  # 파란 바닥에서는 밝은 흰색이 된다 - 폴더, 제목
+DIM = "\x1b[36;44m"  # 청록 - 테두리, 가로줄, 안내 문구
+BAR = "\x1b[30;46m"  # 청록 바탕 검은 글자 - 커서 줄, 상단 바, 기능키 라벨
+MARK = "\x1b[1;33;44m"  # 밝은 노랑 - 고른 항목, 경고
+GOOD = "\x1b[1;32;44m"  # 밝은 초록 - 실행 파일, 연결됨, 진행바
+BAD = "\x1b[1;31;44m"  # 밝은 빨강 - 오류
 
 # 키 이름 상수
 UP, DOWN, LEFT, RIGHT = "UP", "DOWN", "LEFT", "RIGHT"
@@ -158,7 +164,8 @@ class Terminal:
         sys.stderr = self._stderr_buffer
 
         self._active = True
-        write(ALT_SCREEN_ON + HIDE_CURSOR + CLEAR + HOME)
+        # RESET 을 CLEAR 앞에 놓아야 첫 프레임 전에 터미널 색이 비치지 않는다
+        write(ALT_SCREEN_ON + HIDE_CURSOR + RESET + CLEAR + HOME)
         flush()
 
         atexit.register(self.restore)
@@ -183,7 +190,8 @@ class Terminal:
             return
         self._active = False
 
-        write(SHOW_CURSOR + RESET + ALT_SCREEN_OFF)
+        # 여기서 RESET 을 쓰면 셸이 파란 바닥으로 남는다. 나갈 때는 HARD_RESET 이다
+        write(SHOW_CURSOR + HARD_RESET + ALT_SCREEN_OFF)
         flush()
         if not IS_WINDOWS and self._saved is not None:
             termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, self._saved)

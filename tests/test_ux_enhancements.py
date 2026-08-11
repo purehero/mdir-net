@@ -111,7 +111,7 @@ class TestInputCursor(unittest.TestCase):
     def test_cursor_is_visible_in_the_rendering(self):
         dialog = self.make("abc")
         dialog.key(term.HOME_KEY)
-        self.assertIn(term.REVERSE, dialog._rendered(40))
+        self.assertIn(term.BAR, dialog._rendered(40))
 
     def test_rendering_keeps_exact_width(self):
         for text in ("", "abc", "한글이름.txt", "긴" * 40):
