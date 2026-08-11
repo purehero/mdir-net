@@ -76,8 +76,24 @@ class TestOnlyTheBasic16Colors(ThemeTestCase):
                     self.assertIn(part, ALLOWED, "%s = %r" % (name, value))
 
 
+# MDir 3.06 BLACK.COL(초기치)에서 읽어낸 갈래별 색. 원본 확장자 하나씩 골랐다.
+# 이 표가 깨지면 옛 화면과 색이 달라진 것이다
+MDIR_SAMPLES = (
+    ("prog.exe", term.GREEN, True, "EXE 밝은초록"),
+    ("prog.com", term.CYAN, True, "COM 하늘색"),
+    ("go.bat", term.YELLOW, True, "BAT 노랑"),
+    ("모음.lzh", term.MAGENTA, True, "압축 밝은자홍"),
+    ("문서.txt", term.CYAN, False, "문서 청록"),
+    ("옛것.bak", term.RED, False, "백업 빨강"),
+    ("main.pas", term.BLUE, True, "소스 밝은파랑"),
+    ("main.h", term.BLUE, False, "헤더 파랑"),
+    ("사진.gif", term.GREEN, False, "그림 초록"),
+    ("소리.voc", term.YELLOW, False, "소리 갈색"),
+)
+
+
 class TestFileColorsByType(ThemeTestCase):
-    """MDir 은 파일 종류마다 글자색이 달랐다."""
+    """MDir 은 파일 종류마다 글자색이 달랐다. 값은 BLACK.COL 에서 뽑았다."""
 
     def _line_for(self, name):
         rows = self.app.local.rows()
@@ -88,27 +104,29 @@ class TestFileColorsByType(ThemeTestCase):
             self.app.local, rows[index], index, 60, focused=True
         )
 
-    def test_each_type_gets_its_own_color(self):
-        for name, color in (
-            ("run.sh", term.GREEN),
-            ("모음.zip", term.RED),
-            ("사진.jpg", term.MAGENTA),
-            ("main.py", term.CYAN),
-        ):
+    def test_every_mdir_group_keeps_its_original_color(self):
+        for name, _, _, _ in MDIR_SAMPLES:
             (self.root / name).write_bytes(b"x")
         self.app.local.refresh()
 
-        seen = {}
-        for name, color in (
-            ("run.sh", term.GREEN),
-            ("모음.zip", term.RED),
-            ("사진.jpg", term.MAGENTA),
-            ("main.py", term.CYAN),
-        ):
+        for name, color, bright, label in MDIR_SAMPLES:
             line = self._line_for(name)
-            self.assertTrue(line.startswith(term.ink(color)), "%s: %r" % (name, line[:20]))
-            seen[name] = color
-        self.assertEqual(len(set(seen.values())), 4, "종류별로 색이 갈려야 한다")
+            self.assertTrue(
+                line.startswith(term.ink(color, bright)),
+                "%s (%s): %r" % (name, label, line[:20]),
+            )
+
+    def test_the_groups_are_visually_distinct(self):
+        """열 갈래가 서로 다른 코드여야 한다. 겹치면 종류를 못 가린다."""
+        codes = {term.ink(c, b) for _, c, b, _ in MDIR_SAMPLES}
+        self.assertEqual(len(codes), len(MDIR_SAMPLES), codes)
+
+    def test_no_extension_belongs_to_two_groups(self):
+        seen = {}
+        for extensions, color, bright in app_module.FILE_COLORS:
+            for ext in extensions:
+                self.assertNotIn(ext, seen, "%s 가 두 갈래에 있다" % ext)
+                seen[ext] = color
 
     def test_unknown_extension_stays_plain_white(self):
         (self.root / "메모.qqq").write_bytes(b"x")
@@ -130,12 +148,22 @@ class TestCursorLineInvertsTheEntryColor(ThemeTestCase):
         )
 
     def test_background_is_the_entry_color_and_text_is_black(self):
-        (self.root / "모음.zip").write_bytes(b"x")
+        (self.root / "모음.lzh").write_bytes(b"x")
         self.app.local.refresh()
-        for name, color in (("모음.zip", term.RED), ("run.sh", term.GREEN), ("폴더", term.WHITE)):
+        for name, color in (
+            ("모음.lzh", term.MAGENTA),
+            ("run.sh", term.YELLOW),
+            ("문서.txt", term.CYAN),
+            ("폴더", term.WHITE),
+        ):
             line = self._cursor_line(name)
             self.assertTrue(line.startswith(term.bar(color)), "%s: %r" % (name, line[:20]))
             self.assertIn("30;%d" % (color + 10), line[:12], name)
+
+    def test_bright_and_dark_share_one_bar_background(self):
+        """밝기는 배경에 실을 수 없다. VGA 에서 그 자리는 깜빡임이었다."""
+        self.assertEqual(term.bar(term.CYAN), term.bar(term.CYAN))
+        self.assertNotIn("1;", term.bar(term.CYAN))
 
     def test_a_marked_file_keeps_its_yellow_under_the_cursor(self):
         self.app.local.selected.add("문서.txt")

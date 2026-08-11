@@ -34,21 +34,58 @@ NAME_MIN = 6
 # 고정 칸이 차지하는 총 폭 (표시 2 + 확장자 5 + 크기 10 + 날짜 9 + 시간 7)
 FIXED_COLS = 2 + (EXT_COL + 1) + SIZE_COL + (DATE_COL + 1) + (TIME_COL + 1)
 
-# MDir 은 파일 종류마다 글자색이 달랐다. 확장자로 종류를 가른다.
-# 여기 없는 확장자는 보통 흰색이고, 폴더는 밝은 흰색이다
+# 확장자별 글자색. MDir 3.06 의 BLACK.COL(배포판 초기치)에서 확장자 64개와
+# 색 바이트 64개를 1:1 로 뽑아낸 표가 뼈대다. DOS 속성 바이트는 상위 니블이
+# 배경, 하위가 글자색이고, BLACK.COL 은 배경이 전부 0(검정)이었다.
+#
+# 각 갈래의 앞쪽이 MDir 원본 확장자, `+` 뒤가 그 시절에 없어서 같은 갈래에
+# 얹은 것이다. 갈래를 새로 만들지 않고 원본 갈래에만 얹었다.
+#
+# MSET.DOC 는 목록 색으로 앞쪽 8색(어두운 색)을 권한다. 도스로 나갈 때
+# 깜빡이는 부분이 생기기 때문이라고 한다. 문서.그림.소리.헤더가 어두운
+# 이유가 그것이고, 우리는 그 밝기를 그대로 옮겼다.
+#
+# (확장자들, 색, 밝게 할지). 여기 없는 확장자는 '나머지 파일' 로 흰색이다
 FILE_COLORS = (
-    (("exe", "com", "bat", "cmd", "sh", "app", "bin", "msi"), term.GREEN),
-    (("zip", "rar", "7z", "gz", "tgz", "bz2", "xz", "tar", "lzh", "arj", "z"), term.RED),
-    (
-        ("jpg", "jpeg", "png", "gif", "bmp", "pcx", "tif", "tiff", "webp", "heic",
-         "mp3", "mp4", "avi", "mkv", "mov", "wav", "flac"),
-        term.MAGENTA,
-    ),
-    (
-        ("c", "h", "cpp", "hpp", "cc", "py", "js", "ts", "java", "kt", "swift",
-         "rs", "go", "rb", "pl", "asm", "pas", "bas", "json", "xml", "yml", "yaml"),
-        term.CYAN,
-    ),
+    # EXE - 밝은초록. + 요즘의 실행 가능한 알맹이들
+    (("exe", "app", "bin", "msi", "out", "appimage", "dmg"), term.GREEN, True),
+    # COM - 하늘색(밝은청록). MDir 에서 COM 만 쓰던 자리다
+    (("com",), term.CYAN, True),
+    # BAT BTM - 노랑. + 요즘의 스크립트. .command 도 여기다
+    (("bat", "btm", "cmd", "sh", "bash", "zsh", "fish", "ps1", "command"),
+     term.YELLOW, True),
+    # 압축 - 밝은자홍
+    (("lzh", "zip", "arj", "arc", "ice", "lha", "omp", "zoo", "uc2", "sqz", "rar", "hpk",
+      "7z", "gz", "tgz", "bz2", "xz", "tar", "zst", "lz4", "cab", "iso", "jar"),
+     term.MAGENTA, True),
+    # 문서 - 청록(어두움)
+    (("doc", "hwp", "gwp", "txt", "cap", "lst", "1st", "me",
+      "md", "rst", "pdf", "docx", "rtf", "odt", "xls", "xlsx", "ppt", "pptx",
+      "csv", "tsv", "log", "nfo"),
+     term.CYAN, False),
+    # 백업.임시 - 빨강(어두움). 우리 전송 중간 파일 .part 도 여기가 맞다
+    (("bak", "$$$", "tmp", "olz", "swp", "swo", "orig", "rej", "old", "part"),
+     term.RED, False),
+    # 소스 - 밝은파랑. + 요즘 언어와 설정 파일
+    (("pas", "c", "cpp", "asm", "bas", "cbl",
+      "py", "js", "mjs", "ts", "jsx", "tsx", "java", "kt", "kts", "swift", "rs",
+      "go", "rb", "pl", "php", "cs", "lua", "sql", "dart", "hs", "scala",
+      "json", "xml", "yml", "yaml", "toml", "ini", "cfg", "conf"),
+     term.BLUE, True),
+    # 헤더.목적.라이브러리 - 파랑(어두움)
+    (("h", "obj", "lib", "hpp", "hh", "hxx", "o", "a", "so", "dylib", "dll",
+      "pyc", "pyo", "class", "node"),
+     term.BLUE, False),
+    # 그림.동영상 - 초록(어두움)
+    (("gif", "pcx", "jpg", "fli", "anm", "bmp", "lbm", "ico", "mpg", "flc",
+      "jpeg", "png", "webp", "heic", "heif", "tif", "tiff", "svg", "psd",
+      "mp4", "mkv", "mov", "avi", "wmv", "webm", "m4v", "flv"),
+     term.GREEN, False),
+    # 소리.음악 - 갈색(어두운 노랑)
+    (("ims", "stm", "rol", "bnk", "voc", "mod", "nst", "mid", "wrk", "pcm",
+      "okp", "cmf", "wav", "s3m", "sop", "okm", "oka",
+      "mp3", "flac", "aac", "ogg", "opus", "m4a", "wma", "aiff", "midi", "xm", "it"),
+     term.YELLOW, False),
 )
 
 
@@ -2370,10 +2407,10 @@ class App:
         if item["is_dir"]:
             return term.WHITE, True
         low = ext.lower()
-        for extensions, color in FILE_COLORS:
+        for extensions, color, bright in FILE_COLORS:
             if low in extensions:
-                return color, True
-        return term.WHITE, False
+                return color, bright
+        return term.WHITE, False  # '나머지 파일' - BLACK.COL 의 07
 
     def _pane_summary(self, pane):
         if not pane.active:
