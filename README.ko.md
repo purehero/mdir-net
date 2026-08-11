@@ -224,6 +224,7 @@ python3 -m mdirnet --help
 | `--port` | 세션 TCP 포트 | 9600 |
 | `--udp-port` | 발견용 UDP 포트 | 9601 |
 | `--no-discovery` | 자동 발견을 끈다 | 꺼져 있음 |
+| `--theme` | 색상셋, `black` 또는 `blue` (저장 안 함) | 저장된 값 |
 
 ```bash
 ./run.sh --share ~/Downloads --name 거실PC

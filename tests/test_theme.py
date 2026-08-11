@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from mdirnet import settings
 from mdirnet.ui import app as app_module
 from mdirnet.ui import screen, term
 
@@ -138,7 +139,7 @@ class TestFileColorsByType(ThemeTestCase):
 
 
 class TestCursorLineInvertsTheEntryColor(ThemeTestCase):
-    """커서 줄은 그 항목의 글자색을 바탕으로 깔고 글자를 검정으로 뒤집는다."""
+    """커서 줄은 그 항목의 글자색을 바탕으로 깔고 글자를 뒤집는다."""
 
     def _cursor_line(self, name):
         rows = self.app.local.rows()
@@ -147,32 +148,60 @@ class TestCursorLineInvertsTheEntryColor(ThemeTestCase):
             self.app.local, rows[self.app.local.cursor], self.app.local.cursor, 60, focused=True
         )
 
-    def test_background_is_the_entry_color_and_text_is_black(self):
+    def test_background_is_the_entry_color(self):
         (self.root / "모음.lzh").write_bytes(b"x")
+        (self.root / "문서.txt").write_bytes(b"x")
         self.app.local.refresh()
-        for name, color in (
-            ("모음.lzh", term.MAGENTA),
-            ("run.sh", term.YELLOW),
-            ("문서.txt", term.CYAN),
-            ("폴더", term.WHITE),
+        for name, color, bright in (
+            ("모음.lzh", term.MAGENTA, True),
+            ("run.sh", term.YELLOW, True),
+            ("문서.txt", term.CYAN, False),
+            ("폴더", term.WHITE, True),
         ):
             line = self._cursor_line(name)
-            self.assertTrue(line.startswith(term.bar(color)), "%s: %r" % (name, line[:20]))
-            self.assertIn("30;%d" % (color + 10), line[:12], name)
+            self.assertTrue(
+                line.startswith(term.bar(color, bright)), "%s: %r" % (name, line[:20])
+            )
+            self.assertIn(";%d" % (color + 10), line[:12], name)
+
+    def test_dark_entries_get_white_text_on_the_bar(self):
+        """어두운 갈래는 바탕도 어두워지므로 검은 글자로는 안 읽힌다."""
+        for color in (term.CYAN, term.RED, term.GREEN, term.BLUE, term.YELLOW):
+            self.assertTrue(
+                term.bar(color, False).startswith("\x1b[%d;" % term.WHITE),
+                (color, term.bar(color, False)),
+            )
+
+    def test_bright_entries_keep_black_text_on_the_bar(self):
+        for color in (term.CYAN, term.RED, term.GREEN, term.BLUE, term.YELLOW, term.MAGENTA):
+            self.assertTrue(
+                term.bar(color, True).startswith("\x1b[%d;" % term.BLACK),
+                (color, term.bar(color, True)),
+            )
+
+    def test_light_gray_is_the_exception_and_keeps_black_text(self):
+        """밝은회색은 밝기 표시가 없지만 바탕이 밝게 깔린다. BLACK.COL 의 70 이다."""
+        self.assertEqual(term.bar(term.WHITE, False), "\x1b[30;47m")
 
     def test_bright_and_dark_share_one_bar_background(self):
         """밝기는 배경에 실을 수 없다. VGA 에서 그 자리는 깜빡임이었다."""
-        self.assertEqual(term.bar(term.CYAN), term.bar(term.CYAN))
-        self.assertNotIn("1;", term.bar(term.CYAN))
+        self.assertEqual(
+            term.bar(term.CYAN, True).split(";")[-1],
+            term.bar(term.CYAN, False).split(";")[-1],
+        )
 
     def test_a_marked_file_keeps_its_yellow_under_the_cursor(self):
         self.app.local.selected.add("문서.txt")
-        self.assertTrue(self._cursor_line("문서.txt").startswith(term.bar(term.YELLOW)))
+        self.assertTrue(
+            self._cursor_line("문서.txt").startswith(term.bar(term.YELLOW, True))
+        )
 
     def test_bar_backgrounds_stay_in_the_basic_16(self):
         for color in (term.WHITE, term.RED, term.GREEN, term.CYAN, term.MAGENTA, term.YELLOW):
-            for part in _SGR.fullmatch(term.bar(color)).group(1).split(";"):
-                self.assertIn(part, ALLOWED, term.bar(color))
+            for bright in (True, False):
+                code = term.bar(color, bright)
+                for part in _SGR.fullmatch(code).group(1).split(";"):
+                    self.assertIn(part, ALLOWED, code)
 
 
 class TestTheBlackBackgroundSurvivesEveryLine(ThemeTestCase):
@@ -204,6 +233,135 @@ class TestTheBlackBackgroundSurvivesEveryLine(ThemeTestCase):
         finally:
             term.write = original
         return "".join(out)
+
+
+class TestSwitchingColorSets(ThemeTestCase):
+    """MDir 배포판에 든 색상셋 둘을 갈아끼운다."""
+
+    def tearDown(self):
+        term.use_theme("black")  # 다른 테스트에 색을 물려주지 않는다
+
+    def test_there_are_exactly_the_two_sets_mdir_shipped(self):
+        self.assertEqual(term.THEMES, ("black", "blue"))
+
+    def test_black_is_the_default(self):
+        self.assertEqual(term.theme(), "black")
+        self.assertEqual(term.NORMAL, "\x1b[37;40m")
+
+    def test_blue_changes_only_the_background(self):
+        before = {name: getattr(term, name) for name in ("NORMAL", "DIM", "MARK", "GOOD", "BAD")}
+        term.use_theme("blue")
+        for name, old in before.items():
+            new = getattr(term, name)
+            self.assertNotEqual(new, old, name)
+            # 글자색 쪽은 그대로고 배경만 40 -> 44 로 바뀐다
+            self.assertEqual(new.replace(";44m", ";40m"), old, name)
+
+    def test_reset_follows_the_new_background(self):
+        term.use_theme("blue")
+        self.assertTrue(term.RESET.endswith(term.NORMAL))
+        self.assertIn(";44m", term.RESET)
+
+    def test_a_color_that_matches_the_background_is_swapped_out(self):
+        """파란 바닥에서 파랑 글자는 안 보인다. BLUE.COL 도 검정으로 바꿔놓았다."""
+        term.use_theme("blue")
+        self.assertEqual(term.ink(term.BLUE, False), "\x1b[30;44m")
+        # 그 항목의 커서 줄은 검은 바탕이 되고, 어두우므로 흰 글자를 얹는다
+        self.assertEqual(term.bar(term.BLUE, False), "\x1b[37;40m")
+
+    def test_the_bright_variant_of_the_background_color_survives(self):
+        """밝은파랑(9)과 파랑(1)은 DOS 에서 다른 색이다. 소스 색이 살아야 한다.
+
+        BLUE.COL 은 소스(PAS C CPP ASM BAS CBL)를 밝은파랑 그대로 두고
+        H OBJ LIB 만 검정으로 바꿨다. 배경은 어두운 8색뿐이라 밝은 것은 묻히지
+        않기 때문이다.
+        """
+        term.use_theme("blue")
+        self.assertEqual(term.ink(term.BLUE, True), "\x1b[1;34;44m")
+
+    def test_source_and_header_stay_apart_in_both_sets(self):
+        for name in term.THEMES:
+            term.use_theme(name)
+            self.assertNotEqual(
+                term.ink(term.BLUE, True), term.ink(term.BLUE, False), name
+            )
+
+    def test_unknown_set_is_refused(self):
+        with self.assertRaises(ValueError):
+            term.use_theme("green")
+        self.assertEqual(term.theme(), "black", "실패한 뒤에도 이전 색을 지킨다")
+
+    def test_toggle_switches_and_forces_a_full_repaint(self):
+        original = term.write
+        term.write = lambda text: None  # 테스트 출력에 이스케이프가 섞이지 않게
+        try:
+            self.app.renderer.render(["첫 프레임"], (20, 1))
+        finally:
+            term.write = original
+        self.assertNotEqual(self.app.renderer._prev, [], "그린 프레임이 남아있어야 한다")
+
+        self.app.toggle_theme()
+        self.assertEqual(term.theme(), "blue")
+        self.assertEqual(self.app.renderer._prev, [], "통째로 다시 그려야 한다")
+        self.app.toggle_theme()
+        self.assertEqual(term.theme(), "black")
+
+    def test_toggle_does_not_write_when_persist_is_off(self):
+        """persist=False 는 저장 파일을 건드리지 않는다는 뜻이다."""
+        import mdirnet.settings as settings_mod
+
+        calls = []
+        original = settings_mod.save_theme
+        settings_mod.save_theme = lambda name: calls.append(name)
+        try:
+            self.assertFalse(self.app.persist)
+            self.app.toggle_theme()
+        finally:
+            settings_mod.save_theme = original
+        self.assertEqual(calls, [])
+
+    def test_every_set_keeps_the_screen_inside_the_basic_16(self):
+        for name in term.THEMES:
+            term.use_theme(name)
+            for line in self.app._compose((100, 30)):
+                for params in _SGR.findall(line):
+                    for part in params.split(";"):
+                        self.assertIn(part, ALLOWED, "%s: %r" % (name, params))
+
+
+class TestSavingTheChoice(unittest.TestCase):
+    """고른 색상셋은 다음 실행에도 남아야 한다."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        # 사용자의 진짜 ~/.mdirnet 을 건드리지 않도록 저장 위치를 옮긴다
+        fake = Path(self.tmp.name) / ".mdirnet" / "shares.json"
+        original = settings.default_config_path
+        settings.default_config_path = lambda: fake
+        self.addCleanup(lambda: setattr(settings, "default_config_path", original))
+
+    def test_round_trip(self):
+        settings.save_theme("blue")
+        self.assertEqual(settings.load_theme(), "blue")
+        settings.save_theme("black")
+        self.assertEqual(settings.load_theme(), "black")
+
+    def test_missing_file_falls_back_to_the_default(self):
+        self.assertEqual(settings.load_theme(), "black")
+
+    def test_broken_file_falls_back_instead_of_crashing(self):
+        settings.save_theme("blue")
+        settings.default_config_path().with_name("settings.json").write_text("{ 망가진")
+        self.assertEqual(settings.load_theme(), "black")
+
+    def test_it_lands_beside_the_share_list(self):
+        settings.save_theme("blue")
+        saved = settings.default_config_path().with_name("settings.json")
+        self.assertTrue(saved.exists())
+        self.assertEqual(saved.parent, settings.default_config_path().parent)
+        # 임시 파일을 남기지 않는다
+        self.assertEqual(list(saved.parent.glob("*.tmp")), [])
 
 
 class TestLeavingTheScreenRestoresTheTerminal(unittest.TestCase):

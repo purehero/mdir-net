@@ -226,6 +226,7 @@ python3 -m mdirnet --help
 | `--port` | Session TCP port | 9600 |
 | `--udp-port` | Discovery UDP port | 9601 |
 | `--no-discovery` | Turn off automatic discovery | off |
+| `--theme` | Color set, `black` or `blue` (not saved) | the saved choice |
 
 ```bash
 ./run.sh --share ~/Downloads --name 거실PC

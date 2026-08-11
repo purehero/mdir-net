@@ -7,7 +7,7 @@ import queue
 import threading
 from pathlib import Path
 
-from .. import config, discovery, fsops, session, shares as shares_mod, winfw
+from .. import config, discovery, fsops, session, settings, shares as shares_mod, winfw
 from . import screen, term
 
 # 테두리 문자. 폭이 정확히 1칸이고 East Asian Width 가 A(Ambiguous)가 아닌 것만
@@ -724,6 +724,11 @@ class MenuBar(Dialog):
                         ".",
                         app.toggle_hidden,
                     ),
+                    (
+                        ("파란 바닥으로" if term.theme() == "black" else "검은 바닥으로"),
+                        "",
+                        app.toggle_theme,
+                    ),
                 ],
             ),
             ("Right", right),
@@ -1427,6 +1432,22 @@ class App:
         self.local.refresh()
         if self.session:
             self.remote.refresh()
+
+    def toggle_theme(self):
+        """색상셋을 바꾼다. MDir 배포판에 든 두 가지를 번갈아 쓴다."""
+        name = "blue" if term.theme() == "black" else "black"
+        term.use_theme(name)
+        # 이전 프레임과 비교해 바뀐 줄만 다시 쓰는 렌더러이므로, 색만 바뀐
+        # 프레임은 글자가 같아 그대로 지나간다. 통째로 다시 그리게 만든다
+        self.renderer.invalidate()
+        self.status = "색상셋: %s 바닥" % ("검정" if name == "black" else "파랑")
+
+        if not self.persist:
+            return
+        try:
+            settings.save_theme(name)
+        except OSError as exc:
+            self.status = "색상셋을 저장하지 못했습니다: %s" % exc
 
     def _open_share_manager(self):
         """F4. 연결 중에도 열린다.
@@ -2390,13 +2411,13 @@ class App:
 
         color, bright = self._entry_color(item, ext, picked)
 
-        # 커서 줄은 그 항목의 글자색을 바탕으로 깔고 글자를 검정으로 뒤집는다.
+        # 커서 줄은 그 항목의 글자색을 바탕으로 깔고 글자를 뒤집는다.
         # 한 색으로 고정하면 커서가 놓인 순간 종류를 알 수 없게 된다
         if is_cursor and focused:
-            return term.bar(color) + text + term.RESET
+            return term.bar(color, bright) + text + term.RESET
         # 초점이 없는 쪽도 커서 자리는 보여야 한다. 색은 그대로 두고 밝게만 한다
         if is_cursor:
-            return term.ink(color, bright=True) + term.BOLD + text + term.RESET
+            return term.ink(color, bright=True) + text + term.RESET
         return term.ink(color, bright) + text + term.RESET
 
     @staticmethod
