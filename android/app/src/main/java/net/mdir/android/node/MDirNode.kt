@@ -159,6 +159,9 @@ object MDirNode {
 
     fun store(): FileStore = shares.store()
 
+    /** 브라우저의 `내 폰` 쪽. 작업 폴더가 정해지기 전에는 없다. */
+    fun localStore(): FileStore? = shares.localStore()
+
     // --- 연결 ---
 
     fun connectTo(peer: Peer) {

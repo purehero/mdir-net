@@ -45,7 +45,9 @@ import kotlinx.coroutines.withContext
 import net.mdir.android.net.Session
 import net.mdir.android.node.MDirNode
 import net.mdir.android.store.Entry
+import net.mdir.android.store.FileStore
 import net.mdir.android.store.RemotePath
+import net.mdir.android.store.WORKSPACE_NAME
 
 @Composable
 fun BrowserScreen() {
@@ -85,7 +87,7 @@ fun BrowserScreen() {
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            if (!RemotePath.isRoot(pane.path)) {
+            if (!RemotePath.isRoot(pane.path) && pane.path != pane.home) {
                 TextButton(onClick = { state.goUp() }) { Text("위로") }
             }
         }
@@ -178,8 +180,8 @@ private fun tailOf(text: String, limit: Int): String =
 
 enum class Asking { NONE, DELETE, RENAME, MKDIR }
 
-class Pane(val root: String) {
-    var path by mutableStateOf(RemotePath.ROOT)
+class Pane(val root: String, val home: String = RemotePath.ROOT) {
+    var path by mutableStateOf(home)
     var entries by mutableStateOf<List<Entry>>(emptyList())
     var selection by mutableStateOf<Set<String>>(emptySet())
     var loading by mutableStateOf(false)
@@ -191,7 +193,20 @@ class BrowserState(private val session: Session, private val scope: CoroutineSco
     var onRemote by mutableStateOf(true)
     var asking by mutableStateOf(Asking.NONE)
 
-    private val local = Pane("내 폰")
+    /**
+     * 내 폰 쪽 저장소. 작업 폴더가 정해져 있으면 그 안을 본다.
+     *
+     * 세션이 쓰는 `MDirNode.store()` 와 **다른 것**이다. 상대는 공유 목록만 보고
+     * 나는 작업 폴더 전체를 본다. 공유 폴더들도 그 안에 있으므로 가려지지 않는다.
+     */
+    private val localStore: FileStore = MDirNode.localStore() ?: MDirNode.store()
+
+    private val local = Pane(
+        root = "내 폰",
+        // 작업 폴더가 있으면 거기서 연다. 그 위(가상 루트)는 항목 하나뿐이라
+        // 올라갈 이유가 없다 — `위로` 도 이 자리에서는 숨긴다
+        home = if (MDirNode.localStore() != null) WORKSPACE_NAME else RemotePath.ROOT,
+    )
     private val remote = Pane("상대")
 
     val current: Pane get() = if (onRemote) remote else local
@@ -212,7 +227,7 @@ class BrowserState(private val session: Session, private val scope: CoroutineSco
                 val entries = if (fromRemote) {
                     session.remoteList(pane.path).second
                 } else {
-                    withContext(Dispatchers.IO) { MDirNode.store().list(pane.path) }
+                    withContext(Dispatchers.IO) { localStore.list(pane.path) }
                 }
                 pane.entries = entries
                 // 목록이 바뀌면 없어진 항목의 선택은 버린다
@@ -267,7 +282,7 @@ class BrowserState(private val session: Session, private val scope: CoroutineSco
         MDirNode.transfers.start(
             scope = scope,
             session = session,
-            store = MDirNode.store(),
+            store = localStore,
             items = items,
             sourceDir = pane.path,
             destDir = other.path,
@@ -310,7 +325,7 @@ class BrowserState(private val session: Session, private val scope: CoroutineSco
                                 if (onRemote) {
                                     session.remoteDelete(path)
                                 } else {
-                                    withContext(Dispatchers.IO) { MDirNode.store().delete(path) }
+                                    withContext(Dispatchers.IO) { localStore.delete(path) }
                                 }
                             }
                             pane.selection = emptySet()
@@ -334,7 +349,7 @@ class BrowserState(private val session: Session, private val scope: CoroutineSco
                     if (onRemote) {
                         session.remoteRename(old, newName)
                     } else {
-                        withContext(Dispatchers.IO) { MDirNode.store().rename(old, newName) }
+                        withContext(Dispatchers.IO) { localStore.rename(old, newName) }
                     }
                     pane.selection = emptySet()
                 }
@@ -352,7 +367,7 @@ class BrowserState(private val session: Session, private val scope: CoroutineSco
                     if (onRemote) {
                         session.remoteMkdir(path)
                     } else {
-                        withContext(Dispatchers.IO) { MDirNode.store().mkdir(path) }
+                        withContext(Dispatchers.IO) { localStore.mkdir(path) }
                     }
                 }
             }
