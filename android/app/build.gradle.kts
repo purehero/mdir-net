@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "net.mdir.android"
+    namespace = "com.purehero.netdir"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "net.mdir.android"
+        applicationId = "com.purehero.netdir"
         minSdk = 26
         targetSdk = 36
         versionCode = 1
