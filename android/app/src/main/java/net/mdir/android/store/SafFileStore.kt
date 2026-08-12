@@ -201,13 +201,28 @@ class SafFileStore(
         return parts
     }
 
+    /**
+     * 공유 폴더의 문서. key 에 하위 경로가 붙어 있으면 트리 루트에서 내려간다.
+     *
+     * 내려가는 방법은 다른 경로 해석과 **똑같이** 표시 이름을 따라 한 칸씩이다.
+     * 원시 경로를 밀어넣을 통로는 여전히 없으므로 경로 탈출은 그대로 불가능하다.
+     */
     private fun shareRoot(share: ShareRef): Doc {
-        val treeUri = Uri.parse(share.key)
+        val treeUri = Uri.parse(ShareKey.tree(share.key))
         val rootId = DocumentsContract.getTreeDocumentId(treeUri)
         val uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, rootId)
 
-        return meta(treeUri, uri, rootId)
+        var doc = meta(treeUri, uri, rootId)
             ?: throw PathDenied("공유 폴더에 접근할 수 없습니다: ${share.name}")
+
+        val sub = ShareKey.sub(share.key)
+            ?: throw PathDenied("공유 위치가 잘못됐습니다: ${share.name}")
+
+        for (piece in sub) {
+            doc = child(doc, piece)?.takeIf { it.isDir }
+                ?: throw PathDenied("공유 폴더에 접근할 수 없습니다: ${share.name}")
+        }
+        return doc
     }
 
     /** 없는 중간 폴더를 만들며 내려간다. push 의 부모 만들기에 쓴다. */

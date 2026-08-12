@@ -30,9 +30,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import net.mdir.android.node.MDirNode
+import net.mdir.android.store.DEFAULT_SHARE_NAME
 import net.mdir.android.store.DEFAULT_SHARE_PICKER_URI
+import net.mdir.android.store.ShareKey
 import net.mdir.android.store.USES_DEFAULT_FOLDER
 import net.mdir.android.store.ensureDefaultShareFolder
+import net.mdir.android.store.ensureWorkspaceFolder
+import net.mdir.android.store.isWorkspaceTree
 
 @Composable
 fun SharesScreen() {
@@ -51,10 +55,19 @@ fun SharesScreen() {
             return@rememberLauncherForActivityResult
         }
 
+        // 작업 폴더를 골랐으면 그것 자체를 열어주지 않는다. 안에 `share` 를 만들어
+        // 그것만 공유하고, 작업 폴더는 내 폰 뿌리로만 쓴다
+        val workspace = isWorkspaceTree(uri)
+        val sub = if (workspace) listOf(DEFAULT_SHARE_NAME) else emptyList()
+
         // 같은 폴더를 다시 고른 것은 실수지 새 공유가 아니다. add 가 기존 것을
         // 돌려주므로 목록이 그대로인데, 그걸 알려주지 않으면 선택이 안 먹은 줄 안다
-        val already = shares.any { it.key == uri.toString() }
-        val added = MDirNode.shares.add(uri)
+        val already = shares.any { it.key == ShareKey.make(uri.toString(), sub) }
+        val added = MDirNode.shares.add(uri, sub)
+        if (workspace && added != null) {
+            MDirNode.shares.setWorkspace(uri)
+            ensureDefaultShareFolder(context.contentResolver, uri)
+        }
         MDirNode.notify(
             when {
                 added == null -> "권한을 받지 못했습니다"
@@ -74,7 +87,7 @@ fun SharesScreen() {
         Button(onClick = {
             // 선택창을 열기 직전에 만든다. 트리 권한을 받지 않으면 어차피 못 쓰는
             // 폴더인데, 실행마다 공유 저장소에 쓰는 부작용을 남길 이유가 없다
-            ensureDefaultShareFolder(context)
+            ensureWorkspaceFolder(context)
             pick.launch(DEFAULT_SHARE_PICKER_URI)
         }) { Text("폴더 추가") }
 
@@ -84,8 +97,9 @@ fun SharesScreen() {
         Text(
             if (USES_DEFAULT_FOLDER) {
                 "선택창은 다운로드 안의 mdir-net 폴더에서 열립니다. 그대로 '이 폴더 사용' 을 누르세요.\n" +
-                    "다운로드 폴더 자체와 저장소 최상위는 시스템이 공유 대상으로 고르지 못하게 막습니다. " +
-                    "그래서 그 안의 폴더를 씁니다. 다른 곳을 쓰려면 선택창 위쪽 경로에서 한 칸 올라가세요."
+                    "mdir-net 은 내 폰 쪽 뿌리가 되고, 상대에게는 그 안의 share 폴더만 열립니다. " +
+                    "공유를 더 만들려면 mdir-net 안에 폴더를 만들어 고르세요.\n" +
+                    "다운로드 폴더 자체와 저장소 최상위는 시스템이 공유 대상으로 고르지 못하게 막습니다."
             } else {
                 "선택창은 다운로드 폴더에서 열립니다. 그대로 '이 폴더 사용' 을 누르세요. " +
                     "다른 곳을 쓰려면 선택창 위쪽 경로에서 한 칸 올라가세요."

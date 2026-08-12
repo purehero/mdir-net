@@ -20,6 +20,15 @@ class SharesStore(context: Context) {
 
     val list: ShareList = ShareList.fromJson(prefs.getString(KEY, null))
 
+    /**
+     * 작업 폴더 — 브라우저의 `내 폰` 뿌리다. 공유 폴더들은 이 안에 둔다.
+     *
+     * 공유 목록과 따로 두는 이유는 **상대에게 열어주는 것과 다르기 때문**이다.
+     * 상대는 공유 목록만 보고, 나는 작업 폴더 전체를 본다.
+     */
+    var workspace: Uri? = prefs.getString(WORKSPACE, null)?.let { Uri.parse(it) }
+        private set
+
     private val _shares = MutableStateFlow(list.all())
 
     /** 화면이 지켜본다. 목록이 바뀌면 곧바로 반영된다. */
@@ -32,7 +41,7 @@ class SharesStore(context: Context) {
      * 받지 못하면 넣지 않는다 — 다음 실행에서 조용히 실패하는 목록을 남기는 것보다
      * 지금 실패하는 편이 낫다.
      */
-    fun add(treeUri: Uri): ShareRef? {
+    fun add(treeUri: Uri, sub: List<String> = emptyList()): ShareRef? {
         val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
             Intent.FLAG_GRANT_WRITE_URI_PERMISSION
         try {
@@ -41,9 +50,16 @@ class SharesStore(context: Context) {
             return null
         }
 
-        val share = list.add(treeUri.toString(), displayName(treeUri))
+        val key = ShareKey.make(treeUri.toString(), sub)
+        val share = list.add(key, sub.lastOrNull() ?: displayName(treeUri))
         persist()
         return share
+    }
+
+    /** 작업 폴더를 정한다. 여기 권한은 `add` 가 이미 받아둔 것을 쓴다. */
+    fun setWorkspace(treeUri: Uri) {
+        workspace = treeUri
+        prefs.edit().putString(WORKSPACE, treeUri.toString()).apply()
     }
 
     fun remove(name: String) {
@@ -51,11 +67,16 @@ class SharesStore(context: Context) {
         list.remove(name)
         persist()
 
-        // 다른 공유가 같은 트리를 쓰고 있지 않을 때만 권한을 놓는다
-        if (list.all().none { it.key == share.key }) {
+        // 다른 공유가 같은 **트리**를 쓰고 있지 않을 때만 권한을 놓는다. 하위 경로
+        // 공유가 여럿이면 트리는 하나이므로 key 가 아니라 트리로 봐야 한다.
+        // 작업 폴더도 같은 트리를 쓰므로 그것이 살아 있으면 놓지 않는다
+        val tree = ShareKey.tree(share.key)
+        val treeInUse = list.all().any { ShareKey.tree(it.key) == tree } ||
+            workspace?.toString() == tree
+        if (!treeInUse) {
             try {
                 app.contentResolver.releasePersistableUriPermission(
-                    Uri.parse(share.key),
+                    Uri.parse(tree),
                     Intent.FLAG_GRANT_READ_URI_PERMISSION or
                         Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
                 )
@@ -66,6 +87,17 @@ class SharesStore(context: Context) {
 
     fun store(resolver: android.content.ContentResolver = app.contentResolver) =
         SafFileStore(resolver, list)
+
+    /**
+     * 브라우저의 `내 폰` 쪽 저장소. 작업 폴더 하나만 담은 목록으로 만든다.
+     *
+     * 세션이 쓰는 `store()` 와 **다른 것**이어야 한다. 상대는 공유 목록만 보고
+     * 나는 작업 폴더를 본다. 하나로 합치면 그 구분이 사라진다.
+     */
+    fun localStore(resolver: android.content.ContentResolver = app.contentResolver): FileStore? =
+        workspace?.let {
+            SafFileStore(resolver, ShareList(listOf(ShareRef(WORKSPACE_NAME, it.toString()))))
+        }
 
     private fun persist() {
         prefs.edit().putString(KEY, list.toJson()).apply()
@@ -102,5 +134,6 @@ class SharesStore(context: Context) {
     private companion object {
         const val PREFS = "mdirnet"
         const val KEY = "shares"
+        const val WORKSPACE = "workspace"
     }
 }
