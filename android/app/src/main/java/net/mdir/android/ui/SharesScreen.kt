@@ -2,8 +2,6 @@
 
 package net.mdir.android.ui
 
-import android.net.Uri
-import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -28,26 +26,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import net.mdir.android.node.MDirNode
-
-/**
- * 피커를 열 위치. 내장 저장공간의 다운로드 폴더다.
- *
- * 시작 위치를 주지 않으면(`launch(null)`) 피커가 마지막 위치나 루트 목록에서 열린다.
- * 거기서 왼쪽의 **'다운로드'** 를 누르면 `externalstorage` 가 아니라 DownloadManager 가
- * 가진 목록이 열리는데, **파일 관리자로 만든 폴더가 거기엔 없어서 빈 화면처럼 보이고**
- * 트리로 고를 수도 없다. 그래서 진짜 파일시스템 쪽 다운로드 폴더를 못 박는다.
- * 다른 곳을 고르려면 피커 위쪽 경로에서 한 칸 올라가면 된다.
- *
- * 없는 폴더를 가리키면 피커가 기본 위치에서 열린다 — 예전과 같아지므로 손해는 없다.
- */
-private val PICKER_START: Uri =
-    DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:Download")
+import net.mdir.android.store.DEFAULT_SHARE_PICKER_URI
+import net.mdir.android.store.USES_DEFAULT_FOLDER
+import net.mdir.android.store.ensureDefaultShareFolder
 
 @Composable
 fun SharesScreen() {
+    val context = LocalContext.current
     val shares by remember { MDirNode.shares.shares }.collectAsState()
     val running by MDirNode.running.collectAsState()
     var removing by remember { mutableStateOf<String?>(null) }
@@ -82,13 +71,25 @@ fun SharesScreen() {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        Button(onClick = { pick.launch(PICKER_START) }) { Text("폴더 추가") }
+        Button(onClick = {
+            // 선택창을 열기 직전에 만든다. 트리 권한을 받지 않으면 어차피 못 쓰는
+            // 폴더인데, 실행마다 공유 저장소에 쓰는 부작용을 남길 이유가 없다
+            ensureDefaultShareFolder(context)
+            pick.launch(DEFAULT_SHARE_PICKER_URI)
+        }) { Text("폴더 추가") }
 
         // 안드로이드 11 부터 시스템이 아예 막는 곳이 있다. 눌러도 안 되는 이유를
-        // 모르면 앱이 고장난 것으로 보인다
+        // 모르면 앱이 고장난 것으로 보인다. 막지 않는 버전에서는 그 설명이 거짓이
+        // 되므로 문구를 갈라 둔다 — 안내가 틀리면 나머지 안내도 믿지 않게 된다
         Text(
-            "다운로드 폴더와 저장소 최상위는 시스템이 공유 대상으로 고르지 못하게 막습니다. " +
-                "그 안에 폴더를 하나 만들어 고르세요.",
+            if (USES_DEFAULT_FOLDER) {
+                "선택창은 다운로드 안의 mdir-net 폴더에서 열립니다. 그대로 '이 폴더 사용' 을 누르세요.\n" +
+                    "다운로드 폴더 자체와 저장소 최상위는 시스템이 공유 대상으로 고르지 못하게 막습니다. " +
+                    "그래서 그 안의 폴더를 씁니다. 다른 곳을 쓰려면 선택창 위쪽 경로에서 한 칸 올라가세요."
+            } else {
+                "선택창은 다운로드 폴더에서 열립니다. 그대로 '이 폴더 사용' 을 누르세요. " +
+                    "다른 곳을 쓰려면 선택창 위쪽 경로에서 한 칸 올라가세요."
+            },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
