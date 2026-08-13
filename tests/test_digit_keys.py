@@ -273,6 +273,9 @@ class _StubSession:
     peer_name = "stub-pc"
     peer_host = "127.0.0.1"
 
+    def notify_shares_changed(self):
+        pass
+
     def close(self, reason=None):
         pass
 

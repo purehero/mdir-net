@@ -1595,13 +1595,24 @@ class App:
 
         if self.persist:
             self._save_shares()
+        self._tell_peer_shares_changed()
         self.status = "공유 폴더 추가: %s" % share.name
         return share
 
     def remove_share(self, name):
         if self.shares.remove(name) and self.persist:
             self._save_shares()
+        self._tell_peer_shares_changed()
         self.status = "공유 폴더 제거: %s" % name
+
+    def _tell_peer_shares_changed(self):
+        """목록이 바뀌었다고 상대에게 알린다 (PROTOCOL.md 7절).
+
+        이것이 없으면 상대는 손으로 새로고침할 때까지 낡은 목록을 본다. 방금 뺀
+        공유로 들어가려다 거부당하고 나서야 알게 된다.
+        """
+        if self.session:
+            self.session.notify_shares_changed()
 
     def _save_shares(self):
         try:
@@ -1821,6 +1832,11 @@ class App:
         elif kind == "op_done":
             self.status = payload[0]
             self.focus.refresh()
+
+        elif kind == "peer_shares_changed":
+            # 상대의 공유 목록이 바뀌었다. 가상 루트를 보고 있으면 곧바로 반영된다
+            if self.remote.active:
+                self.remote.refresh()
 
         elif kind == "remote_changed":
             # 상대가 내 쪽 파일을 바꿨다. 그 폴더를 보고 있는 패널을 다시 읽는다
