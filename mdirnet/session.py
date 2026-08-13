@@ -4,10 +4,11 @@ import itertools
 import os
 import queue
 import socket
+import ssl
 import threading
 from pathlib import Path
 
-from . import config, fsops, protocol, shares as shares_mod
+from . import config, fsops, protocol, secure, shares as shares_mod
 
 
 class SessionError(Exception):
@@ -498,7 +499,14 @@ _REQUESTS = {
 
 def connect(peer, my_name, platform, shares, events):
     """상대에게 연결을 요청하고 승인을 기다린다. 승인되면 Session 을 돌려준다."""
-    sock = socket.create_connection((peer.host, peer.port), timeout=config.CONNECT_TIMEOUT)
+    raw = socket.create_connection((peer.host, peer.port), timeout=config.CONNECT_TIMEOUT)
+    try:
+        # 프레임을 하나라도 보내기 **전에** 감싼다. hello 도 평문으로 나가면 안 된다
+        sock = secure.wrap_client(raw)
+    except (ssl.SSLError, OSError) as exc:
+        secure.close_quietly(raw)
+        raise SessionError("암호화 연결을 세우지 못했습니다: %s" % exc)
+
     try:
         protocol.send_frame(
             sock,
@@ -535,7 +543,9 @@ def connect(peer, my_name, platform, shares, events):
 class Server:
     """들어오는 연결을 받아 UI 에 승인을 물어보는 TCP 서버."""
 
-    def __init__(self, my_name, platform, shares, events, port=config.TCP_PORT):
+    def __init__(self, my_name, platform, shares, events, port=config.TCP_PORT, identity=None):
+        # 프로세스 한 판짜리 신원. 주지 않으면 여기서 만든다
+        self.identity = identity or secure.make_identity()
         self.my_name = my_name
         self.platform = platform
         # 목록 객체를 그대로 들고 있으므로, 앱에서 항목을 더하면 곧바로 반영된다
@@ -591,8 +601,17 @@ class Server:
                 target=self._greet, args=(client, addr[0]), name="greet", daemon=True
             ).start()
 
-    def _greet(self, sock, host):
+    def _greet(self, raw, host):
         """hello 를 읽고 UI 에 승인을 물어본 뒤 결과를 회신한다."""
+        try:
+            raw.settimeout(config.CONNECT_TIMEOUT)
+            # 첫 프레임을 읽기 **전에** 감싼다
+            sock = secure.wrap_server(raw, self.identity)
+        except (ssl.SSLError, OSError):
+            # 옛 버전이나 엉뚱한 것이 붙은 경우다. 조용히 끊는다
+            secure.close_quietly(raw)
+            return
+
         try:
             sock.settimeout(config.CONNECT_TIMEOUT)
             header, _ = protocol.FrameReader(sock).read()

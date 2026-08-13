@@ -2,6 +2,7 @@
 
 package com.purehero.netdir.net
 
+import android.util.Log
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -57,13 +58,28 @@ suspend fun connect(
     /** 내가 시작한 전송의 로컬 읽기·쓰기. 주지 않으면 `store` 와 같은 곳이다. */
     localStore: FileStore = store,
     prepare: (Socket) -> Unit = {},
+    /**
+     * TLS 로 감싼다. **JVM 테스트만** 그대로 두는 함수를 넘긴다 - 안드로이드
+     * 키스토어가 없어 신원을 만들 수 없기 때문이다. 기본값은 늘 감싸는 쪽이다.
+     */
+    wrapTls: (Socket) -> Socket = { Secure.wrapClient(it) },
     onEvent: (SessionEvent) -> Unit = {},
 ): Session = withContext(Dispatchers.IO) {
-    val socket = Socket()
-    try {
-        prepare(socket)
-        socket.connect(InetSocketAddress(peer.host, peer.port), Config.CONNECT_TIMEOUT_MS)
+    val plain = Socket()
+    val socket = try {
+        prepare(plain)
+        plain.connect(InetSocketAddress(peer.host, peer.port), Config.CONNECT_TIMEOUT_MS)
+        // 프레임을 하나라도 보내기 **전에** 감싼다. hello 도 평문으로 나가면 안 된다
+        wrapTls(plain)
+    } catch (exc: SocketTimeoutException) {
+        runCatching { plain.close() }
+        throw SessionError("응답이 없습니다. 상대가 승인하지 않았습니다")
+    } catch (exc: Throwable) {
+        runCatching { plain.close() }
+        throw SessionError("암호화 연결을 세우지 못했습니다: ${exc.message ?: exc}")
+    }
 
+    try {
         Frame.send(
             socket.getOutputStream(),
             JSONObject()
@@ -113,8 +129,16 @@ class Server(
     private val approvalTimeoutMs: Long = Config.APPROVAL_TIMEOUT_MS,
     private val onEvent: (ServerEvent) -> Unit,
     private val onSessionEvent: (SessionEvent) -> Unit = {},
+    /**
+     * 들어온 소켓을 TLS 로 감싼다. **JVM 테스트만** 그대로 두는 함수를 넘긴다 -
+     * 안드로이드 키스토어가 없어 신원을 만들 수 없기 때문이다.
+     *
+     * null 이면 늘 감싼다. 기본값이 그것이다.
+     */
+    private val wrapTls: ((Socket) -> Socket)? = null,
 ) {
     private var server: ServerSocket? = null
+    private var identity: Secure.Identity? = null
     private var job: Job? = null
 
     /** 실제로 잡은 포트. **이 값을 브로드캐스트해야 한다.** */
@@ -128,6 +152,9 @@ class Server(
      * 두 번째 인스턴스에 아무도 접속하지 못한다.
      */
     fun bind(): Int {
+        // 포트를 잡을 때 신원도 만든다. 프로세스 한 판짜리다
+        if (identity == null) identity = runCatching { Secure.newIdentity() }.getOrNull()
+
         for (offset in 0 until Config.PORT_TRIES) {
             val candidate = basePort + offset
             try {
@@ -154,7 +181,16 @@ class Server(
         job = null
         runCatching { server?.close() }
         server = null
+        // 키스토어에 남기지 않는다
+        identity?.close()
+        identity = null
     }
+
+    /** 이 서버의 인증서 DER. 지문을 화면에 띄울 때 쓴다. */
+    fun certificate(): ByteArray? = identity?.certificateDer
+
+    private fun requireIdentity(): Secure.Identity =
+        identity ?: throw SessionError("암호화 신원을 만들지 못했습니다")
 
     private suspend fun acceptLoop() {
         val socket = server ?: return
@@ -171,7 +207,20 @@ class Server(
     }
 
     /** hello 를 읽고 화면에 승인을 물어본 뒤 결과를 회신한다. */
-    private suspend fun greet(socket: Socket) {
+    private suspend fun greet(plain: Socket) {
+        // 첫 프레임을 읽기 **전에** 감싼다. 실패하면 옛 버전이나 엉뚱한 것이
+        // 붙은 경우라 조용히 끊는다
+        val socket = try {
+            plain.soTimeout = Config.CONNECT_TIMEOUT_MS
+            wrapTls?.invoke(plain) ?: Secure.wrapServer(plain, requireIdentity())
+        } catch (exc: Exception) {
+            // 조용히 끊되 **로그는 남긴다.** 여기서 삼키면 암호화 설정이 잘못됐을 때
+            // 상대에게는 "connection closed" 로만 보여 원인을 찾을 수 없다
+            Log.w("netdir", "TLS 를 세우지 못했습니다", exc)
+            runCatching { plain.close() }
+            return
+        }
+
         try {
             socket.soTimeout = Config.CONNECT_TIMEOUT_MS
             val header = FrameReader(socket.getInputStream()).read().header

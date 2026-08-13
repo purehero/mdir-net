@@ -58,7 +58,13 @@ class HandshakeTest {
         scope.cancel()
     }
 
-    /** 승인/거부를 자동으로 눌러주는 서버를 세운다. null 이면 아무도 안 누른다. */
+    /**
+     * 승인/거부를 자동으로 눌러주는 서버를 세운다. null 이면 아무도 안 누른다.
+     *
+     * **TLS 를 씌우지 않는다.** 안드로이드 키스토어가 JVM 에는 없어 신원을 만들 수
+     * 없다. 여기서 보려는 것은 핸드셰이크 절차(승인·거부·만료·버전)이고, 암호화
+     * 계층 자체는 기기에서 확인한다 (checklist 43.3).
+     */
     private fun startServer(answer: Boolean?, approvalTimeoutMs: Long = 500): Int {
         server = Server(
             myName = { "맥" },
@@ -70,6 +76,7 @@ class HandshakeTest {
                 events.add(event)
                 if (event is ServerEvent.Approval && answer != null) event.request.decide(answer)
             },
+            wrapTls = { it },
         )
         val port = server.bind()
         server.start()
@@ -88,7 +95,7 @@ class HandshakeTest {
         val port = startServer(answer = true)
 
         val session = withTimeout(10_000) {
-            connect(peer(port), "내 폰", store(clientDir, "내 폰"), scope)
+            connect(peer(port), "내 폰", store(clientDir, "내 폰"), scope, wrapTls = { it })
         }
 
         try {
@@ -114,7 +121,7 @@ class HandshakeTest {
     fun `승인 요청에 상대 정보가 담긴다`() = runBlocking {
         val port = startServer(answer = true)
         val session = withTimeout(10_000) {
-            connect(peer(port), "내 폰", store(clientDir, "내 폰"), scope)
+            connect(peer(port), "내 폰", store(clientDir, "내 폰"), scope, wrapTls = { it })
         }
         session.close()
 
@@ -131,7 +138,7 @@ class HandshakeTest {
         val port = startServer(answer = false)
 
         try {
-            withTimeout(10_000) { connect(peer(port), "내 폰", store(clientDir, "내 폰"), scope) }
+            withTimeout(10_000) { connect(peer(port), "내 폰", store(clientDir, "내 폰"), scope, wrapTls = { it }) }
             fail("거부됐는데 연결됐다")
         } catch (_: Rejected) {
         }
@@ -150,7 +157,7 @@ class HandshakeTest {
         val port = startServer(answer = null, approvalTimeoutMs = 300)
 
         try {
-            withTimeout(10_000) { connect(peer(port), "내 폰", store(clientDir, "내 폰"), scope) }
+            withTimeout(10_000) { connect(peer(port), "내 폰", store(clientDir, "내 폰"), scope, wrapTls = { it }) }
             fail("만료됐는데 연결됐다")
         } catch (_: Rejected) {
         }
@@ -164,7 +171,7 @@ class HandshakeTest {
         val port = startServer(answer = null, approvalTimeoutMs = 200)
 
         val attempt = runCatching {
-            withTimeout(10_000) { connect(peer(port), "내 폰", store(clientDir, "내 폰"), scope) }
+            withTimeout(10_000) { connect(peer(port), "내 폰", store(clientDir, "내 폰"), scope, wrapTls = { it }) }
         }
         assertTrue(attempt.isFailure)
 
