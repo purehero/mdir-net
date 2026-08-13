@@ -1,7 +1,10 @@
-# 폴더 트리 (MCD) - 펼칠 때 읽는가, 그리고 못 읽는 폴더에서 죽지 않는가
+# 폴더 트리 (MCD) - 패널 자체가 트리가 된다
 #
-# 이 다이얼로그의 값은 "빠르다" 는 것 하나다. 통째로 훑는 구현이었다면 홈 폴더에서
-# 몇 초, 넓은 디스크에서 몇 분씩 화면이 멈춘다. 그래서 **읽은 폴더 수**를 직접 센다.
+# 창을 띄우는 것이 아니다. MDir 도 NC 도 **패널을 바꿨다.** 그래서 확인할 것이
+# 둘이다 - 트리 상태(펼침, 게으른 읽기)와, 그 상태에서 패널이 제대로 도는가.
+#
+# 이 기능의 값은 "빠르다" 는 것 하나다. 통째로 훑는 구현이었다면 홈 폴더에서
+# 몇 초씩 화면이 멈춘다. 그래서 **읽은 폴더**를 직접 센다.
 
 import tempfile
 import unittest
@@ -9,7 +12,9 @@ from pathlib import Path
 
 from mdirnet import fsops
 from mdirnet.ui import app as app_module
-from mdirnet.ui import term
+from mdirnet.ui import screen, term
+
+from .helpers import make_shares
 
 
 class TreeTestCase(unittest.TestCase):
@@ -18,181 +23,254 @@ class TreeTestCase(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name).resolve()
 
-        # 깊이 3, 가지마다 형제를 여럿 둔다
         self.deep = self.root / "a" / "b" / "c"
         self.deep.mkdir(parents=True)
         for name in ("형제1", "형제2", "형제3"):
             (self.root / "a" / name).mkdir()
-        for name in ("깊은형제1", "깊은형제2"):
-            (self.root / "a" / "b" / name).mkdir()
         (self.deep / "더깊이").mkdir()
+        (self.deep / "메모.txt").write_bytes(b"x")
 
-    def make(self, start=None):
-        self.chosen = []
-        self.cancelled = []
-        dialog = app_module.TreeDialog(
-            start or self.deep,
-            on_choose=self.chosen.append,
-            on_cancel=lambda: self.cancelled.append(True),
+        self.app = app_module.App(
+            my_name="tree-node",
+            shares=make_shares(self.root),
+            persist=False,
+            tcp_port=0,
+            udp_port=0,
+            platform_name="testos",
+            use_discovery=False,
         )
-        dialog.max_body = 24
-        return dialog
+        self.addCleanup(self.app.shutdown)
+        self.app.local.navigate(self.deep)
+        self.app.focus = self.app.local
 
-    @staticmethod
-    def on_screen(dialog, path):
-        """트리 줄 목록에 그 경로가 있는가. 깊이는 디스크 뿌리에 따라 달라진다."""
-        return any(node == path for node, _ in dialog.rows)
+    @property
+    def pane(self):
+        return self.app.local
 
-    def shown(self, dialog):
-        """화면에 나온 이름들 (장식 제거)."""
-        out = []
-        for line in dialog.lines(60):
-            plain = term.strip(line) if hasattr(term, "strip") else line
-            out.append(plain)
-        return out
+    def open_tree(self):
+        self.app._on_key("4")
+        return self.pane.tree
+
+    def cursor_to(self, path):
+        self.pane.cursor = self.pane.tree.index_of(path)
+
+    def on_screen(self, path):
+        return any(node == path for node, _ in self.pane.tree.rows)
+
+
+class TestItIsThePaneNotAWindow(TreeTestCase):
+    def test_pressing_4_changes_the_pane(self):
+        self.open_tree()
+
+        self.assertIsNotNone(self.pane.tree)
+        self.assertIsNone(self.app.modal, "창을 띄웠다. 패널이 바뀌어야 한다")
+
+    def test_pressing_4_again_goes_back(self):
+        self.open_tree()
+        self.app._on_key("4")
+
+        self.assertIsNone(self.pane.tree)
+        self.assertEqual(self.pane.path, self.deep, "되돌아왔는데 다른 폴더다")
+
+    def test_the_rows_are_the_tree(self):
+        self.open_tree()
+        names = [r["name"] for r in self.pane.rows()]
+
+        self.assertIn("a", names)
+        self.assertIn("c", names)
+        # 트리에는 `..` 이 없다. 뿌리가 이미 화면에 있다
+        self.assertNotIn("..", names)
+
+    def test_the_title_follows_the_cursor(self):
+        self.open_tree()
+        self.cursor_to(self.root / "a")
+
+        self.assertEqual(self.pane.location, str(self.root / "a"))
+
+    def test_it_draws_with_indent_and_a_marker(self):
+        # 뿌리가 디스크 최상위라 화면에 다 담기지 않는다. 보려는 줄로 커서를
+        # 옮겨 화면 안으로 끌어온 뒤에 본다
+        self.open_tree()
+        self.cursor_to(self.root / "a" / "형제1")
+        text = "\n".join(self.app._compose((100, 30)))
+
+        self.assertIn("- a", text, "펼친 것은 - 로 보여야 한다")
+        self.assertIn("+ 형제1", text, "접힌 것은 + 로 보여야 한다")
+
+    def test_depth_shows_as_indent(self):
+        """깊이가 안 보이면 트리가 아니라 그냥 목록이다."""
+        self.open_tree()
+        self.cursor_to(self.deep)
+        rows = {r["name"]: r["depth"] for r in self.pane.rows()}
+
+        self.assertLess(rows["a"], rows["b"])
+        self.assertLess(rows["b"], rows["c"])
+
+    def test_the_other_pane_is_untouched(self):
+        self.open_tree()
+
+        self.assertIsNone(self.app.right.tree, "반대 패널까지 트리가 됐다")
 
 
 class TestItOpensWhereYouAre(TreeTestCase):
     def test_the_cursor_starts_on_the_current_folder(self):
-        dialog = self.make()
-        self.assertEqual(dialog.current, self.deep)
+        self.open_tree()
+
+        self.assertEqual(self.pane.tree.node_at(self.pane.cursor), self.deep)
 
     def test_only_the_ancestors_are_expanded(self):
-        dialog = self.make()
+        tree = self.open_tree()
 
         for parent in (self.root, self.root / "a", self.root / "a" / "b"):
-            self.assertIn(parent, dialog.expanded, "%s 가 안 펼쳐졌다" % parent)
+            self.assertIn(parent, tree.expanded, "%s 가 안 펼쳐졌다" % parent)
 
-        # 지금 폴더 자신과 형제들은 접혀 있어야 한다
-        self.assertNotIn(self.deep, dialog.expanded)
-        self.assertNotIn(self.root / "a" / "형제1", dialog.expanded)
+        self.assertNotIn(self.deep, tree.expanded)
+        self.assertNotIn(self.root / "a" / "형제1", tree.expanded)
 
     def test_it_starts_at_the_disk_root(self):
-        dialog = self.make()
-        self.assertTrue(fsops.is_filesystem_root(dialog.root), dialog.root)
+        tree = self.open_tree()
+
+        self.assertTrue(fsops.is_filesystem_root(tree.root), tree.root)
 
 
 class TestItReadsLazily(TreeTestCase):
     """여기가 이 기능의 핵심이다."""
 
     def test_opening_reads_only_the_ancestors(self):
-        dialog = self.make()
+        tree = self.open_tree()
 
-        # 조상 사슬만 읽혔다. 형제들 안쪽은 손대지 않았다
-        self.assertNotIn(self.root / "a" / "형제1", dialog.children)
-        self.assertNotIn(self.deep, dialog.children)
+        self.assertNotIn(self.root / "a" / "형제1", tree.children)
+        self.assertNotIn(self.deep, tree.children)
 
     def test_expanding_reads_exactly_one_level(self):
-        dialog = self.make()
-        before = set(dialog.children)
+        tree = self.open_tree()
+        before = set(tree.children)
 
-        dialog.cursor = dialog._index_of(self.root / "a" / "형제1")
-        dialog.key(term.RIGHT)
+        self.cursor_to(self.root / "a" / "형제1")
+        self.app._on_key(term.RIGHT)
 
-        added = set(dialog.children) - before
-        self.assertEqual(added, {self.root / "a" / "형제1"})
+        self.assertEqual(set(tree.children) - before, {self.root / "a" / "형제1"})
 
     def test_a_folder_is_read_once(self):
-        dialog = self.make()
+        tree = self.open_tree()
         target = self.root / "a" / "형제1"
 
-        dialog.cursor = dialog._index_of(target)
-        dialog.key(term.RIGHT)
-        dialog.key(term.LEFT)   # 접고
-        dialog.key(term.RIGHT)  # 다시 펼친다
-
-        # 두 번째 펼침은 기억한 것을 쓴다. 새 폴더를 만들어 확인한다
+        self.cursor_to(target)
+        self.app._on_key(term.RIGHT)
         (target / "나중에 만든 것").mkdir()
-        dialog.key(term.LEFT)
-        dialog.key(term.RIGHT)
-        self.assertNotIn(target / "나중에 만든 것", dialog.children[target])
+        self.app._on_key(term.LEFT)
+        self.app._on_key(term.RIGHT)
+
+        self.assertNotIn(target / "나중에 만든 것", tree.children[target])
 
 
 class TestMoving(TreeTestCase):
-    def test_expand_shows_the_children(self):
-        dialog = self.make()
-        dialog.cursor = dialog._index_of(self.deep)
-        dialog.key(term.RIGHT)
+    def test_right_expands(self):
+        self.open_tree()
+        self.cursor_to(self.deep)
+        self.app._on_key(term.RIGHT)
 
-        self.assertIn(self.deep, dialog.expanded)
-        self.assertTrue(self.on_screen(dialog, self.deep / "더깊이"))
+        self.assertTrue(self.on_screen(self.deep / "더깊이"))
 
-    def test_collapse_hides_them_again(self):
-        dialog = self.make()
-        dialog.cursor = dialog._index_of(self.deep)
-        dialog.key(term.RIGHT)
-        dialog.key(term.LEFT)
+    def test_only_folders_show_up(self):
+        """트리는 폴더만 보여준다. 파일은 목록에서 볼 것이다."""
+        self.open_tree()
+        self.cursor_to(self.deep)
+        self.app._on_key(term.RIGHT)
 
-        self.assertNotIn(self.deep, dialog.expanded)
-        self.assertFalse(self.on_screen(dialog, self.deep / "더깊이"))
+        self.assertFalse(self.on_screen(self.deep / "메모.txt"))
 
-    def test_collapsing_a_collapsed_folder_goes_to_the_parent(self):
-        """깊이 들어갔을 때 되돌아 나오는 길이다."""
-        dialog = self.make()
-        self.assertEqual(dialog.current, self.deep)
+    def test_left_collapses_then_climbs(self):
+        self.open_tree()
+        self.cursor_to(self.deep)
+        self.app._on_key(term.RIGHT)
 
-        dialog.key(term.LEFT)
+        self.app._on_key(term.LEFT)
+        self.assertFalse(self.on_screen(self.deep / "더깊이"))
 
-        self.assertEqual(dialog.current, self.root / "a" / "b")
+        self.app._on_key(term.LEFT)
+        self.assertEqual(self.pane.tree.node_at(self.pane.cursor), self.root / "a" / "b")
 
-    def test_enter_chooses_and_closes(self):
-        dialog = self.make()
-        closed = dialog.key(term.ENTER)
+    def test_enter_opens_that_folder_and_leaves_the_tree(self):
+        self.open_tree()
+        self.cursor_to(self.root / "a" / "형제2")
 
-        self.assertTrue(closed)
-        self.assertEqual(self.chosen, [self.deep])
+        self.app._on_key(term.ENTER)
 
-    def test_esc_cancels(self):
-        dialog = self.make()
-        closed = dialog.key(term.ESC)
+        self.assertIsNone(self.pane.tree, "트리에 머물면 파일을 다룰 수 없다")
+        self.assertEqual(self.pane.path, self.root / "a" / "형제2")
 
-        self.assertTrue(closed)
-        self.assertEqual(self.chosen, [])
-        self.assertEqual(self.cancelled, [True])
+    def test_the_cursor_stays_inside(self):
+        self.open_tree()
 
-    def test_the_cursor_stays_inside_the_list(self):
-        """끝에서 더 눌러도 넘어가지 않는다. 조상 중에 항목이 수만 개인 폴더가
-        있을 수 있어서(임시 폴더가 그렇다) 몇 번 눌러 끝에 닿을지는 알 수 없다."""
-        dialog = self.make()
-
-        dialog.key(term.END_KEY)
+        self.app._on_key(term.END_KEY)
         for _ in range(5):
-            dialog.key(term.DOWN)
-        self.assertEqual(dialog.cursor, len(dialog.rows) - 1)
+            self.app._on_key(term.DOWN)
+        self.assertEqual(self.pane.cursor, len(self.pane.rows()) - 1)
 
-        dialog.key(term.HOME_KEY)
+        self.app._on_key(term.HOME_KEY)
         for _ in range(5):
-            dialog.key(term.UP)
-        self.assertEqual(dialog.cursor, 0)
+            self.app._on_key(term.UP)
+        self.assertEqual(self.pane.cursor, 0)
+
+
+class TestWhatIsRefused(TreeTestCase):
+    def test_the_remote_pane_says_it_cannot(self):
+        self.app.focus = self.app.remote
+        self.app._on_key("4")
+
+        self.assertIsNone(self.app.remote.tree)
+        self.assertIn("상대 폴더는", self.app.status)
+
+    def test_file_actions_are_refused_while_in_the_tree(self):
+        """트리 줄은 파일이 아니다. 복사하려 들면 무엇을 복사할지 알 수 없다."""
+        self.app.toggle_right_source()
+        self.app.right.navigate(self.root)
+        self.open_tree()
+
+        self.app._start_copy()
+
+        self.assertIn("트리 상태에서는", self.app.status)
+        self.assertIsNone(self.app.modal)
 
 
 class TestItSurvivesUnreadableFolders(TreeTestCase):
-    def test_a_folder_it_cannot_read_shows_a_message_and_keeps_going(self):
+    def test_a_folder_it_cannot_read_keeps_the_tree_alive(self):
         blocked = self.root / "a" / "잠긴폴더"
         blocked.mkdir()
         blocked.chmod(0o000)
         self.addCleanup(blocked.chmod, 0o755)
 
-        dialog = self.make()
-        dialog.cursor = dialog._index_of(blocked)
-        dialog.key(term.RIGHT)
+        tree = self.open_tree()
+        self.cursor_to(blocked)
+        self.app._on_key(term.RIGHT)
 
-        # 트리는 살아 있고, 이유는 화면에 남는다
-        self.assertTrue(dialog.rows)
-        self.assertIn("읽을 수 없습니다", dialog.message)
-        self.assertEqual(dialog.children[blocked], [])
+        self.assertTrue(tree.rows)
+        self.assertIn("읽을 수 없습니다", tree.message)
+        self.assertEqual(tree.children[blocked], [])
 
 
-class TestLowScreens(TreeTestCase):
-    def test_the_hint_line_survives_a_short_screen(self):
-        """폰의 터미널처럼 낮은 화면에서 안내줄이 사라지면 나가는 길을 알 수 없다."""
-        for height in range(6, 26):
-            dialog = self.make()
-            dialog.max_body = height
-            lines = dialog.lines(50)
+class TestDrawing(TreeTestCase):
+    def test_every_line_is_exactly_terminal_width(self):
+        """트리 줄이 한 칸이라도 넘치면 줄바꿈이 생겨 화면 전체가 밀린다."""
+        self.open_tree()
+        for size in ((80, 24), (100, 30), (40, 12), (200, 60)):
+            for index, line in enumerate(self.app._compose(size)):
+                self.assertEqual(
+                    screen.width(line), size[0], "size=%s line %d: %r" % (size, index, line)
+                )
 
-            self.assertLessEqual(len(lines), height, "%d줄에서 넘쳤다" % height)
-            self.assertIn("Enter 이 폴더로", lines[-1], "%d줄에서 안내줄이 사라졌다" % height)
+    def test_a_deep_tree_does_not_overflow(self):
+        """들여쓰기가 폭을 넘어서면 줄이 길어진다. 깊은 곳에서 확인한다."""
+        deeper = self.root
+        for step in range(20):
+            deeper = deeper / ("깊이%02d" % step)
+        deeper.mkdir(parents=True)
+        self.app.local.navigate(deeper)
+        self.open_tree()
+
+        for index, line in enumerate(self.app._compose((60, 24))):
+            self.assertEqual(screen.width(line), 60, "line %d: %r" % (index, line))
 
 
 if __name__ == "__main__":

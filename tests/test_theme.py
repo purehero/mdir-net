@@ -59,7 +59,7 @@ class TestOnlyTheBasic16Colors(ThemeTestCase):
 
     def test_every_dialog_uses_no_extended_colors(self):
         # 대화상자에도 색이 있다. 화면 본체만 보면 놓친다
-        for key in ("1", "n", "4", "7", "9"):
+        for key in ("1", "n", "o", "7", "9"):
             self.app.modal = None
             self.app._on_key(key)
             self.assertIsNotNone(self.app.modal, key)

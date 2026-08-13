@@ -152,6 +152,8 @@ class Pane:
         # 압축 안을 보고 있으면 (압축 파일 경로, 안쪽 상대 경로). 아니면 None.
         # 경로 공간이 하나 더 있는 셈이라 path 에 섞지 않고 따로 둔다
         self.archive = None
+        # 트리 모드면 FolderTree. 패널이 목록 대신 트리를 보여준다 (MDir 의 MCD)
+        self.tree = None
 
     @property
     def label(self):
@@ -165,6 +167,8 @@ class Pane:
         """지금 보고 있는 위치."""
         if self.is_remote and not self.app.session:
             return "(연결되지 않음)"
+        if self.tree:
+            return str(self.tree.node_at(self.cursor))
         if self.archive:
             box, inner = self.archive
             return "%s/%s" % (box, inner) if inner else str(box)
@@ -181,6 +185,8 @@ class Pane:
     @property
     def at_top(self):
         """더 위로 올라갈 수 없는 지점인가."""
+        if self.tree:
+            return True  # 트리에는 `..` 이 없다. 뿌리가 이미 화면에 있다
         if self.archive:
             return False  # 압축 안에서는 늘 밖으로 나갈 길이 있다
         if self.is_remote:
@@ -198,6 +204,27 @@ class Pane:
 
     def up(self):
         return shares_mod.parent(self.path) if self.is_remote else self.path.parent
+
+    # --- 트리 ---
+
+    def enter_tree(self):
+        """패널을 트리로 바꾼다. 압축 안에서는 나온 뒤에 연다."""
+        if self.archive:
+            self.leave_archive()
+        self.tree = FolderTree(self.path)
+        self.cursor = self.tree.at
+        self.offset = 0
+        self.selected.clear()
+
+    def leave_tree(self, go_to=None):
+        """트리를 접는다. `go_to` 를 주면 그 폴더를 연다."""
+        self.tree = None
+        if go_to is None:
+            self.cursor = 0
+            self.offset = 0
+            self.refresh()
+        else:
+            self.navigate(go_to)
 
     # --- 압축 ---
 
@@ -226,6 +253,18 @@ class Pane:
         """'..' 항목을 앞에 붙인 표시용 목록."""
         if not self.active:
             return []
+        if self.tree:
+            return [
+                {
+                    "name": str(node) if node == self.tree.root else node.name,
+                    "is_dir": True,
+                    "size": 0,
+                    "depth": depth,
+                    "open": node in self.tree.expanded,
+                    "path": node,
+                }
+                for node, depth in self.tree.rows
+            ]
         items = []
         if not self.at_top:
             items.append({"name": "..", "is_dir": True, "size": 0, "up": True})
@@ -257,6 +296,7 @@ class Pane:
 
     def navigate(self, path):
         self.archive = None
+        self.tree = None
         self.path = path if self.is_remote else Path(path)
         self.cursor = 0
         self.offset = 0
@@ -268,6 +308,9 @@ class Pane:
         if not self.active:
             self.entries = []
             return
+
+        if self.tree:
+            return  # 트리는 자기 상태를 갖는다. 목록을 읽을 것이 없다
 
         self._generation += 1
         generation = self._generation
@@ -1026,37 +1069,29 @@ class DriveDialog(Dialog):
         return False
 
 
-class TreeDialog(Dialog):
-    """폴더 트리. MDir 의 MCD 자리다.
+class FolderTree:
+    """폴더 트리의 상태. 그리는 일은 패널이 한다 (MDir 의 MCD).
 
     **펼칠 때 읽는다.** 통째로 훑으면 홈 폴더만 해도 화면이 몇 초씩 멈추고, 깊고
     넓은 디스크에서는 몇 분이 걸린다. 한 번에 한 단계만 읽으므로 어느 깊이에서도
     즉시 반응한다.
     """
 
-    title = "폴더 트리"
-    VISIBLE = 14
-
-    def __init__(self, start, on_choose, on_cancel):
+    def __init__(self, start):
         start = Path(start)
         self.root = self._disk_root(start)
-        self._on_choose = on_choose
-        self._on_cancel = on_cancel
-
         self.children = {}   # 이미 읽은 폴더 -> 하위 폴더 목록
         self.expanded = set()
         self.message = ""
-        self.cursor = 0
-        self.offset = 0
 
         # 지금 폴더까지의 조상만 펼친다. MCD 도 그렇게 열렸다
         for parent in reversed([start] + list(start.parents)):
             if parent == start:
                 break
-            self._expand(parent)
+            self.expand(parent)
 
-        self._reflow()
-        self.cursor = max(0, self._index_of(start))
+        self.reflow()
+        self.at = max(0, self.index_of(start))
 
     @staticmethod
     def _disk_root(path):
@@ -1066,9 +1101,7 @@ class TreeDialog(Dialog):
             node = node.parent
         return node
 
-    # --- 트리 상태 ---
-
-    def _read(self, path):
+    def read(self, path):
         """하위 폴더 목록. 한 번 읽으면 기억한다."""
         if path in self.children:
             return self.children[path]
@@ -1082,11 +1115,11 @@ class TreeDialog(Dialog):
         self.children[path] = [path / name for name in names]
         return self.children[path]
 
-    def _expand(self, path):
-        self._read(path)
+    def expand(self, path):
+        self.read(path)
         self.expanded.add(path)
 
-    def _reflow(self):
+    def reflow(self):
         """펼침 상태를 (경로, 깊이) 목록으로 펼친다."""
         rows = []
 
@@ -1099,122 +1132,36 @@ class TreeDialog(Dialog):
         walk(self.root, 0)
         self.rows = rows
 
-    def _index_of(self, path):
+    def index_of(self, path):
         for index, (node, _) in enumerate(self.rows):
             if node == path:
                 return index
         return 0
 
-    @property
-    def current(self):
-        return self.rows[self.cursor][0]
+    def node_at(self, index):
+        return self.rows[index][0] if 0 <= index < len(self.rows) else self.root
 
-    # --- 그리기 ---
-
-    def _layout(self):
-        """(목록 줄 수, 여유 줄을 지킬지). FolderDialog 와 같은 규칙이다."""
-        room = (self.max_body or 18) - 3
-        if room - 2 >= 4:
-            return min(self.VISIBLE, room - 2), True
-        return max(room, 1), False
-
-    def lines(self, inner):
-        visible, roomy = self._layout()
-
-        if self.cursor < self.offset:
-            self.offset = self.cursor
-        elif self.cursor >= self.offset + visible:
-            self.offset = self.cursor - visible + 1
-
-        out = [
-            term.BOLD + screen.fit_left(str(self.current), inner) + term.RESET,
-            term.DIM + BOX_H * inner + term.RESET,
-        ]
-
-        shown = 0
-        for index in range(self.offset, min(self.offset + visible, len(self.rows))):
-            node, depth = self.rows[index]
-            # 펼친 것은 `-`, 아직 안 펼친 것은 `+`. 자식이 있는지는 읽어봐야
-            # 알 수 있는데, 그것 때문에 미리 읽으면 이 다이얼로그의 취지가 없어진다
-            mark = "-" if node in self.expanded else "+"
-            name = str(node) if node == self.root else node.name
-            label = screen.pad(" " * depth + mark + " " + name, inner)
-            out.append((term.BAR if index == self.cursor else term.BOLD) + label + term.RESET)
-            shown += 1
-
-        for _ in range(visible - shown):
-            out.append(" " * inner)
-
-        if roomy:
-            if len(self.rows) > visible:
-                out.append(
-                    term.DIM + "  (%d/%d)" % (self.cursor + 1, len(self.rows)) + term.RESET
-                )
-            else:
-                out.append(" " * inner)
-            out.append(
-                term.BAD + screen.fit(self.message, inner) + term.RESET
-                if self.message
-                else " " * inner
-            )
-        elif self.message:
-            out.append(term.BAD + screen.fit(self.message, inner) + term.RESET)
-
-        out.append(
-            term.BOLD + "Enter 이 폴더로" + term.RESET
-            + term.DIM + "   > 펼치기   < 접기   Esc 취소" + term.RESET
-        )
-        return out
-
-    # --- 입력 ---
-
-    def key(self, key):
-        visible = self._layout()[0]
-
-        if key in (term.UP, "k"):
-            self.cursor = max(0, self.cursor - 1)
-        elif key in (term.DOWN, "j"):
-            self.cursor = min(len(self.rows) - 1, self.cursor + 1)
-        elif key == term.PGUP:
-            self.cursor = max(0, self.cursor - visible)
-        elif key == term.PGDN:
-            self.cursor = min(len(self.rows) - 1, self.cursor + visible)
-        elif key == term.HOME_KEY:
-            self.cursor = 0
-        elif key == term.END_KEY:
-            self.cursor = len(self.rows) - 1
-        elif key in (term.RIGHT, "l"):
-            self._open_here()
-        elif key in (term.LEFT, "h"):
-            self._close_here()
-        elif key == term.ENTER:
-            self._on_choose(self.current)
-            return True
-        elif key == term.ESC:
-            self._on_cancel()
-            return True
-        return False
-
-    def _open_here(self):
-        node = self.current
+    def open_at(self, index):
+        node = self.node_at(index)
         if node in self.expanded:
             return
-        self._expand(node)
-        self._reflow()
+        self.expand(node)
+        self.reflow()
 
-    def _close_here(self):
-        node = self.current
+    def close_at(self, index):
+        """접는다. 이미 접혀 있으면 부모로 올라간다. 새 커서 자리를 돌려준다."""
+        node = self.node_at(index)
         if node in self.expanded:
             self.expanded.discard(node)
-            self._reflow()
-            return
+            self.reflow()
+            return index
 
-        # 이미 접혀 있으면 부모로 올라간다. 깊이 들어갔을 때 되돌아 나오는 길이다
         parent = node.parent
-        if node != self.root and parent != node:
-            self.expanded.discard(parent)
-            self._reflow()
-            self.cursor = self._index_of(parent)
+        if node == self.root or parent == node:
+            return index
+        self.expanded.discard(parent)
+        self.reflow()
+        return self.index_of(parent)
 
 
 class FolderDialog(Dialog):
@@ -2064,6 +2011,10 @@ class App:
         item = pane.current_item()
         if not item:
             return
+        if pane.tree:
+            # 고른 폴더를 열고 트리를 접는다. 트리에 머물면 파일을 다룰 수 없다
+            pane.leave_tree(go_to=item["path"])
+            return
         if item.get("up"):
             self._go_up(pane)
         elif pane.archive:
@@ -2106,8 +2057,13 @@ class App:
 
         `..` 도 무시한다. 위로 가는 것은 왼쪽 화살표의 몫이고, 오른쪽 화살표가
         위로 올라가면 방향과 어긋난다.
+
+        트리에서는 펼치기다.
         """
         pane = self.focus
+        if pane.tree:
+            pane.tree.open_at(pane.cursor)
+            return
         item = pane.current_item()
         if not (item and not item.get("up")):
             return
@@ -2120,6 +2076,10 @@ class App:
             self._enter_archive_if_it_is_one(pane, item)
 
     def _go_up(self, pane):
+        if pane.tree:
+            # 접는다. 이미 접혀 있으면 부모로 - 깊이 들어갔을 때 나오는 길이다
+            pane.cursor = pane.tree.close_at(pane.cursor)
+            return
         if pane.archive:
             pane.archive_up()
             return
@@ -2500,22 +2460,22 @@ class App:
         self.status = "마우스: %s" % ("씀" if self.use_mouse else "안 씀")
 
     def _open_tree(self):
-        """폴더 트리를 연다. MDir 의 MCD 자리다."""
+        """패널을 폴더 트리로 바꾼다 (MDir 의 MCD). 다시 누르면 되돌아간다.
+
+        창을 띄우지 않는다. **패널 자체가 트리가 된다** - MDir 도 NC 도 그랬다.
+        """
         pane = self.focus
+        if pane.tree:
+            pane.leave_tree()
+            return
         if pane.is_remote:
             # 프로토콜에 tree 요청이 있긴 하지만 깊은 트리는 REQUEST_TIMEOUT 에
             # 걸린다. 되는 척하다 멈추는 것보다 못 한다고 말하는 편이 낫다
             self.status = "상대 폴더는 트리로 볼 수 없습니다"
             return
 
-        def go(path):
-            self.modal = None
-            pane.navigate(path)
-            self.status = str(path)
-
-        self.modal = TreeDialog(
-            pane.path, on_choose=go, on_cancel=lambda: setattr(self, "modal", None)
-        )
+        pane.enter_tree()
+        self.status = "폴더 트리 - Enter 로 그 폴더를 엽니다 (4 로 되돌아감)"
 
     def _start_move(self):
         """반대 패널로 옮긴다. MDir 에 있던 이동이다.
@@ -2588,6 +2548,10 @@ class App:
             return None
 
         source, dest = self.focus, (self.right if self.focus is self.left else self.left)
+
+        if source.tree or dest.tree:
+            self.status = "트리 상태에서는 파일을 다룰 수 없습니다 (4 로 되돌아가세요)"
+            return None
 
         # 압축은 읽기 전용이다. 안에 쓰거나 압축 안의 것을 옮길 수는 없다
         if dest.archive:
@@ -2898,7 +2862,24 @@ class App:
                 return term.DIM + screen.pad(" (빈 폴더)", width) + term.RESET
             return " " * width
 
+        if pane.tree:
+            return self._tree_line(pane, rows[position], position, width)
         return self._entry_line(pane, rows[position], position, width, pane is self.focus)
+
+    def _tree_line(self, pane, item, position, inner):
+        """트리 한 줄. 들여쓰기 + 펼침 표시 + 이름.
+
+        펼친 것은 `-`, 아직 안 펼친 것은 `+` 다. 자식이 있는지는 읽어봐야 아는데
+        그것 때문에 미리 읽으면 트리가 느려진다.
+        """
+        mark = "-" if item["open"] else "+"
+        text = " " * item["depth"] + mark + " " + item["name"]
+
+        if position == pane.cursor:
+            style = term.BAR if pane is self.focus else term.BOLD
+        else:
+            style = term.BOLD  # 폴더 색과 같은 자리다
+        return style + screen.pad(screen.fit(text, inner), inner) + term.RESET
 
     def _pane_foot(self, pane, width):
         text = pane.message or self._pane_summary(pane)

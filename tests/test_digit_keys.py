@@ -96,7 +96,8 @@ class TestDigitsCallTheSameActions(DigitTestCase):
         사람이 실제로 헷갈렸다. 공유 관리는 `o` 로 옮겼다.
         """
         self.app._on_key("4")
-        self.assertIsInstance(self.app.modal, app_module.TreeDialog)
+        self.assertIsNotNone(self.app.focus.tree, "패널이 트리로 바뀌지 않았다")
+        self.assertIsNone(self.app.modal, "트리는 창이 아니라 패널이다")
 
     def test_o_opens_share_manager(self):
         self.app._on_key("o")
@@ -231,7 +232,8 @@ class TestDigitsAreInputModeProof(DigitTestCase):
     def test_digits_work_the_same_regardless_of_hangul_mode(self):
         """IME 는 글자 키만 바꾼다. 숫자는 승인 창을 먹통으로 만든 문제가 없다."""
         self.app._on_key("4")
-        self.assertIsInstance(self.app.modal, app_module.TreeDialog)
+        self.assertIsNotNone(self.app.focus.tree, "패널이 트리로 바뀌지 않았다")
+        self.assertIsNone(self.app.modal, "트리는 창이 아니라 패널이다")
 
 
 class TestHelpMentionsDigits(DigitTestCase):
