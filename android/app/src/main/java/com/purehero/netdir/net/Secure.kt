@@ -19,12 +19,16 @@ import java.math.BigInteger
 import java.net.Socket
 import java.security.KeyPairGenerator
 import java.security.KeyStore
+import java.security.Principal
+import java.security.PrivateKey
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
 import java.util.Calendar
-import javax.net.ssl.KeyManagerFactory
+import javax.net.ssl.KeyManager
 import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLEngine
 import javax.net.ssl.SSLSocket
+import javax.net.ssl.X509ExtendedKeyManager
 import javax.net.ssl.X509TrustManager
 import javax.security.auth.x500.X500Principal
 
@@ -67,7 +71,15 @@ object Secure {
         val generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, KEYSTORE)
         generator.initialize(
             KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY)
-                .setDigests(KeyProperties.DIGEST_SHA256)
+                // **DIGEST_NONE 이 있어야 한다.** Conscrypt 는 자기가 해시한 뒤
+                // NONEwithECDSA 로 서명을 맡긴다. SHA-256 만 열어두면 키스토어가
+                // INCOMPATIBLE_DIGEST 로 거부하고, 양쪽에는 "상대가 끊었다" 로만 보인다
+                .setDigests(
+                    KeyProperties.DIGEST_NONE,
+                    KeyProperties.DIGEST_SHA256,
+                    KeyProperties.DIGEST_SHA384,
+                    KeyProperties.DIGEST_SHA512,
+                )
                 .setCertificateSubject(X500Principal("CN=mdirnet-node"))
                 .setCertificateSerialNumber(BigInteger(64, SecureRandom()))
                 .setCertificateNotBefore(notBefore.time)
@@ -124,9 +136,7 @@ object Secure {
     }
 
     private fun context(identity: Identity?): SSLContext {
-        val managers = identity?.let {
-            KeyManagerFactory.getInstance("PKIX").apply { init(keyStore(), null) }.keyManagers
-        }
+        val managers = identity?.let { arrayOf<KeyManager>(SingleKey(it)) }
 
         return SSLContext.getInstance(PROTOCOL).apply {
             init(managers, arrayOf(AcceptAny), SecureRandom())
@@ -134,6 +144,44 @@ object Secure {
     }
 
     private fun keyStore(): KeyStore = KeyStore.getInstance(KEYSTORE).apply { load(null) }
+
+    /**
+     * 우리 것 하나만 내미는 키 매니저.
+     *
+     * `KeyManagerFactory` 를 쓰지 않는 이유가 있다. 안드로이드 키스토어의 개인키는
+     * **꺼낼 수 없다.** 표준 팩토리는 키를 꺼내 쓰려 해서 결국 아무 인증서도 내밀지
+     * 못하고, 상대에게는 "connection closed" 로만 보인다. 여기서는 키스토어가 준
+     * 불투명한 `PrivateKey` 를 그대로 넘긴다 - 서명은 키스토어 안에서 일어난다.
+     */
+    private class SingleKey(private val identity: Identity) : X509ExtendedKeyManager() {
+        private val aliases = arrayOf(identity.alias)
+
+        override fun chooseServerAlias(keyType: String?, issuers: Array<out Principal>?, socket: Socket?) =
+            identity.alias
+
+        override fun chooseClientAlias(keyType: Array<out String>?, issuers: Array<out Principal>?, socket: Socket?) =
+            identity.alias
+
+        /**
+         * **엔진 경로용.** Conscrypt 의 소켓은 안쪽에서 `SSLEngine` 을 쓰므로 위의
+         * `chooseServerAlias` 가 아니라 이쪽을 부른다. 기본 구현이 null 을 돌려주는
+         * 바람에 서버가 인증서를 못 내밀었고, 양쪽에는 "상대가 끊었다" 로만 보였다.
+         */
+        override fun chooseEngineServerAlias(keyType: String?, issuers: Array<out Principal>?, engine: SSLEngine?) =
+            identity.alias
+
+        override fun chooseEngineClientAlias(keyType: Array<out String>?, issuers: Array<out Principal>?, engine: SSLEngine?) =
+            identity.alias
+
+        override fun getServerAliases(keyType: String?, issuers: Array<out Principal>?) = aliases
+
+        override fun getClientAliases(keyType: String?, issuers: Array<out Principal>?) = aliases
+
+        override fun getCertificateChain(alias: String?) = arrayOf(identity.certificate)
+
+        override fun getPrivateKey(alias: String?): PrivateKey =
+            keyStore().getKey(identity.alias, null) as PrivateKey
+    }
 
     /**
      * 아무 인증서나 받는다.

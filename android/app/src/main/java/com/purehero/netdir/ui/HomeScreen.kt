@@ -73,7 +73,10 @@ fun HomeScreen(onOpenShares: () -> Unit, onOpenBrowser: () -> Unit) {
             ),
         ) {
             Text(
-                "전송은 암호화되지 않습니다. 신뢰하는 집 안 네트워크에서만 쓰세요.",
+                // 암호화가 붙었다고 이 자리를 지우면 안 된다. 막지 못하는 것이 남아 있고,
+                // 그것을 말하지 않으면 사용자가 실제보다 안전하다고 믿는다
+                "전송은 암호화됩니다. 다만 상대가 누구인지는 확인하지 않으니 " +
+                    "신뢰하는 집 안 네트워크에서만 쓰세요.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onErrorContainer,
                 modifier = Modifier.padding(12.dp),

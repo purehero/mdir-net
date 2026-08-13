@@ -2,6 +2,7 @@
 
 package com.purehero.netdir.net
 
+import android.util.Log
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -212,7 +213,10 @@ class Server(
         val socket = try {
             plain.soTimeout = Config.CONNECT_TIMEOUT_MS
             wrapTls?.invoke(plain) ?: Secure.wrapServer(plain, requireIdentity())
-        } catch (_: Exception) {
+        } catch (exc: Exception) {
+            // 조용히 끊되 **로그는 남긴다.** 여기서 삼키면 암호화 설정이 잘못됐을 때
+            // 상대에게는 "connection closed" 로만 보여 원인을 찾을 수 없다
+            Log.w("netdir", "TLS 를 세우지 못했습니다", exc)
             runCatching { plain.close() }
             return
         }
