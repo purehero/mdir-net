@@ -8,9 +8,14 @@
 #   announce.bin / announce.json  탐색 데이터그램 (PROTOCOL.md 2절)
 #   fingerprints.json             기기 지문 (PROTOCOL.md 2.5절)
 #
+# 벡터는 **안드로이드 저장소가 갖는다.** 저장소를 나눈 뒤에는 그쪽 경로를 준다.
+#
+#   python3 tools/gen-golden.py --out ../netdir-android/app/src/test/resources/golden
+#
 # 프레임은 하나의 파일에 **이어붙여** 내보낸다. 프레임 경계를 넘는 버퍼 처리가
 # 프레이밍 버그가 사는 곳이라, 한 개씩 따로 두면 정작 중요한 것을 못 잡는다.
 
+import argparse
 import hashlib
 import json
 import sys
@@ -21,7 +26,11 @@ sys.path.insert(0, str(ROOT))
 
 from mdirnet import config, fingerprint as fp_mod, protocol, shares  # noqa: E402
 
-OUT_DIR = ROOT / "android" / "app" / "src" / "test" / "resources" / "golden"
+#: 기본 출력 위치. 안드로이드가 이 저장소 안에 있을 때의 경로다.
+#: 저장소를 나눈 뒤에는 `--out` 으로 그쪽 경로를 준다.
+DEFAULT_OUT = ROOT / "android" / "app" / "src" / "test" / "resources" / "golden"
+
+OUT_DIR = DEFAULT_OUT
 
 
 def filler(n, seed):
@@ -220,6 +229,23 @@ def write_fingerprints():
 
 
 def main():
+    global OUT_DIR
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=DEFAULT_OUT,
+        help="벡터를 내보낼 폴더 (기본: 이 저장소 안의 android/.../golden)",
+    )
+    args = parser.parse_args()
+    OUT_DIR = args.out
+
+    # 없는 곳을 조용히 만들어버리면 오타를 낸 경로에 벡터가 쌓이고, 정작 안드로이드
+    # 저장소는 낡은 채로 남는다. 부모가 있어야 만든다
+    if not OUT_DIR.exists() and not OUT_DIR.parent.is_dir():
+        parser.error("경로가 없습니다: %s" % OUT_DIR)
+
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     stream = bytearray()
