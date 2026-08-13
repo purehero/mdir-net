@@ -57,7 +57,13 @@ class TestFingerprint(unittest.TestCase):
         """구현을 고치고 tools/gen-golden.py 를 잊는 것을 잡는다.
 
         이것이 없으면 Kotlin 쪽만 깨져서, 파이썬만 돌려본 사람은 멀쩡한 줄 안다.
+
+        벡터는 안드로이드 저장소가 갖는다. 그쪽이 곁에 없으면 건너뛴다 -
+        `tools/gen-golden.py --out` 으로 그쪽 경로를 주면 다시 돌아온다.
         """
+        if not GOLDEN.is_file():
+            self.skipTest("골든 벡터가 없습니다 (안드로이드 저장소가 곁에 없다)")
+
         rows = json.loads(GOLDEN.read_text(encoding="utf-8"))
         self.assertTrue(rows, "벡터가 비었다")
 

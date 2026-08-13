@@ -86,3 +86,23 @@ class TestPortRange(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheCopyIsInSync(unittest.TestCase):
+    """`PROTOCOL.md` 는 두 저장소에 같은 내용으로 있다.
+
+    한쪽만 고치면 두 구현이 다른 규격을 보고 만들어진다. 아직 한 저장소에 같이
+    있는 동안은 여기서 잡는다. 나눈 뒤에는 이 검사가 사라지므로 사람이 지켜야 한다.
+    """
+
+    COPY = Path(__file__).resolve().parent.parent / "android" / "PROTOCOL.md"
+
+    def test_the_android_copy_matches(self):
+        if not self.COPY.is_file():
+            self.skipTest("안드로이드 사본이 없습니다 (저장소를 나눈 뒤다)")
+
+        self.assertEqual(
+            _doc(),
+            self.COPY.read_text(encoding="utf-8"),
+            "PROTOCOL.md 사본이 갈렸습니다. 양쪽을 같게 맞추세요",
+        )

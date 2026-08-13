@@ -1,0 +1,11 @@
+# 안드로이드 저장소로 떼어냈을 때 홀로 서도록 둔다.
+# 아직 파이썬 저장소 안에 있는 동안은 위쪽 .gitignore 와 겹치지만 해가 없다.
+
+.gradle/
+.kotlin/
+build/
+app/build/
+local.properties
+.idea/
+*.iml
+.DS_Store
