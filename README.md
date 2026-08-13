@@ -43,6 +43,9 @@ pip install -r requirements.txt
 That package is `cryptography`, used to make the certificate for TLS. The Python standard
 library has no way to create one. Everything else is standard library.
 
+You can also just run a launcher (`run.sh`, `run.command`, `run.bat`). If the package is
+missing it offers to install it and, once you agree, carries on into the app.
+
 **macOS · Linux**
 ```bash
 ./run.sh
