@@ -143,7 +143,7 @@ A Norton Commander style pull-down menu. `<` `>` moves between menus, `Enter` ru
 | **Left** | Left pane (my PC) — sort, refresh, folder tree, drives |
 | **Files** | View file, copy, move, rename, make directory, delete, help, quit |
 | **Commands** | Find a PC to connect to, disconnect, manage shared folders |
-| **Options** | Show / hide dotfiles |
+| **Options** | Show / hide dotfiles, colour set, mouse |
 | **Right** | Right pane (peer) — sort, refresh |
 
 As in NC, `Left` and `Right` configure **their own pane.** Only the left has a drives item, because the peer side is confined to shared folders and has no notion of drives.
@@ -274,6 +274,19 @@ same to the phone.
   both test suites.
 
 The wire format both implementations follow is written down in [PROTOCOL.md](PROTOCOL.md).
+
+## Mouse
+
+The mouse works, as it did in MDir (POSIX terminals only).
+
+- **Click** — moves the cursor to that row; clicking the other pane moves the focus too
+- **Double-click** — opens (same as `Enter`)
+- **Wheel** — scrolls the pane under the pointer, without moving the focus
+- **Click on the function-key bar** — runs that key
+
+Turning the mouse on stops some terminals from letting you **select text by dragging**. You can turn it off under `Options` in the `9` menu, and the choice is remembered across runs.
+
+It is never enabled on Windows: console input is read a different way there and these sequences never arrive.
 
 ## Archives
 
