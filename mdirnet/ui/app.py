@@ -839,7 +839,7 @@ class ShareDialog(Dialog):
 
     def _visible(self):
         """실제로 보여줄 공유 줄 수. 낮은 화면에서 아래쪽이 잘리지 않게 줄인다."""
-        # 안내·가로줄 2줄과 아래 가로줄·키 안내 2줄을 뺀 자리가 목록 몫이다
+        # 안내와 가로줄 2줄, 아래 가로줄과 키 안내 2줄을 뺀 자리가 목록 몫이다
         return max(min(self.VISIBLE, (self.max_body or 18) - 4), 1)
 
     def lines(self, inner):
@@ -1014,9 +1014,9 @@ class FolderDialog(Dialog):
         없어진다. 폰의 터미널처럼 낮은 화면에서 실제로 그런 일이 있었다.
 
         그래서 화면이 낮으면 목록을 줄이고, 그것으로도 좁으면 자리만 지키던
-        줄(개수·빈 줄)까지 목록에 내준다. 안내줄은 어느 높이에서도 남는다.
+        줄(개수와 빈 줄)까지 목록에 내준다. 안내줄은 어느 높이에서도 남는다.
         """
-        room = (self.max_body or 18) - 3  # 경로·가로줄·안내줄을 뺀 자리
+        room = (self.max_body or 18) - 3  # 경로, 가로줄, 안내줄을 뺀 자리
         if room - 3 >= 4:
             return min(self.VISIBLE, room - 3), True
         return max(room, 1), False
