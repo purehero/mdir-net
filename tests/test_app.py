@@ -320,7 +320,7 @@ class TestSessionLifecycle(AppTestCase):
 
     def test_copy_done_with_errors_opens_message(self):
         self.app.transfer = app_module.Transfer("x", 1)
-        self.app.events.put(("copy_done", 2, ["a.txt — 권한 없음"]))
+        self.app.events.put(("copy_done", 2, ["a.txt — 권한 없음"], False, None))
         self.app._drain_events()
 
         self.assertIsInstance(self.app.modal, app_module.MessageDialog)
@@ -328,7 +328,7 @@ class TestSessionLifecycle(AppTestCase):
 
     def test_copy_done_clean_sets_status(self):
         self.app.transfer = app_module.Transfer("x", 1)
-        self.app.events.put(("copy_done", 3, []))
+        self.app.events.put(("copy_done", 3, [], False, None))
         self.app._drain_events()
 
         self.assertIsNone(self.app.modal)

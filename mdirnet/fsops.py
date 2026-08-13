@@ -367,3 +367,26 @@ def remove_tree(path):
     for child in path.iterdir():
         remove_tree(child)
     path.rmdir()
+
+
+def rename_within_disk(src, dest):
+    """같은 디스크 안이면 이름만 바꿔 옮기고 True. 아니면 아무것도 안 하고 False.
+
+    폴더째 즉시 옮겨지고 중간 상태가 없다. 복사 + 삭제로 하면 큰 폴더가 두 번
+    읽히고, 도중에 끊기면 반쯤 옮겨진 채로 남는다.
+
+    장치가 다르면 `EXDEV` 로 실패한다. 그때는 부르는 쪽이 복사 + 삭제로 떨어진다.
+    """
+    src, dest = Path(src), Path(dest)
+
+    # 이미 있는 곳으로 밀어넣지 않는다. os.replace 는 파일이면 조용히 덮어쓴다
+    # 이미 있는 곳으로 밀어넣지 않는다. os.replace 는 파일이면 조용히 덮어쓴다
+    if dest.exists() or dest.is_symlink():
+        return False
+
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        os.rename(src, dest)
+        return True
+    except OSError:
+        return False
