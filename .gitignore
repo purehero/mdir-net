@@ -5,10 +5,3 @@ __pycache__/
 .pytest_cache/
 .DS_Store
 
-# Android
-android/.gradle/
-android/build/
-android/app/build/
-android/local.properties
-android/.idea/
-*.iml
