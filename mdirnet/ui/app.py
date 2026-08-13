@@ -699,6 +699,7 @@ class MenuBar(Dialog):
                 [
                     ("파일 보기", "3", app._view_file),
                     ("복사", "5", app._start_copy),
+                    ("이동", "x", app._start_move),
                     ("이름 바꾸기", "6", app._ask_rename),
                     ("폴더 만들기", "7", app._ask_mkdir),
                     ("삭제", "8", app._ask_delete),
@@ -1581,18 +1582,21 @@ class App:
             self.transfer = None
             if isinstance(self.modal, ProgressDialog):
                 self.modal = None
-            self.status = "전송을 취소했습니다 (이미 보낸 파일은 남아 있습니다)"
+            self.status = "취소했습니다 (이미 보낸 것은 남고, 원본은 지우지 않았습니다)"
             self._refresh_panes()
 
         elif kind == "copy_done":
             self.transfer = None
             if isinstance(self.modal, ProgressDialog):
                 self.modal = None
-            count, errors = payload
+            count, errors, move, moved = payload
+            what = "이동" if move else "전송"
             if errors:
                 self.modal = MessageDialog(
-                    "전송 완료 (오류 %d건)" % len(errors), errors[:8], term.MARK
+                    "%s 완료 (오류 %d건)" % (what, len(errors)), errors[:8], term.MARK
                 )
+            elif move:
+                self.status = "%d개 항목을 옮겼습니다" % moved
             else:
                 self.status = "%d개 항목을 전송했습니다" % count
             self._refresh_panes()
@@ -1751,6 +1755,8 @@ class App:
             self._ask_mask(add=False)
         elif key in ("F5", "c"):
             self._start_copy()
+        elif key == "x":
+            self._start_move()
         elif key == "F2":
             self.status = "%s 정렬: %s 기준" % (self.focus.label, self.focus.cycle_sort())
         elif key == "n":
@@ -2068,34 +2074,10 @@ class App:
     # --- 복사 ---
 
     def _start_copy(self):
-        if self.transfer:
-            self.status = "이미 전송 중입니다"
+        picked = self._pick_for_transfer("복사")
+        if picked is None:
             return
-
-        source, dest = self.focus, (self.right if self.focus is self.left else self.left)
-
-        # 양쪽 모두 내 PC 라면 세션이 필요없다. 그냥 로컬 복사다
-        needs_session = source.is_remote or dest.is_remote
-        if needs_session and not self.session:
-            self.status = "먼저 n 으로 상대에 연결하세요"
-            return
-        if source is dest:
-            self.status = "같은 패널로는 복사할 수 없습니다"
-            return
-
-        # 가상 루트에는 파일을 둘 수 없다. 파일마다 오류를 내는 것보다
-        # 미리 알려주는 편이 낫다
-        if dest.is_remote and dest.at_top:
-            self.status = "상대의 공유 폴더 안으로 들어가세요 (Enter)"
-            return
-        if source.is_remote and source.at_top:
-            self.status = "공유 폴더 안으로 들어가 파일을 고르세요 (Enter)"
-            return
-
-        items = source.targets()
-        if not items:
-            self.status = "복사할 항목을 고르세요 (Space 로 선택)"
-            return
+        source, dest, items = picked
 
         names = ", ".join(i["name"] for i in items[:3]) + (" 외" if len(items) > 3 else "")
 
@@ -2121,6 +2103,97 @@ class App:
             "복사", body, lambda ok: self._run_copy(source, dest, items) if ok else None
         )
 
+    def _start_move(self):
+        """반대 패널로 옮긴다. MDir 에 있던 이동이다.
+
+        복사와 다른 점은 원본이 사라진다는 것뿐이라, 검사와 계획은 그대로 쓴다.
+        """
+        picked = self._pick_for_transfer("이동")
+        if picked is None:
+            return
+        source, dest, items = picked
+
+        # 공유 폴더 자체는 옮길 수 없다. 지우는 것과 같은 규칙이다
+        if source.is_remote and source.at_top:
+            self.status = "공유 폴더 자체는 옮길 수 없습니다"
+            return
+
+        # 내 PC 안이면 rename 으로 즉시 끝난다. 그때는 진행률 창을 띄우지 않는다
+        if not source.is_remote and not dest.is_remote:
+            if self._rename_move(source, dest, items):
+                return
+
+        names = ", ".join(i["name"] for i in items[:3]) + (" 외" if len(items) > 3 else "")
+        body = [
+            "%s > %s" % (source.label, dest.label),
+            "",
+            screen.fit(names, 50),
+            "",
+            term.DIM + "대상: %s" % dest.location + term.RESET,
+            "",
+            term.BAD + "원본은 옮긴 뒤 지워집니다." + term.RESET,
+        ]
+        clashes = self._clashing_names(dest, items)
+        if clashes:
+            body.append(
+                term.BAD
+                + "기존 %d개를 덮어씁니다: %s"
+                % (len(clashes), screen.fit(", ".join(clashes), 36))
+                + term.RESET
+            )
+
+        self.modal = ConfirmDialog(
+            "이동",
+            body,
+            lambda ok: self._run_copy(source, dest, items, move=True) if ok else None,
+        )
+
+    def _rename_move(self, source, dest, items):
+        """내 PC 안에서 같은 디스크면 이름만 바꿔 옮긴다. 처리했으면 True.
+
+        폴더째 즉시 옮겨지고 중간 상태가 없다. 하나라도 못 옮기면 손대지 않은
+        것처럼 되돌리지 않고, 되는 것만 옮긴 뒤 나머지는 평소 경로로 넘긴다.
+        """
+        done = []
+        for item in items:
+            if fsops.rename_within_disk(source.child(item["name"]), dest.child(item["name"])):
+                done.append(item["name"])
+
+        if len(done) != len(items):
+            return False  # 남은 것이 있으면 복사 + 삭제로 처리한다
+
+        source.selected.clear()
+        self.status = "%d개 항목을 옮겼습니다" % len(done)
+        self._refresh_panes()
+        return True
+
+    def _pick_for_transfer(self, what):
+        """복사와 이동이 함께 쓰는 사전 검사. (원본, 대상, 항목들) 또는 None."""
+        if self.transfer:
+            self.status = "이미 전송 중입니다"
+            return None
+
+        source, dest = self.focus, (self.right if self.focus is self.left else self.left)
+
+        if (source.is_remote or dest.is_remote) and not self.session:
+            self.status = "먼저 n 으로 상대에 연결하세요"
+            return None
+        if source is dest:
+            self.status = "같은 패널로는 %s할 수 없습니다" % what
+            return None
+        if dest.is_remote and dest.at_top:
+            self.status = "상대의 공유 폴더 안으로 들어가세요 (Enter)"
+            return None
+        if source.is_remote and source.at_top:
+            self.status = "공유 폴더 안으로 들어가 파일을 고르세요 (Enter)"
+            return None
+
+        items = source.targets()
+        if not items:
+            self.status = "%s할 항목을 고르세요 (Space 로 선택)" % what
+            return None
+        return source, dest, items
+
     @staticmethod
     def _clashing_names(dest, items):
         """대상에 이미 있는 이름들. 추가 왕복 없이 지금 아는 것만으로 판정한다.
@@ -2135,8 +2208,13 @@ class App:
             }
         return [i["name"] for i in items if i["name"] in existing]
 
-    def _run_copy(self, source, dest, items):
-        """전송 계획을 세우고 워커 스레드에서 실행한다."""
+    def _run_copy(self, source, dest, items, move=False):
+        """전송 계획을 세우고 워커 스레드에서 실행한다.
+
+        `move` 면 **오류 없이 끝난 항목만** 원본을 지운다. 이동이 데이터를 잃는
+        경우는 "복사가 반쯤 실패했는데 원본을 지웠을 때" 뿐이라, 항목 단위로
+        판정한다. 취소하면 아무것도 지우지 않는다.
+        """
         transfer = Transfer("%d개 항목" % len(items), 0)
         self.transfer = transfer
         self.modal = ProgressDialog(transfer)
@@ -2159,6 +2237,7 @@ class App:
                     except (session.SessionError, OSError):
                         pass  # 이미 있으면 그만이다
 
+                failed = set()  # 원본을 지우면 안 되는 최상위 항목 이름
                 for rel, src_path, size in plan:
                     if transfer.cancelled:
                         break
@@ -2180,14 +2259,44 @@ class App:
                             )
                     except (session.SessionError, OSError) as exc:
                         errors.append("%s - %s" % (rel, exc))
+                        failed.add(rel.split("/", 1)[0])
+
                 if transfer.cancelled:
                     self.events.put(("copy_cancelled", None))
                 else:
-                    self.events.put(("copy_done", len(plan), errors))
+                    moved = 0
+                    if move:
+                        moved = self._drop_sources(source, items, failed, active, errors)
+                    self.events.put(
+                        ("copy_done", len(plan), errors, move, moved if move else None)
+                    )
             except (session.SessionError, OSError) as exc:
-                self.events.put(("copy_done", 0, ["%s" % exc]))
+                self.events.put(("copy_done", 0, ["%s" % exc], move, None))
 
         threading.Thread(target=work, name="copy", daemon=True).start()
+
+    @staticmethod
+    def _drop_sources(source, items, failed, active, errors):
+        """오류가 없었던 항목만 원본을 지운다. 지운 개수를 돌려준다.
+
+        이동이 데이터를 잃는 유일한 경우가 "복사가 반쯤 실패했는데 원본을
+        지웠을 때" 다. 그래서 실패한 항목은 원본을 그대로 둔다 - 양쪽에 남는
+        것은 사용자가 고칠 수 있지만, 사라진 것은 고칠 수 없다.
+        """
+        gone = 0
+        for item in items:
+            name = item["name"]
+            if name in failed:
+                continue
+            try:
+                if source.is_remote:
+                    active.remote_delete(source.child(name))
+                else:
+                    fsops.remove_tree(source.child(name))
+                gone += 1
+            except (session.SessionError, OSError) as exc:
+                errors.append("%s 원본을 지우지 못했습니다 - %s" % (name, exc))
+        return gone
 
     def _build_plan(self, source, items, active):
         """전송할 파일을 (상대경로, 원본경로, 크기) 목록으로 펼친다.
