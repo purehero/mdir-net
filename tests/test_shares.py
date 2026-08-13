@@ -264,7 +264,7 @@ class TestShareDialog(ShareTestCase):
         self.app.local.refresh()
 
     def open_dialog(self):
-        self.app._on_key("F4")
+        self.app._on_key("o")
         self.assertIsInstance(self.app.modal, app_module.ShareDialog)
         return self.app.modal
 

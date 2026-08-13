@@ -80,7 +80,7 @@ what I manage                         what the peer sees
 
 The peer cannot climb above that list, and a folder that is not on it is refused even if named directly. **Your host paths are never sent** — every path on the wire is relative and starts with a share name, like `프로젝트/src/main.py`.
 
-### Managing the list (F4)
+### Managing the list (`o`)
 
 ```
 ⌜- 공유 폴더 관리 --------------------------------⌝
@@ -174,10 +174,9 @@ The top of the `Right` menu toggles **my PC / peer** (`=`). When the right pane 
 | `1` / `F1` / `?` | Help |
 | `2` / `F2` / `s` | Change sort order |
 | `3` / `F3` / `v` | View file (text or hex) |
-| `4` / `F4` / `o` | Manage shared folders |
+| `4` / `F4` / `t` | **Folder tree** — see the whole disk as a tree and jump there (MDir's MCD) |
 | `5` / `F5` / `c` | Copy to the other pane — directories recursively |
 | `x` | **Move** to the other pane — the source is removed after the move |
-| `t` | **Folder tree** — see the whole disk as a tree and jump there (MDir's MCD) |
 | `Enter` (on an archive) | **Step inside** — browse ZIP/TAR like a folder (read-only) |
 | `6` / `F6` | Rename |
 | `7` / `F7` / `m` | Make directory |
@@ -185,6 +184,7 @@ The top of the `Right` menu toggles **my PC / peer** (`=`). When the right pane 
 | `9` / `F9` / `/` | Menu bar |
 | `\` | Switch drive / volume (my PC side only) |
 | `r` | Refresh |
+| `o` | Manage shared folders — what the peer may see |
 | `n` | Find a PC to connect to |
 | `d` | Disconnect |
 | `.` | Show / hide dotfiles |

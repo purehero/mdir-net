@@ -528,17 +528,17 @@ class TestShareSelection(unittest.TestCase):
         app.start_services()
         self.assertTrue(app._services_started)
 
-    def test_f4_opens_the_share_manager_when_idle(self):
+    def test_o_opens_the_share_manager_when_idle(self):
         app = self.make(self.root)
-        app._on_key("F4")
+        app._on_key("o")
         self.assertIsInstance(app.modal, app_module.ShareDialog)
 
-    def test_f4_opens_while_connected_too(self):
+    def test_o_opens_while_connected_too(self):
         """세션이 목록 객체를 그대로 보므로 연결 중 변경도 곧바로 적용된다."""
         app = self.make(self.root)
         app.session = _StubSession()
 
-        app._on_key("F4")
+        app._on_key("o")
         self.assertIsInstance(app.modal, app_module.ShareDialog)
         self.assertIn("곧바로 적용", app.status)
 
