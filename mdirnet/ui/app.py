@@ -789,6 +789,11 @@ class MenuBar(Dialog):
                         "",
                         app.toggle_theme,
                     ),
+                    (
+                        ("마우스 안 쓰기" if app.use_mouse else "마우스 쓰기"),
+                        "",
+                        app.toggle_mouse,
+                    ),
                 ],
             ),
             ("Right", right),
@@ -1515,6 +1520,10 @@ class App:
         )
         self.renderer = screen.Renderer()
         self._body_height = 10  # 화면을 그리며 실제 높이로 갱신된다
+        self._geometry = (80, 24)  # 마우스 좌표를 되돌릴 때 쓴다
+        self._left_width = 39
+        self._last_click = (0.0, -1, -1)  # 더블클릭 판정용 (시각, 행, 열)
+        self.use_mouse = settings.load_mouse()
         # Windows 에서만 방화벽을 묻는다. 다른 OS 는 물어볼 것이 없다
         self._firewall_asked = not winfw.available()
 
@@ -1532,6 +1541,7 @@ class App:
         self.local.refresh()
 
         with term.Terminal() as terminal:
+            terminal.use_mouse(self.use_mouse)
             while self.running:
                 self._drain_events()
                 self._notice_new_peers()
@@ -1540,8 +1550,13 @@ class App:
                     self._ask_firewall()
                 self.renderer.render(self._compose(term.size()), term.size())
 
+                # 메뉴에서 껐다 켰을 수 있다. 매 프레임 맞춘다 (같은 값이면 아무 일도 없다)
+                terminal.use_mouse(self.use_mouse)
+
                 key = terminal.read_key(config.UI_TICK)
-                if key is not None:
+                if isinstance(key, term.Mouse):
+                    self.handle_mouse(key)
+                elif key is not None:
                     self._on_key(key)
 
         self.shutdown()
@@ -2403,6 +2418,87 @@ class App:
             "복사", body, lambda ok: self._run_copy(source, dest, items) if ok else None
         )
 
+    # --- 마우스 ---
+
+    #: 클릭 두 번을 한 번으로 볼 시간.
+    DOUBLE_CLICK = 0.4
+
+    def handle_mouse(self, event):
+        """마우스 한 번을 동작으로. 배치는 `_compose` 가 기억해 둔 값을 쓴다.
+
+        모달이 떠 있으면 무시한다. 상자 안의 자리까지 좌표로 되돌리려면 모든
+        다이얼로그가 자기 배치를 알려줘야 하는데, 그 값에 비해 품이 크다.
+        """
+        if self.modal is not None:
+            return
+
+        cols, rows = self._geometry
+        row = event.row - 1  # 터미널은 1부터 센다
+        col = event.col - 1
+
+        top = 3                      # 머리글 1 + 제목 1 + 가로줄 1
+        bottom = top + self._body_height
+
+        if event.kind in (term.Mouse.WHEEL_UP, term.Mouse.WHEEL_DOWN):
+            pane = self._pane_at(col)
+            if top <= row < bottom:
+                pane.move(-3 if event.kind == term.Mouse.WHEEL_UP else 3, self._body_height)
+            return
+
+        if event.kind != term.Mouse.PRESS:
+            return
+
+        if row == rows - 1:
+            self._click_fkey_bar(col, cols)
+            return
+
+        if top <= row < bottom:
+            self._click_list(row - top, col)
+
+    def _pane_at(self, col):
+        return self.left if col < self._left_width else self.right
+
+    def _click_list(self, offset_row, col):
+        pane = self._pane_at(col)
+        if not pane.active:
+            return
+
+        # 다른 패널을 눌렀으면 먼저 초점을 옮긴다. 옮기지 않으면 눌린 줄과
+        # 커서가 다른 패널에 놓여 무엇이 선택된 것인지 알 수 없다
+        self.focus = pane
+
+        index = pane.offset + offset_row
+        if not 0 <= index < len(pane.rows()):
+            return
+
+        double = self._is_double_click(offset_row, col)
+        pane.cursor = index
+        if double:
+            self._enter()
+
+    def _is_double_click(self, row, col):
+        now = time.monotonic()
+        was_at, last = (self._last_click[1], self._last_click[2]), self._last_click[0]
+        self._last_click = (now, row, col)
+        return now - last <= self.DOUBLE_CLICK and was_at == (row, col)
+
+    def _click_fkey_bar(self, col, cols):
+        """하단 바를 누르면 그 기능을 실행한다. 좁아서 접힌 경우는 건너뛴다."""
+        cell = cols // len(_FKEYS)
+        if cell < 7:
+            return
+        index = col // cell
+        if 0 <= index < len(_FKEYS):
+            self._on_key(_FKEYS[index][0])
+
+    def toggle_mouse(self):
+        self.use_mouse = not self.use_mouse
+        try:
+            settings.save_mouse(self.use_mouse)
+        except OSError:
+            pass  # 저장 못 해도 이번 실행에는 적용된다
+        self.status = "마우스: %s" % ("씀" if self.use_mouse else "안 씀")
+
     def _open_tree(self):
         """폴더 트리를 연다. MDir 의 MCD 자리다."""
         pane = self.focus
@@ -2688,6 +2784,9 @@ class App:
         cols, rows = size
         # 머리글 1 + 패널 + 상태줄 1 + 힌트줄 1 = 화면 높이
         pane_height = max(rows - 3, 4)
+        # 마우스가 좌표를 행으로 되돌리려면 배치를 알아야 한다. 그리는 쪽에서
+        # 기억해 두는 편이 낫다 - 다른 곳에서 다시 계산하면 둘이 어긋난다
+        self._geometry = (cols, rows)
 
         lines = [self._header(cols)]
         lines += self._panes(cols, pane_height)
@@ -2742,6 +2841,7 @@ class App:
         content = cols - 1  # 가운데 구분선 한 칸만 뺀다
         left_width = content // 2
         right_width = content - left_width
+        self._left_width = left_width
 
         left, right = self.left, self.right
         body_height = max(height - 4, 1)  # 제목 + 가로줄 + 본문 + 가로줄 + 요약

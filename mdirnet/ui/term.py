@@ -25,6 +25,11 @@ SHOW_CURSOR = "\x1b[?25h"
 ALT_SCREEN_ON = "\x1b[?1049h"
 ALT_SCREEN_OFF = "\x1b[?1049l"
 
+# 마우스 보고. 1000 은 누름/뗌, 1006 은 좌표를 십진수로 보내는 확장이다.
+# 1006 이 없으면 223칸을 넘는 자리에서 좌표가 망가진다
+MOUSE_ON = "\x1b[?1000h\x1b[?1006h"
+MOUSE_OFF = "\x1b[?1006l\x1b[?1000l"
+
 # 색상. 256색이 아니라 기본 16색만 써서 어느 터미널에서나 같게 보이게 한다.
 # 사용자 터미널이 흰 바탕일 수도 있으니 물려받지 않고 바닥을 직접 칠한다
 HARD_RESET = "\x1b[0m"  # 터미널을 원래 색으로. 화면을 떠날 때만 쓴다
@@ -120,6 +125,24 @@ use_theme("black")  # MDir 배포판 초기치
 # 키 이름 상수
 UP, DOWN, LEFT, RIGHT = "UP", "DOWN", "LEFT", "RIGHT"
 ENTER, ESC, TAB, SPACE, BACKSPACE = "ENTER", "ESC", "TAB", "SPACE", "BACKSPACE"
+
+
+class Mouse:
+    """마우스 한 번. `read_key` 가 문자열 대신 이것을 돌려줄 수 있다.
+
+    행과 열은 **1부터**다 (터미널이 그렇게 보낸다). 쓰는 쪽에서 0부터로 바꾼다.
+    """
+
+    PRESS, RELEASE, WHEEL_UP, WHEEL_DOWN = "press", "release", "wheel_up", "wheel_down"
+
+    def __init__(self, kind, row, col, button=0):
+        self.kind = kind
+        self.row = row
+        self.col = col
+        self.button = button
+
+    def __repr__(self):
+        return "Mouse(%s, row=%d, col=%d)" % (self.kind, self.row, self.col)
 HOME_KEY, END_KEY, PGUP, PGDN = "HOME", "END", "PGUP", "PGDN"
 INSERT, DELETE = "INSERT", "DELETE"
 
@@ -221,6 +244,7 @@ class Terminal:
     def __init__(self):
         self._saved = None
         self._active = False
+        self._mouse = False
         self._prev_handlers = {}
         self._real_stderr = None
         self._stderr_buffer = None
@@ -265,6 +289,12 @@ class Terminal:
             return
         self._active = False
 
+        # 마우스를 켠 채로 나가면 셸에서 클릭할 때마다 이상한 글자가 찍힌다.
+        # 화면 복원보다 먼저 끈다
+        if self._mouse:
+            write(MOUSE_OFF)
+            self._mouse = False
+
         # 여기서 RESET 을 쓰면 셸이 파란 바닥으로 남는다. 나갈 때는 HARD_RESET 이다
         write(SHOW_CURSOR + HARD_RESET + ALT_SCREEN_OFF)
         flush()
@@ -286,6 +316,20 @@ class Terminal:
             self._real_stderr = None
 
     # --- 키 입력 ---
+
+    def use_mouse(self, enabled):
+        """마우스 보고를 켜고 끈다.
+
+        윈도우에서는 켜지 않는다. msvcrt 로 읽는 경로에는 이 시퀀스가 오지
+        않고, 켜두면 콘솔에 따라 깨진 글자만 들어온다.
+        """
+        enabled = bool(enabled) and not IS_WINDOWS
+        if enabled == self._mouse:
+            return
+        self._mouse = enabled
+        if self._active:
+            write(MOUSE_ON if enabled else MOUSE_OFF)
+            flush()
 
     def read_key(self, timeout):
         """키 하나를 이름 문자열로 돌려준다. timeout 안에 없으면 None.
@@ -333,13 +377,20 @@ class Terminal:
 
         # CSI: 숫자와 ';' 를 모으고 마지막 글자가 종료 문자다
         body = ""
+        mouse = False
         while True:
             if not select.select([fd], [], [], 0.03)[0]:
                 return ESC
             ch = os.read(fd, 1).decode("latin-1")
+            if ch == "<" and not body:
+                # SGR 마우스. `ESC [ < 단추 ; 열 ; 행 M` (뗄 때는 m)
+                mouse = True
+                continue
             if ch.isdigit() or ch == ";":
                 body += ch
                 continue
+            if mouse and ch in ("M", "m"):
+                return _mouse_from(body, pressed=ch == "M")
             if ch == "~":
                 return _CSI_KEYS.get(body + "~")
             return _CSI_KEYS.get(ch)
@@ -357,6 +408,23 @@ class Terminal:
                 break
             buf.extend(os.read(fd, 1))
         return buf.decode("utf-8", "replace")
+
+
+def _mouse_from(body, pressed):
+    """`단추;열;행` 을 Mouse 로. 알아볼 수 없으면 None (조용히 버린다)."""
+    try:
+        button, col, row = (int(part) for part in body.split(";"))
+    except ValueError:
+        return None
+
+    # 64 부터는 휠이다. 33/34 처럼 32 가 더해진 값은 끌기(드래그)인데 쓰지 않는다
+    if button in (64, 65):
+        return Mouse(Mouse.WHEEL_UP if button == 64 else Mouse.WHEEL_DOWN, row, col)
+    if button & 32:
+        return None
+
+    kind = Mouse.PRESS if pressed else Mouse.RELEASE
+    return Mouse(kind, row, col, button=button & 3)
 
 
 # 두벌식 자판에서 한글 입력이 켜져 있으면 y 를 눌러도 터미널에는 'ㅛ' 가 들어온다.
