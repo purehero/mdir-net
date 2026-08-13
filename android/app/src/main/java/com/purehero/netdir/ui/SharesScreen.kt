@@ -33,7 +33,6 @@ import com.purehero.netdir.node.MDirNode
 import com.purehero.netdir.store.DEFAULT_SHARE_NAME
 import com.purehero.netdir.store.DEFAULT_SHARE_PICKER_URI
 import com.purehero.netdir.store.ShareKey
-import com.purehero.netdir.store.USES_DEFAULT_FOLDER
 import com.purehero.netdir.store.ensureDefaultShareFolder
 import com.purehero.netdir.store.ensureWorkspaceFolder
 import com.purehero.netdir.store.isWorkspaceTree
@@ -91,19 +90,13 @@ fun SharesScreen() {
             pick.launch(DEFAULT_SHARE_PICKER_URI)
         }) { Text("폴더 추가") }
 
-        // 안드로이드 11 부터 시스템이 아예 막는 곳이 있다. 눌러도 안 되는 이유를
-        // 모르면 앱이 고장난 것으로 보인다. 막지 않는 버전에서는 그 설명이 거짓이
-        // 되므로 문구를 갈라 둔다 — 안내가 틀리면 나머지 안내도 믿지 않게 된다
+        // 시스템이 아예 막는 곳이 있다. 눌러도 안 되는 이유를 모르면 앱이
+        // 고장난 것으로 보인다
         Text(
-            if (USES_DEFAULT_FOLDER) {
-                "선택창은 다운로드 안의 mdir-net 폴더에서 열립니다. 그대로 '이 폴더 사용' 을 누르세요.\n" +
-                    "mdir-net 은 내 폰 쪽 뿌리가 되고, 상대에게는 그 안의 share 폴더만 열립니다. " +
-                    "공유를 더 만들려면 mdir-net 안에 폴더를 만들어 고르세요.\n" +
-                    "다운로드 폴더 자체와 저장소 최상위는 시스템이 공유 대상으로 고르지 못하게 막습니다."
-            } else {
-                "선택창은 다운로드 폴더에서 열립니다. 그대로 '이 폴더 사용' 을 누르세요. " +
-                    "다른 곳을 쓰려면 선택창 위쪽 경로에서 한 칸 올라가세요."
-            },
+            "선택창은 다운로드 안의 mdir-net 폴더에서 열립니다. 그대로 '이 폴더 사용' 을 누르세요.\n" +
+                "mdir-net 은 내 폰 쪽 뿌리가 되고, 상대에게는 그 안의 share 폴더만 열립니다. " +
+                "공유를 더 만들려면 mdir-net 안에 폴더를 만들어 고르세요.\n" +
+                "다운로드 폴더 자체와 저장소 최상위는 시스템이 공유 대상으로 고르지 못하게 막습니다.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

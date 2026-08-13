@@ -106,12 +106,7 @@ class MDirService : Service() {
     private fun stopEverything() {
         MDirNode.stop()
         clearApproval()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        } else {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
-        }
+        stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
@@ -165,7 +160,6 @@ class MDirService : Service() {
     private fun notifications() = NotificationManagerCompat.from(this)
 
     private fun createChannels() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = getSystemService(NotificationManager::class.java) ?: return
 
         manager.createNotificationChannel(
