@@ -42,6 +42,9 @@ pip install -r requirements.txt
 라이브러리에는 인증서를 만드는 수단이 없어서 이것만 더했습니다. 나머지는
 모두 표준 라이브러리입니다.
 
+런처(`run.sh` · `run.command` · `run.bat`)를 그냥 실행해도 됩니다. 없으면
+설치할지 물어보고, 승낙하면 설치한 뒤 이어서 앱을 띄웁니다.
+
 **macOS · Linux**
 ```bash
 ./run.sh
