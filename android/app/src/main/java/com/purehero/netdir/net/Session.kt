@@ -67,6 +67,16 @@ class Session(
     val peerHost: String,
     private val store: FileStore,
     private val scope: CoroutineScope,
+    /**
+     * **내가 시작한 전송**의 로컬 파일 읽기·쓰기에만 쓴다.
+     *
+     * `store` 와 나누는 이유는 둘이 가리키는 범위가 다르기 때문이다. `store` 는
+     * 상대 요청을 처리하는 곳이라 공유 목록이어야 한다 (보안 경계). 반면 내가
+     * 받아오는 파일은 내 작업 폴더 어디에나 놓을 수 있어야 한다.
+     *
+     * 기본값은 `store` 다 — 나누지 않는 쪽(테스트, 데스크톱)은 그대로 돈다.
+     */
+    private val localStore: FileStore = store,
     private val onEvent: (SessionEvent) -> Unit,
 ) {
     private val input: InputStream = socket.getInputStream()
@@ -308,7 +318,7 @@ class Session(
     ): Long {
         val (id, box) = openBox()
         // 저장소 접근도 블로킹이다. 메인에서 부르면 SAF 쿼리가 ANR 로 이어진다
-        val writer = withContext(Dispatchers.IO) { store.beginWrite(destPath) }
+        val writer = withContext(Dispatchers.IO) { localStore.beginWrite(destPath) }
         var received = 0L
 
         try {
@@ -339,7 +349,7 @@ class Session(
         remotePath: String,
         onProgress: ((Int) -> Unit)? = null,
     ): Long {
-        val size = withContext(Dispatchers.IO) { store.stat(sourcePath).size }
+        val size = withContext(Dispatchers.IO) { localStore.stat(sourcePath).size }
         val (id, box) = openBox()
 
         try {
@@ -350,7 +360,7 @@ class Session(
             await(box) // push.ok. 경로가 거부되면 여기서 예외가 난다
 
             var sent = 0L
-            withContext(Dispatchers.IO) { store.openRead(sourcePath) }.use { source ->
+            withContext(Dispatchers.IO) { localStore.openRead(sourcePath) }.use { source ->
                 val buffer = ByteArray(Config.CHUNK_SIZE)
                 while (true) {
                     val got = withContext(Dispatchers.IO) { source.read(buffer) }

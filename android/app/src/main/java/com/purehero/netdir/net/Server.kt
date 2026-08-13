@@ -54,6 +54,8 @@ suspend fun connect(
     myName: String,
     store: FileStore,
     scope: CoroutineScope,
+    /** 내가 시작한 전송의 로컬 읽기·쓰기. 주지 않으면 `store` 와 같은 곳이다. */
+    localStore: FileStore = store,
     prepare: (Socket) -> Unit = {},
     onEvent: (SessionEvent) -> Unit = {},
 ): Session = withContext(Dispatchers.IO) {
@@ -87,6 +89,7 @@ suspend fun connect(
             peerName = (header.opt("name") as? String)?.ifEmpty { null } ?: peer.name,
             peerHost = peer.host,
             store = store,
+            localStore = localStore,
             scope = scope,
             onEvent = onEvent,
         ).also { it.start() }
@@ -103,6 +106,7 @@ suspend fun connect(
 class Server(
     private val myName: () -> String,
     private val store: () -> FileStore,
+    private val localStore: () -> FileStore = store,
     private val scope: CoroutineScope,
     private val basePort: Int = Config.TCP_PORT,
     /** 만료 경로를 30초 기다리지 않고 검사하려고 갈라뒀다. 실제로는 늘 기본값이다. */
@@ -214,6 +218,7 @@ class Server(
                 peerName = request.name,
                 peerHost = host,
                 store = store(),
+                localStore = localStore(),
                 scope = scope,
                 onEvent = onSessionEvent,
             )
