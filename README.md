@@ -140,7 +140,7 @@ A Norton Commander style pull-down menu. `<` `>` moves between menus, `Enter` ru
 
 | Menu | Contents |
 |---|---|
-| **Left** | Left pane (my PC) — sort by name, extension, size, date; refresh; drives |
+| **Left** | Left pane (my PC) — sort, refresh, folder tree, drives |
 | **Files** | View file, copy, move, rename, make directory, delete, help, quit |
 | **Commands** | Find a PC to connect to, disconnect, manage shared folders |
 | **Options** | Show / hide dotfiles |
@@ -174,6 +174,7 @@ The top of the `Right` menu toggles **my PC / peer** (`=`). When the right pane 
 | `4` / `F4` / `o` | Manage shared folders |
 | `5` / `F5` / `c` | Copy to the other pane — directories recursively |
 | `x` | **Move** to the other pane — the source is removed after the move |
+| `t` | **Folder tree** — see the whole disk as a tree and jump there (MDir's MCD) |
 | `6` / `F6` | Rename |
 | `7` / `F7` / `m` | Make directory |
 | `8` / `F8` / `Delete` | Delete (cannot be undone) |
