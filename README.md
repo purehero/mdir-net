@@ -174,7 +174,7 @@ The top of the `Right` menu toggles **my PC / peer** (`=`). When the right pane 
 | `1` / `F1` / `?` | Help |
 | `2` / `F2` / `s` | Change sort order |
 | `3` / `F3` / `v` | View file (text or hex) |
-| `4` / `F4` / `t` | **Folder tree** — see the whole disk as a tree and jump there (MDir's MCD) |
+| `4` / `F4` / `t` | **Folder tree** — the pane turns into a tree; press again to go back (MDir's MCD) |
 | `5` / `F5` / `c` | Copy to the other pane — directories recursively |
 | `x` | **Move** to the other pane — the source is removed after the move |
 | `Enter` (on an archive) | **Step inside** — browse ZIP/TAR like a folder (read-only) |
@@ -277,6 +277,28 @@ same to the phone.
   both test suites.
 
 The wire format both implementations follow is written down in [PROTOCOL.md](PROTOCOL.md).
+
+## Folder tree (MCD)
+
+`4` turns **that pane into a tree.** No window opens — the pane itself changes, as it did in MDir and NC. Press `4` again to get the listing back.
+
+```
+- Users
+ - inka
+  - Works
+   + apps
+   - docs
+```
+
+- **`>`** expands, **`<`** collapses (climbs to the parent when already collapsed)
+- **`Enter`** opens that folder and returns to the listing
+- It starts at the disk root with only the ancestors of your current folder expanded, cursor on where you are
+
+**It reads as you expand.** Walking the whole disk up front freezes the screen for seconds even on a home directory. The `+` on a collapsed folder is drawn without knowing whether it has children — finding out means reading, and that is the thing being avoided.
+
+File actions are refused while a pane is a tree: tree rows are folders only, so there is nothing well-defined to copy.
+
+The peer's pane cannot be a tree. The protocol has a `tree` request, but deep folders exceed the response timeout.
 
 ## Mouse
 

@@ -247,7 +247,7 @@ class TestDialogsKeepWidth(LayoutTestCase):
         self.app.local.refresh()
 
         # 연결은 하단 바에서 빠져 문자 키 n 으로 부른다
-        openers = [("1", "도움말"), ("n", "연결"), ("4", "공유폴더"), ("7", "만들기"), ("9", "메뉴")]
+        openers = [("1", "도움말"), ("n", "연결"), ("o", "공유폴더"), ("7", "만들기"), ("9", "메뉴")]
         for key, label in openers:
             self.app.modal = None
             self.app._on_key(key)
