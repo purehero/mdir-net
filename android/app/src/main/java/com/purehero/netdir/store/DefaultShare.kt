@@ -13,7 +13,6 @@ import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
-import android.os.Build
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 
@@ -34,22 +33,12 @@ private const val EXTERNAL_STORAGE = "com.android.externalstorage.documents"
 private const val WORKSPACE_DOC_ID = "primary:$RELATIVE_PATH"
 
 /**
- * 기본 폴더를 앱이 만들어 쓰는가.
- *
- * API 28 이하는 아니다 — `MediaStore.Downloads` 가 없고, 그 버전에서는 다운로드
- * 폴더 자체를 트리로 고를 수 있어 애초에 필요하지 않다. 안내 문구도 이것으로 갈린다.
- */
-val USES_DEFAULT_FOLDER: Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
-
-/**
  * 선택창을 열 위치.
  *
  * 없는 폴더를 가리키면 선택창이 기본 위치에서 열린다 — 손해는 없다.
  */
-val DEFAULT_SHARE_PICKER_URI: Uri = DocumentsContract.buildDocumentUri(
-    EXTERNAL_STORAGE,
-    if (USES_DEFAULT_FOLDER) WORKSPACE_DOC_ID else "primary:Download",
-)
+val DEFAULT_SHARE_PICKER_URI: Uri =
+    DocumentsContract.buildDocumentUri(EXTERNAL_STORAGE, WORKSPACE_DOC_ID)
 
 /** 고른 트리가 작업 폴더인가. 다른 곳을 골랐으면 평범한 공유로 다룬다. */
 fun isWorkspaceTree(treeUri: Uri): Boolean =
@@ -66,8 +55,6 @@ fun isWorkspaceTree(treeUri: Uri): Boolean =
  * 만들면 된다. 여기서 막아설 이유가 없다.
  */
 fun ensureWorkspaceFolder(context: Context) {
-    if (!USES_DEFAULT_FOLDER) return
-
     val resolver = context.contentResolver
     val values = ContentValues().apply {
         put(MediaStore.Downloads.DISPLAY_NAME, STUB_NAME)
