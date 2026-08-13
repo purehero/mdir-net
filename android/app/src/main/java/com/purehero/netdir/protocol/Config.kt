@@ -3,7 +3,7 @@
 package com.purehero.netdir.protocol
 
 object Config {
-    const val PROTOCOL_VERSION = 1
+    const val PROTOCOL_VERSION = 2
 
     /** 세션 TCP. 사용 중이면 1 씩 올려 PORT_TRIES 번까지 시도한다 */
     const val TCP_PORT = 9600

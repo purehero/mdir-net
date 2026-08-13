@@ -8,7 +8,7 @@ import ssl
 import threading
 from pathlib import Path
 
-from . import config, fsops, protocol, secure, shares as shares_mod
+from . import config, fingerprint as fingerprint_mod, fsops, protocol, secure, shares as shares_mod
 
 
 class SessionError(Exception):
@@ -53,6 +53,9 @@ class Session:
     """
 
     def __init__(self, sock, peer_name, peer_host, shares, events):
+        #: 상대 인증서의 지문. **거는 쪽만** 갖는다 - 서버만 인증서를 내밀기 때문이다.
+        #: 받는 쪽은 자기 지문(Server.fingerprint)을 띄운다 (PROTOCOL.md 2.5절)
+        self.peer_fingerprint = None
         self._sock = sock
         self.peer_name = peer_name
         self.peer_host = peer_host
@@ -526,7 +529,12 @@ def connect(peer, my_name, platform, shares, events):
             raise Rejected("%s 가 연결을 거부했습니다" % peer.name)
 
         sock.settimeout(None)
+        # 상대 인증서의 지문. 받는 쪽 화면의 `이 기기 지문` 과 같아야 한다
+        der = secure.peer_certificate(sock)
+        peer_fp = fingerprint_mod.fingerprint(der) if der else None
+
         session = Session(sock, str(header.get("name") or peer.name), peer.host, shares, events)
+        session.peer_fingerprint = peer_fp
         session.start()
         return session
     except socket.timeout:
@@ -546,6 +554,8 @@ class Server:
     def __init__(self, my_name, platform, shares, events, port=config.TCP_PORT, identity=None):
         # 프로세스 한 판짜리 신원. 주지 않으면 여기서 만든다
         self.identity = identity or secure.make_identity()
+        # 이 기기의 지문. 화면에 띄워 상대와 대조한다 (PROTOCOL.md 2.5절)
+        self.fingerprint = fingerprint_mod.fingerprint(self.identity.cert_der)
         self.my_name = my_name
         self.platform = platform
         # 목록 객체를 그대로 들고 있으므로, 앱에서 항목을 더하면 곧바로 반영된다

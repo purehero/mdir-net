@@ -1,7 +1,7 @@
 # 포트, 청크 크기, 타임아웃 등 프로그램 전역 상수를 모아둔 모듈
 
 APP_NAME = "MDirNet"
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 
 # 네트워크 포트
 TCP_PORT = 9600  # 세션용 TCP

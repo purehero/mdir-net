@@ -92,6 +92,7 @@ def main():
 
     print("이름       : %s" % args.name)
     print("TCP 포트   : %d" % port)
+    print("이 기기 지문: %s" % server.fingerprint)
     print("주소       : %s" % ", ".join(discovery.local_ips()))
     print("승인       : %s" % ("자동" if args.accept else "무시 (거부됨)"))
     print("-" * 60)
@@ -115,6 +116,7 @@ def main():
                         live = session.connect(match, args.name, sys.platform, shares, events)
                         sessions.append(live)
                         print("붙었다     : %s" % live.peer_name)
+                        print("  상대 지문 : %s" % live.peer_fingerprint)
                         exercise(live, args.work)
                     except Exception as exc:
                         print("붙지 못함  : %s: %s" % (type(exc).__name__, exc))

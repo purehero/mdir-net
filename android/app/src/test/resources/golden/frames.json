@@ -3,7 +3,7 @@
     "note": "핸드셰이크. 순수 ASCII, blob 없음",
     "header": {
       "t": "hello",
-      "v": 1,
+      "v": 2,
       "name": "맥북",
       "platform": "darwin"
     },

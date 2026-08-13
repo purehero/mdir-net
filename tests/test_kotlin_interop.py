@@ -11,7 +11,7 @@ import json
 import unittest
 from pathlib import Path
 
-from mdirnet import discovery, protocol
+from mdirnet import discovery, protocol, config
 
 _ROOT = Path(__file__).resolve().parent.parent
 _GOLDEN_DIR = _ROOT / "android" / "app" / "src" / "test" / "resources" / "golden"
@@ -124,7 +124,7 @@ class TestKotlinAnnounce(unittest.TestCase):
         """프레이밍이 붙으면 안 된다. 알림은 본문 전체가 JSON 객체 하나다."""
         parsed = json.loads(self.payload.decode("utf-8"))
         self.assertIsInstance(parsed, dict)
-        self.assertEqual(parsed["v"], 1)
+        self.assertEqual(parsed["v"], config.PROTOCOL_VERSION)
 
     def test_python_ignores_its_own_id(self):
         """자기 패킷 걸러내기가 살아있는지. 없으면 자기 자신이 목록에 뜬다."""

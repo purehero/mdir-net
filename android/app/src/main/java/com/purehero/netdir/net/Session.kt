@@ -77,6 +77,13 @@ class Session(
      * 기본값은 `store` 다 — 나누지 않는 쪽(테스트, 데스크톱)은 그대로 돈다.
      */
     private val localStore: FileStore = store,
+    /**
+     * 상대 인증서의 지문. 거는 쪽만 갖는다 - 서버만 인증서를 내밀기 때문이다.
+     *
+     * 받는 쪽은 자기 지문을 띄우고 거는 쪽은 이 값을 띄운다. 둘이 같으면 중간에
+     * 아무도 없다 (PROTOCOL.md 2.5절).
+     */
+    val peerFingerprint: String? = null,
     private val onEvent: (SessionEvent) -> Unit,
 ) {
     private val input: InputStream = socket.getInputStream()

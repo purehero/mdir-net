@@ -22,30 +22,21 @@ object Fingerprint {
     const val GROUP = 4
 
     /**
-     * 두 DER 인증서에서 `A3F2-91C4-7B0E` 꼴의 지문을 만든다.
+     * DER 인증서 하나에서 `A3F2-91C4-7B0E` 꼴의 기기 지문을 만든다.
      *
-     * **두 인증서를 함께 넣는다.** 한쪽만 쓰면 중간자가 양쪽에 각각 다른 채널을
-     * 열어도 두 화면의 값이 같아질 수 있다.
+     * **인증서 하나만 넣는다.** 서버만 인증서를 내밀기 때문이다 (0.1절). 받는 쪽은
+     * 상대 인증서를 갖지 못하므로 둘을 섞는 규칙은 애초에 쓸 수 없다.
      *
-     * **두 해시를 바이트 사전순으로 정렬해 넣는다.** 그래야 누가 걸었든 양쪽이
-     * 같은 값을 얻는다. 클라이언트와 서버를 구분할 필요가 없어진다.
+     * 이 값은 SSH 호스트 키 지문과 같은 성격이다. 받는 쪽은 **자기 지문**을 띄우고,
+     * 거는 쪽은 **받은 인증서의 지문**을 띄운다. 두 값이 같으면 중간에 아무도 없다.
+     * 중간자는 상대의 개인키가 없어 그 인증서를 내밀 수 없기 때문이다.
      */
-    fun of(certA: ByteArray, certB: ByteArray): String {
-        require(certA.isNotEmpty() && certB.isNotEmpty()) { "인증서가 비어 있습니다" }
-
-        val one = sha256(certA)
-        val two = sha256(certB)
-
-        // 파이썬의 `sorted()` 는 바이트를 **부호 없이** 비교한다. Kotlin 의 Byte 는
-        // 부호가 있어서 그냥 비교하면 0x80 이상이 음수가 되어 순서가 뒤집힌다
-        val ascending = compare(one, two) <= 0
-        val low = if (ascending) one else two
-        val high = if (ascending) two else one
+    fun of(certDer: ByteArray): String {
+        require(certDer.isNotEmpty()) { "인증서가 비어 있습니다" }
 
         val digest = MessageDigest.getInstance("SHA-256").apply {
             update(LABEL)
-            update(low)
-            update(high)
+            update(MessageDigest.getInstance("SHA-256").digest(certDer))
         }.digest()
 
         val text = buildString {
@@ -53,17 +44,5 @@ object Fingerprint {
         }
 
         return text.chunked(GROUP).joinToString("-")
-    }
-
-    private fun sha256(bytes: ByteArray): ByteArray =
-        MessageDigest.getInstance("SHA-256").digest(bytes)
-
-    /** 부호 없는 사전순 비교. 길이는 늘 32로 같지만 규칙을 분명히 둔다. */
-    private fun compare(a: ByteArray, b: ByteArray): Int {
-        for (i in 0 until minOf(a.size, b.size)) {
-            val diff = (a[i].toInt() and 0xFF) - (b[i].toInt() and 0xFF)
-            if (diff != 0) return diff
-        }
-        return a.size - b.size
     }
 }

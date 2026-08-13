@@ -188,7 +188,7 @@ class HandshakeTest {
     fun `버전이 다르면 이유를 알려주고 끊는다`() = runBlocking {
         val port = startServer(answer = true)
 
-        val header = rawHello(port, JSONObject().put("t", "hello").put("v", 2).put("name", "미래"))
+        val header = rawHello(port, JSONObject().put("t", "hello").put("v", Config.PROTOCOL_VERSION + 1).put("name", "미래"))
 
         assertEquals("hello.no", header.optString("t"))
         assertTrue("이유가 없다", header.optString("msg").contains("버전"))
@@ -200,7 +200,7 @@ class HandshakeTest {
     fun `hello 가 아니면 끊는다`() = runBlocking {
         val port = startServer(answer = true)
 
-        val header = rawHello(port, JSONObject().put("t", "list").put("v", 1).put("id", 1))
+        val header = rawHello(port, JSONObject().put("t", "list").put("v", Config.PROTOCOL_VERSION).put("id", 1))
 
         assertEquals("hello.no", header.optString("t"))
         assertTrue(events.none { it is ServerEvent.Approval })

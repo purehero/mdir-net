@@ -50,6 +50,7 @@ fun HomeScreen(onOpenShares: () -> Unit, onOpenBrowser: () -> Unit) {
     val peers by MDirNode.peers.collectAsState()
     val session by MDirNode.session.collectAsState()
     val port by MDirNode.port.collectAsState()
+    val fingerprint by MDirNode.fingerprint.collectAsState()
     val shares by remember { MDirNode.shares.shares }.collectAsState()
 
     var name by rememberSaveable { mutableStateOf(Build.MODEL ?: "안드로이드") }
@@ -117,12 +118,31 @@ fun HomeScreen(onOpenShares: () -> Unit, onOpenBrowser: () -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
+        // 상대가 걸어올 때 그쪽 화면에 뜨는 `상대 지문` 과 대조할 값이다.
+        // 켤 때마다 바뀐다 - 인증서를 저장하지 않기 때문이다
+        fingerprint?.let {
+            Text(
+                "이 기기 지문  $it",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
         session?.let { live ->
             HorizontalDivider()
             Card(Modifier.fillMaxWidth().clickable { onOpenBrowser() }) {
                 Column(Modifier.padding(12.dp)) {
                     Text("${live.peerName} 와 연결됨", style = MaterialTheme.typography.titleMedium)
                     Text(live.peerHost, style = MaterialTheme.typography.bodySmall)
+                    // 내가 건 경우에만 상대 인증서를 받는다. 이 값이 상대 화면의
+                    // `이 기기 지문` 과 같아야 중간에 아무도 없는 것이다
+                    live.peerFingerprint?.let {
+                        Text(
+                            "상대 지문  $it",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     Row(
                         Modifier.fillMaxWidth().padding(top = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
