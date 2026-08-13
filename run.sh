@@ -16,5 +16,13 @@ else
     exit 1
 fi
 
+# 전송 암호화에 cryptography 가 필요하다. 없으면 여기서 알려준다 -
+# 모듈 안에서 ImportError 로 터지면 사용자는 무슨 일인지 알기 어렵다
+if ! "$PY" -c "import cryptography" >/dev/null 2>&1; then
+    echo "cryptography 가 없습니다. 다음을 실행하세요:" >&2
+    echo "    $PY -m pip install -r \"$HERE/requirements.txt\"" >&2
+    exit 1
+fi
+
 # "$@" 로 넘겨받은 인자를 그대로 전달한다 (--name, --root 등)
 PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}" exec "$PY" -m mdirnet "$@"

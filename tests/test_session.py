@@ -468,9 +468,11 @@ class TestApprovalHandshake(unittest.TestCase):
         self.assertIsInstance(out[0], session.Rejected)
 
     def test_version_mismatch_is_refused_before_approval(self):
-        from mdirnet import protocol
+        from mdirnet import protocol, secure
 
-        sock = socket.create_connection(("127.0.0.1", self.port), timeout=5)
+        raw = socket.create_connection(("127.0.0.1", self.port), timeout=5)
+        # 선은 이제 늘 TLS 다. 평문으로 붙으면 프레임을 읽어보기도 전에 끊긴다
+        sock = secure.wrap_client(raw)
         self.addCleanup(sock.close)
         protocol.send_frame(sock, {"t": "hello", "v": 999, "name": "old-client"})
 
