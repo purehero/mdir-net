@@ -102,6 +102,7 @@ object MDirNode {
         val tcp = Server(
             myName = { deviceName },
             store = { store() },
+            localStore = { localStore() ?: store() },
             scope = work,
             onEvent = ::onServerEvent,
             onSessionEvent = ::onSessionEvent,
@@ -177,6 +178,7 @@ object MDirNode {
                     peer = peer,
                     myName = deviceName,
                     store = store(),
+                    localStore = localStore() ?: store(),
                     scope = work,
                     prepare = { wifi?.bind(it) },
                     onEvent = ::onSessionEvent,
