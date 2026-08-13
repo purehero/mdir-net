@@ -34,7 +34,14 @@ Below **79 columns** there is no room for every column, so the time, then the da
 
 ## Install
 
-Nothing to install. Python 3.9 or newer runs it as-is, using only the standard library.
+Python 3.9 or newer, plus one package.
+
+```bash
+pip install -r requirements.txt
+```
+
+That package is `cryptography`, used to make the certificate for TLS. The Python standard
+library has no way to create one. Everything else is standard library.
 
 **macOS · Linux**
 ```bash
@@ -250,16 +257,18 @@ Filenames containing ambiguous characters cannot be avoided, so **anything ambig
 
 ## Android
 
-An Android client lives in [`android/`](android/). It speaks the same protocol, so a phone
-is a full peer: it can browse, download from and upload to a PC, and a PC can do the same
-to the phone.
+The Android client lives in a **separate repository**. It speaks the same protocol, so a
+phone is a full peer: it can browse, download from and upload to a PC, and a PC can do the
+same to the phone.
 
 - Shared folders are picked with the system folder picker (Storage Access Framework).
   Only the folders you pick are opened, and nothing outside them can be reached.
 - A foreground service keeps the listener alive so a PC can fetch files while the app is
   in the background. Approval is asked with a notification when the app is not on screen.
-- Build it with `cd android && ./gradlew :app:assembleDebug`, or open `android/` in
-  Android Studio.
+- The cross-check vectors the two implementations share live in the Android repository.
+  When the wire format changes, keep both checkouts side by side, regenerate with
+  `python3 tools/gen-golden.py --out <android>/app/src/test/resources/golden`, and run
+  both test suites.
 
 The wire format both implementations follow is written down in [PROTOCOL.md](PROTOCOL.md).
 
@@ -270,7 +279,8 @@ This was built for the inside of one router. There is no protection beyond that 
 - A connection requires the **peer's explicit approval.** There is no PIN or password.
 - What the peer can reach is **inside the registered shared folders.** A name not on the list, `../..`, and symlinks pointing outward are all refused.
 - The peer cannot delete a shared folder itself. Removing it from the list happens only on my side.
-- **Transfers are not encrypted.** Do not use this on a network you do not trust (a café, public Wi-Fi).
+- **Transfers are encrypted with TLS 1.3.** Capturing packets on the same network reveals nothing. The certificate is generated at start-up and never stored.
+- **But the peer is not authenticated.** The certificate is self-signed, so there is no chain to verify and an active man-in-the-middle (ARP spoofing and the like) is not stopped. To check, compare the **device fingerprint** shown on both screens. Do not use this on a network you do not trust (a café, public Wi-Fi).
 - **F8 delete applies remotely too.** An approved peer can delete files **inside** my shared folders. The shared folder itself, and anything outside it, cannot be deleted.
 
 ## Firewall
@@ -300,7 +310,7 @@ If a **block rule** for `python.exe` exists, the app lists it and removes it onl
 sh tools/allow-firewall.sh          # allow (undo with --remove)
 ```
 
-On Windows this opens inbound TCP 9600–9609 (the session port climbs by one if it is taken) and UDP 9601, for the **private and domain** profiles only. Transfers are not encrypted, so the public profile is deliberately left out.
+On Windows this opens inbound TCP 9600–9609 (the session port climbs by one if it is taken) and UDP 9601, for the **private and domain** profiles only. Transfers are encrypted but the peer is not authenticated, so the public profile is deliberately left out.
 
 The macOS firewall decides per executable rather than per port, so the script adds the python binary that runs the app to the allow list. Run it again if you switch to a different python.
 
