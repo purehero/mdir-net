@@ -360,7 +360,7 @@ class TestNoStaleKeyNamesOnScreen(HintTestCase):
         """연결 중에도 F4 가 열리므로 '끊고 다시' 안내가 남아 있으면 안 된다."""
         app = self.fresh_app()
         app.session = _StubSession()
-        app._on_key("F4")
+        app._on_key("o")
         self.assertIsInstance(app.modal, app_module.ShareDialog)
         for stale in ("끊고", "F6", "바꿀 수 없습니다"):
             self.assertNotIn(stale, app.status, app.status)

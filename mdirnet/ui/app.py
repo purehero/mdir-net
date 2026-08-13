@@ -733,7 +733,7 @@ class MenuBar(Dialog):
 
         left = pane_menu(app.local)
         left += [
-            ("폴더 트리", "t", app._open_tree),
+            ("폴더 트리", "4", app._open_tree),
             ("드라이브 바꾸기", "\\", app._open_drive_picker),
         ]
 
@@ -747,7 +747,7 @@ class MenuBar(Dialog):
         ] + pane_menu(app.remote)
         if not app.right.is_remote:
             right += [
-                ("폴더 트리", "t", app._open_tree),
+                ("폴더 트리", "4", app._open_tree),
                 ("드라이브 바꾸기", "\\", app._open_drive_picker),
             ]
 
@@ -773,7 +773,7 @@ class MenuBar(Dialog):
                     ("연결할 PC 찾기", "n", app._open_peer_dialog),
                     ("연결 끊기", "d", app._disconnect),
                     sep,
-                    ("공유 폴더 관리", "4", app._open_share_manager),
+                    ("공유 폴더 관리", "o", app._open_share_manager),
                 ],
             ),
             (
@@ -2022,15 +2022,15 @@ class App:
             self._start_copy()
         elif key == "x":
             self._start_move()
-        elif key == "t":
-            self._open_tree()
         elif key == "F2":
             self.status = "%s 정렬: %s 기준" % (self.focus.label, self.focus.cycle_sort())
         elif key == "n":
             self._open_peer_dialog()
         elif key in ("F3", "v"):
             self._view_file()
-        elif key in ("F4", "o"):
+        elif key in ("F4", "t"):
+            self._open_tree()
+        elif key == "o":
             self._open_share_manager()
         elif key == "F6":
             self._ask_rename()
@@ -3159,12 +3159,14 @@ _HELP_LINES = [
     "맥에서는 F 키에 fn 이 필요하니 숫자가 편합니다.",
     "",
     "1 . F1  도움말              2 . F2  정렬 바꾸기 (s)",
-    "3 . F3  파일 보기 (v)       4 . F4  공유 폴더 관리 (o)",
+    "3 . F3  파일 보기 (v)       4 . F4  폴더 트리 (t)",
     "5 . F5  복사 (c)            6 . F6  이름 바꾸기",
     "7 . F7  폴더 만들기 (m)     8 . F8  삭제 (Delete)",
     "9 . F9  상단 메뉴 (/)       0 . F10 종료 (q)",
     "",
     "n             연결할 PC 찾기      d   연결 끊기",
+    "o             공유 폴더 관리 - 상대에게 열어줄 폴더 목록",
+    "x             반대 패널로 이동 (옮긴 뒤 원본을 지웁니다)",
     "=             오른쪽 패널을 내 PC / 상대 로 전환",
     ".             숨김 파일 보기/감추기",
     "r             새로고침            \\   드라이브",
