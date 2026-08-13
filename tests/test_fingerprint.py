@@ -19,30 +19,28 @@ GOLDEN = (
 
 
 class TestFingerprint(unittest.TestCase):
-    def test_order_does_not_matter(self):
-        """누가 걸었든 양쪽 화면에 같은 값이 떠야 한다."""
-        self.assertEqual(fp.fingerprint(b"a", b"b"), fp.fingerprint(b"b", b"a"))
-
-    def test_both_certificates_go_in(self):
-        """한쪽만 쓰면 중간자가 양쪽에 다른 채널을 열어도 값이 같아질 수 있다."""
-        self.assertNotEqual(fp.fingerprint(b"a", b"b"), fp.fingerprint(b"a", b"c"))
-        self.assertNotEqual(fp.fingerprint(b"a", b"c"), fp.fingerprint(b"z", b"c"))
+    def test_same_certificate_gives_the_same_value(self):
+        """받는 쪽의 '내 지문' 과 거는 쪽의 '상대 지문' 이 같아야 대조가 성립한다."""
+        self.assertEqual(fp.fingerprint(b"cert"), fp.fingerprint(b"cert"))
 
     def test_one_byte_changes_everything(self):
+        """중간자는 자기 인증서를 내밀게 되고, 그러면 값이 갈려야 한다."""
         self.assertNotEqual(
-            fp.fingerprint(b"cert", b"\x00" * 32),
-            fp.fingerprint(b"cert", b"\x00" * 31 + b"\x01"),
+            fp.fingerprint(b"\x00" * 32),
+            fp.fingerprint(b"\x00" * 31 + b"\x01"),
         )
 
+    def test_high_bytes_do_not_confuse_it(self):
+        """DER 에는 0x80 이상이 흔하다. 부호 있는 바이트로 다루는 구현을 잡는다."""
+        self.assertNotEqual(fp.fingerprint(bytes([0x80])), fp.fingerprint(bytes([0x00])))
+
     def test_empty_certificate_is_refused(self):
-        """상대 인증서를 못 받은 채 만든 값을 사용자가 확인된 것으로 믿으면 안 된다."""
-        for a, b in ((b"", b"x"), (b"x", b""), (b"", b"")):
-            with self.subTest(a=a, b=b):
-                with self.assertRaises(ValueError):
-                    fp.fingerprint(a, b)
+        """인증서를 못 받은 채 만든 값을 사용자가 확인된 것으로 믿으면 안 된다."""
+        with self.assertRaises(ValueError):
+            fp.fingerprint(b"")
 
     def test_shape(self):
-        text = fp.fingerprint(b"a", b"b")
+        text = fp.fingerprint(b"a")
 
         self.assertEqual(len(text), fp.LENGTH * 2 + 2)
         groups = text.split("-")
@@ -67,7 +65,7 @@ class TestFingerprint(unittest.TestCase):
             with self.subTest(row["note"]):
                 self.assertEqual(
                     row["fingerprint"],
-                    fp.fingerprint(bytes.fromhex(row["certA"]), bytes.fromhex(row["certB"])),
+                    fp.fingerprint(bytes.fromhex(row["cert"])),
                     "golden/fingerprints.json 이 낡았습니다. tools/gen-golden.py 를 실행하세요",
                 )
 

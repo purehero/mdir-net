@@ -6,7 +6,7 @@
 # 두 가지를 내보낸다.
 #   frames.bin / frames.json      세션 프레임 (PROTOCOL.md 3절)
 #   announce.bin / announce.json  탐색 데이터그램 (PROTOCOL.md 2절)
-#   fingerprints.json             연결 지문 (PROTOCOL.md 2.5절)
+#   fingerprints.json             기기 지문 (PROTOCOL.md 2.5절)
 #
 # 프레임은 하나의 파일에 **이어붙여** 내보낸다. 프레임 경계를 넘는 버퍼 처리가
 # 프레이밍 버그가 사는 곳이라, 한 개씩 따로 두면 정작 중요한 것을 못 잡는다.
@@ -192,37 +192,31 @@ def write_paths():
 
 
 def write_fingerprints():
-    """지문 벡터. 순서를 뒤집어도 같은 값이 나오는지가 핵심이다."""
+    """기기 지문 벡터. 인증서는 DER 이라 어떤 바이트든 나온다."""
     # 인증서는 DER 이라 어떤 바이트든 나온다. 문자열로 다루는 구현을 잡으려면
     # 0x00~0xFF 가 전부 들어간 벡터가 있어야 한다
     every_byte = bytes(range(256))
     long_one = bytes((i * 7 + 13) % 256 for i in range(1024))
 
-    pairs = [
-        ("짧은 것 둘", b"cert-a", b"cert-b"),
-        ("순서를 뒤집었다 — 같은 값이어야 한다", b"cert-b", b"cert-a"),
-        ("0x00~0xFF 전부", every_byte, b"cert-b"),
-        ("양쪽 다 0x00~0xFF", every_byte, every_byte),
-        ("같은 인증서 둘", b"cert-a", b"cert-a"),
-        ("1바이트만 다르다 — 값이 완전히 달라야 한다", b"cert-a", b"cert-c"),
-        ("DER 만한 길이", long_one, every_byte),
-        ("한 바이트짜리", b"\x00", b"\xff"),
+    certs = [
+        ("짧은 것", b"cert-a"),
+        ("1바이트만 다르다, 값이 완전히 달라야 한다", b"cert-b"),
+        ("0x00~0xFF 전부", every_byte),
+        ("DER 만한 길이", long_one),
+        ("한 바이트 0x00", b"\x00"),
+        ("한 바이트 0xFF", b"\xff"),
+        ("0x80 으로 시작한다, 부호 있는 바이트로 다루면 갈린다", bytes([0x80, 0x81, 0xFF])),
     ]
 
     out = [
-        {
-            "note": note,
-            "certA": a.hex(),
-            "certB": b.hex(),
-            "fingerprint": fp_mod.fingerprint(a, b),
-        }
-        for note, a, b in pairs
+        {"note": note, "cert": cert.hex(), "fingerprint": fp_mod.fingerprint(cert)}
+        for note, cert in certs
     ]
 
     (OUT_DIR / "fingerprints.json").write_text(
         json.dumps(out, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
-    print("%s  (%d 쌍)" % (OUT_DIR / "fingerprints.json", len(out)))
+    print("%s  (%d 개)" % (OUT_DIR / "fingerprints.json", len(out)))
 
 
 def main():

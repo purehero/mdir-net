@@ -7,6 +7,7 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketTimeoutException
+import javax.net.ssl.SSLSocket
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -16,6 +17,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import com.purehero.netdir.protocol.Config
+import com.purehero.netdir.protocol.Fingerprint
 import com.purehero.netdir.protocol.Frame
 import com.purehero.netdir.protocol.FrameReader
 import com.purehero.netdir.store.FileStore
@@ -100,12 +102,18 @@ suspend fun connect(
         }
 
         socket.soTimeout = 0
+        // 상대 인증서의 지문. 받는 쪽 화면의 `이 기기 지문` 과 같아야 한다
+        val fingerprint = (socket as? SSLSocket)
+            ?.let { Secure.peerCertificate(it) }
+            ?.let { runCatching { Fingerprint.of(it) }.getOrNull() }
+
         Session(
             socket = socket,
             peerName = (header.opt("name") as? String)?.ifEmpty { null } ?: peer.name,
             peerHost = peer.host,
             store = store,
             localStore = localStore,
+            peerFingerprint = fingerprint,
             scope = scope,
             onEvent = onEvent,
         ).also { it.start() }
@@ -186,8 +194,9 @@ class Server(
         identity = null
     }
 
-    /** 이 서버의 인증서 DER. 지문을 화면에 띄울 때 쓴다. */
-    fun certificate(): ByteArray? = identity?.certificateDer
+    /** 이 기기의 지문. 화면에 띄워 상대와 대조한다 (PROTOCOL.md 2.5절). */
+    fun fingerprint(): String? =
+        identity?.certificateDer?.let { runCatching { Fingerprint.of(it) }.getOrNull() }
 
     private fun requireIdentity(): Secure.Identity =
         identity ?: throw SessionError("암호화 신원을 만들지 못했습니다")

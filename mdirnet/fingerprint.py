@@ -1,4 +1,4 @@
-# 연결 지문 - 두 끝점의 인증서에서 사람이 대조할 짧은 값을 만든다 (PROTOCOL.md 2.5절)
+# 기기 지문 - 인증서에서 사람이 대조할 짧은 값을 만든다 (PROTOCOL.md 2.5절)
 #
 # 암호화만으로는 중간자를 막지 못한다. 자기서명 인증서에는 검증할 체인이 없으므로,
 # 양쪽 화면에 같은 값이 뜨는지 **사람이 보는 것**이 유일한 인증 수단이다.
@@ -19,23 +19,20 @@ LENGTH = 6
 GROUP = 4
 
 
-def fingerprint(cert_a, cert_b):
-    """두 DER 인증서에서 `A3F2-91C4-7B0E` 꼴의 지문을 만든다.
+def fingerprint(cert_der):
+    """DER 인증서 하나에서 `A3F2-91C4-7B0E` 꼴의 기기 지문을 만든다.
 
-    **두 인증서를 함께 넣는다.** 한쪽만 쓰면 중간자가 양쪽에 각각 다른 채널을
-    열어도 두 화면의 값이 같아질 수 있다.
+    **인증서 하나만 넣는다.** 서버만 인증서를 내밀기 때문이다 (0.1절). 받는 쪽은
+    상대 인증서를 갖지 못하므로 둘을 섞는 규칙은 애초에 쓸 수 없다.
 
-    **두 해시를 바이트 사전순으로 정렬해 넣는다.** 그래야 누가 걸었든 양쪽이
-    같은 값을 얻는다. 클라이언트와 서버를 구분할 필요가 없어진다.
+    이 값은 SSH 호스트 키 지문과 같은 성격이다. 받는 쪽은 **자기 지문**을 띄우고,
+    거는 쪽은 **받은 인증서의 지문**을 띄운다. 두 값이 같으면 중간에 아무도 없다.
+    중간자는 상대의 개인키가 없어 그 인증서를 내밀 수 없기 때문이다.
     """
-    if not cert_a or not cert_b:
+    if not cert_der:
         raise ValueError("인증서가 비어 있습니다")
 
-    one = hashlib.sha256(cert_a).digest()
-    two = hashlib.sha256(cert_b).digest()
-    low, high = sorted((one, two))
-
-    digest = hashlib.sha256(LABEL + low + high).digest()
+    digest = hashlib.sha256(LABEL + hashlib.sha256(cert_der).digest()).digest()
     text = digest[:LENGTH].hex().upper()
 
     return "-".join(text[i : i + GROUP] for i in range(0, len(text), GROUP))

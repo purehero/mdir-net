@@ -60,6 +60,10 @@ object MDirNode {
     private val _port = MutableStateFlow(Config.TCP_PORT)
     val port: StateFlow<Int> = _port.asStateFlow()
 
+    /** 이 기기의 지문. 켤 때 정해지고 끄면 사라진다 (PROTOCOL.md 2.5절). */
+    private val _fingerprint = MutableStateFlow<String?>(null)
+    val fingerprint: StateFlow<String?> = _fingerprint.asStateFlow()
+
     private val _online = MutableStateFlow(false)
     val online: StateFlow<Boolean> = _online.asStateFlow()
 
@@ -117,6 +121,7 @@ object MDirNode {
         }
         tcp.start()
         server = tcp
+        _fingerprint.value = tcp.fingerprint()
 
         // **실제로 잡은 포트**를 알린다. TCP_PORT 를 그대로 쓰면 아무도 못 붙는다
         val disco = Discovery(
@@ -151,6 +156,9 @@ object MDirNode {
         _peers.value = emptyList()
         _running.value = false
         _online.value = false
+        // 인증서를 지웠으니 지문도 남기지 않는다. 남기면 다음에 켰을 때 옛 값을
+        // 보고 대조하게 된다
+        _fingerprint.value = null
     }
 
     fun rename(name: String) {

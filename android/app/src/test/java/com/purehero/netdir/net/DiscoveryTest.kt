@@ -86,13 +86,15 @@ class DiscoveryTest {
     @Test
     fun `규격에 맞지 않는 알림은 버린다`() {
         val bad = mapOf(
-            "버전이 다르다" to """{"v":2,"id":"aa","port":9600}""",
-            "버전이 문자열이다" to """{"v":"1","id":"aa","port":9600}""",
+            // 상수에서 파생시킨다. 숫자로 박아두면 버전을 올릴 때 "다른 버전" 이
+            // 어느새 "맞는 버전" 이 되어 테스트가 조용히 무의미해진다
+            "버전이 다르다" to """{"v":${Config.PROTOCOL_VERSION + 1},"id":"aa","port":9600}""",
+            "버전이 문자열이다" to """{"v":"${Config.PROTOCOL_VERSION}","id":"aa","port":9600}""",
             "버전이 없다" to """{"id":"aa","port":9600}""",
-            "id 가 없다" to """{"v":1,"port":9600}""",
-            "id 가 문자열이 아니다" to """{"v":1,"id":7,"port":9600}""",
-            "포트가 없다" to """{"v":1,"id":"aa"}""",
-            "포트가 문자열이다" to """{"v":1,"id":"aa","port":"9600"}""",
+            "id 가 없다" to """{"v":${Config.PROTOCOL_VERSION},"port":9600}""",
+            "id 가 문자열이 아니다" to """{"v":${Config.PROTOCOL_VERSION},"id":7,"port":9600}""",
+            "포트가 없다" to """{"v":${Config.PROTOCOL_VERSION},"id":"aa"}""",
+            "포트가 문자열이다" to """{"v":${Config.PROTOCOL_VERSION},"id":"aa","port":"9600"}""",
             "JSON 이 아니다" to "그냥 글자",
             "객체가 아니다" to """[1,2,3]""",
             "비어있다" to "",
@@ -106,7 +108,7 @@ class DiscoveryTest {
 
     @Test
     fun `이름이 비면 주소로 대신한다`() {
-        val raw = """{"v":1,"id":"aa","port":9600,"name":""}""".toByteArray(Charsets.UTF_8)
+        val raw = """{"v":${Config.PROTOCOL_VERSION},"id":"aa","port":9600,"name":""}""".toByteArray(Charsets.UTF_8)
         assertEquals("10.0.0.5", Announce.parse(raw, raw.size, "10.0.0.5", 1L)!!.name)
     }
 
@@ -128,7 +130,7 @@ class DiscoveryTest {
         assertNotNull("length 만큼만 읽으면 정상이다", Announce.parse(buffer, real.size, "10.0.0.5", 1L))
         assertNull("뒤에 쓰레기가 붙었다", Announce.parse(buffer, buffer.size, "10.0.0.5", 1L))
 
-        val twice = """{"v":1,"id":"aa","port":9600} {"v":1,"id":"bb","port":9601}"""
+        val twice = """{"v":${Config.PROTOCOL_VERSION},"id":"aa","port":9600} {"v":${Config.PROTOCOL_VERSION},"id":"bb","port":9601}"""
             .toByteArray(Charsets.UTF_8)
         assertNull("객체가 둘이다", Announce.parse(twice, twice.size, "10.0.0.5", 1L))
     }
@@ -136,7 +138,7 @@ class DiscoveryTest {
     @Test
     fun `뒤쪽 공백은 허용한다`() {
         // 파이썬 json.loads 도 뒤쪽 공백은 받아준다. 거기까지 막으면 지나치다
-        val padded = ("""{"v":1,"id":"aa","port":9600}""" + "  \n").toByteArray(Charsets.UTF_8)
+        val padded = ("""{"v":${Config.PROTOCOL_VERSION},"id":"aa","port":9600}""" + "  \n").toByteArray(Charsets.UTF_8)
         assertNotNull(Announce.parse(padded, padded.size, "10.0.0.5", 1L))
     }
 
