@@ -175,6 +175,7 @@ The top of the `Right` menu toggles **my PC / peer** (`=`). When the right pane 
 | `5` / `F5` / `c` | Copy to the other pane — directories recursively |
 | `x` | **Move** to the other pane — the source is removed after the move |
 | `t` | **Folder tree** — see the whole disk as a tree and jump there (MDir's MCD) |
+| `Enter` (on an archive) | **Step inside** — browse ZIP/TAR like a folder (read-only) |
 | `6` / `F6` | Rename |
 | `7` / `F7` / `m` | Make directory |
 | `8` / `F8` / `Delete` | Delete (cannot be undone) |
@@ -273,6 +274,16 @@ same to the phone.
   both test suites.
 
 The wire format both implementations follow is written down in [PROTOCOL.md](PROTOCOL.md).
+
+## Archives
+
+`.zip`, `.tar`, `.tar.gz`, `.tgz`, `.tar.bz2`, and `.tar.xz` can be **entered like folders** (a feature MDir had). `Enter` steps in, `..` steps out. Inside, `F3` views a file and `5` extracts to the other pane.
+
+**Read-only.** You cannot put anything into an archive, nor move or delete what is inside. Sending straight to the peer is not supported either — extract to your PC first.
+
+The LZH, ARJ, and RAR formats MDir handled are not supported; only what the standard library can read.
+
+If a name inside the archive **points outside it** (`../../somewhere`), the entry is hidden from the listing and the count of hidden entries is reported. Archives like that are used to write files outside the destination.
 
 ## Security scope
 

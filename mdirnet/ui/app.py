@@ -7,7 +7,7 @@ import queue
 import threading
 from pathlib import Path
 
-from .. import config, discovery, fsops, session, settings, shares as shares_mod, winfw
+from .. import archive, config, discovery, fsops, session, settings, shares as shares_mod, winfw
 from . import screen, term
 
 # 테두리 문자. 폭이 정확히 1칸이고 East Asian Width 가 A(Ambiguous)가 아닌 것만
@@ -149,6 +149,9 @@ class Pane:
         self.message = ""
         self.sort_mode = fsops.SORT_NAME
         self._generation = 0  # 늦게 도착한 조회 결과를 버리기 위한 세대 번호
+        # 압축 안을 보고 있으면 (압축 파일 경로, 안쪽 상대 경로). 아니면 None.
+        # 경로 공간이 하나 더 있는 셈이라 path 에 섞지 않고 따로 둔다
+        self.archive = None
 
     @property
     def label(self):
@@ -162,6 +165,9 @@ class Pane:
         """지금 보고 있는 위치."""
         if self.is_remote and not self.app.session:
             return "(연결되지 않음)"
+        if self.archive:
+            box, inner = self.archive
+            return "%s/%s" % (box, inner) if inner else str(box)
         return shares_mod.display(self.path) if self.is_remote else str(self.path)
 
     @property
@@ -175,18 +181,46 @@ class Pane:
     @property
     def at_top(self):
         """더 위로 올라갈 수 없는 지점인가."""
+        if self.archive:
+            return False  # 압축 안에서는 늘 밖으로 나갈 길이 있다
         if self.is_remote:
             return shares_mod.normalize(self.path) == shares_mod.ROOT
         return self.path == self.path.parent
 
     def child(self, name):
         """이 패널의 경로 공간에서 하위 항목의 경로를 만든다."""
+        if self.archive:
+            box, inner = self.archive
+            return (box, "%s/%s" % (inner, name) if inner else name)
         if self.is_remote:
             return shares_mod.join(self.path, name)
         return self.path / name
 
     def up(self):
         return shares_mod.parent(self.path) if self.is_remote else self.path.parent
+
+    # --- 압축 ---
+
+    def enter_archive(self, box, inner=""):
+        self.archive = (Path(box), inner)
+        self.cursor = 0
+        self.offset = 0
+        self.selected.clear()
+        self.refresh()
+
+    def leave_archive(self):
+        """압축 밖으로. 그 압축 파일이 있던 폴더로 돌아간다."""
+        box, _ = self.archive
+        self.archive = None
+        self.navigate(box.parent)
+
+    def archive_up(self):
+        """압축 안에서 한 칸 위로. 맨 위였으면 압축 밖으로 나간다."""
+        box, inner = self.archive
+        if not inner:
+            self.leave_archive()
+            return
+        self.enter_archive(box, "/".join(inner.split("/")[:-1]))
 
     def rows(self):
         """'..' 항목을 앞에 붙인 표시용 목록."""
@@ -222,6 +256,7 @@ class Pane:
         self.refresh()
 
     def navigate(self, path):
+        self.archive = None
         self.path = path if self.is_remote else Path(path)
         self.cursor = 0
         self.offset = 0
@@ -237,6 +272,24 @@ class Pane:
         self._generation += 1
         generation = self._generation
         side = "remote" if self.is_remote else "local"
+
+        if self.archive:
+            box, inner = self.archive
+            try:
+                self.entries = fsops.sort_entries(
+                    self._visible(archive.list_dir(box, inner)), self.sort_mode
+                )
+                # 감춘 것이 있으면 감췄다고 말한다. 조용히 지우면 사용자는
+                # 압축이 온전한 줄 안다
+                hidden = archive.escaping_count(box)
+                self.message = (
+                    "압축 밖을 가리키는 항목 %d개를 감췄습니다" % hidden if hidden else ""
+                )
+            except archive.ArchiveError as exc:
+                self.entries = []
+                self.message = "압축을 읽지 못했습니다: %s" % exc
+            self._clamp()
+            return
 
         if not self.is_remote:
             try:
@@ -1992,19 +2045,46 @@ class App:
             self.focus = self.left
 
     def _enter(self):
-        item = self.focus.current_item()
+        pane = self.focus
+        item = pane.current_item()
         if not item:
             return
         if item.get("up"):
-            self._go_up(self.focus)
+            self._go_up(pane)
+        elif pane.archive:
+            if item["is_dir"]:
+                pane.enter_archive(pane.archive[0], pane.child(item["name"])[1])
+            else:
+                self._view_file()
         elif item["is_dir"]:
-            self.focus.navigate(self.focus.child(item["name"]))
-        elif not self.focus.is_remote and fsops.is_executable(self.focus.child(item["name"])):
+            pane.navigate(pane.child(item["name"]))
+        elif self._enter_archive_if_it_is_one(pane, item):
+            return
+        elif not pane.is_remote and fsops.is_executable(pane.child(item["name"])):
             self._run_file(item["name"])
         else:
             # 실행 파일이 아니면 보기다. 듀얼 패널 관습이고, 아무 반응이 없으면
             # 사용자는 키가 먹지 않았다고 생각한다
             self._view_file()
+
+    def _enter_archive_if_it_is_one(self, pane, item):
+        """압축 파일이면 폴더처럼 들어간다 (MDir 에 있던 기능). 들어갔으면 True.
+
+        이름만 보고 판정하므로 실제로 못 여는 것이 걸릴 수 있다. 그때는 조용히
+        평소 경로(보기)로 돌려보낸다 - 확장자만 맞는 파일을 열려다 실패했다고
+        알리면 오히려 성가시다.
+        """
+        if pane.is_remote or not archive.looks_like_archive(item["name"]):
+            return False
+
+        box = pane.child(item["name"])
+        try:
+            archive.list_dir(box)
+        except archive.ArchiveError:
+            return False
+
+        pane.enter_archive(box)
+        return True
 
     def _enter_dir_only(self):
         """오른쪽 화살표. 폴더면 들어가고 파일이면 아무 일도 하지 않는다.
@@ -2012,11 +2092,22 @@ class App:
         `..` 도 무시한다. 위로 가는 것은 왼쪽 화살표의 몫이고, 오른쪽 화살표가
         위로 올라가면 방향과 어긋난다.
         """
-        item = self.focus.current_item()
-        if item and item["is_dir"] and not item.get("up"):
-            self.focus.navigate(self.focus.child(item["name"]))
+        pane = self.focus
+        item = pane.current_item()
+        if not (item and not item.get("up")):
+            return
+        if item["is_dir"]:
+            if pane.archive:
+                pane.enter_archive(pane.archive[0], pane.child(item["name"])[1])
+            else:
+                pane.navigate(pane.child(item["name"]))
+        else:
+            self._enter_archive_if_it_is_one(pane, item)
 
     def _go_up(self, pane):
+        if pane.archive:
+            pane.archive_up()
+            return
         # 원격의 최상위는 공유 목록(가상 루트)이다. 그 위는 없다
         if not pane.at_top:
             pane.navigate(pane.up())
@@ -2094,6 +2185,16 @@ class App:
 
         path = pane.child(item["name"])
         limit = config.MAX_VIEW_BYTES
+
+        if pane.archive:
+            box, inner = path
+            try:
+                _, data = archive.read_head(box, inner, limit)
+            except archive.ArchiveError as exc:
+                self.modal = MessageDialog("열 수 없습니다", str(exc), term.BAD)
+                return
+            self.modal = ViewerDialog(item["name"], data, item["size"])
+            return
 
         if not pane.is_remote:
             try:
@@ -2392,6 +2493,17 @@ class App:
 
         source, dest = self.focus, (self.right if self.focus is self.left else self.left)
 
+        # 압축은 읽기 전용이다. 안에 쓰거나 압축 안의 것을 옮길 수는 없다
+        if dest.archive:
+            self.status = "압축 안에는 넣을 수 없습니다"
+            return None
+        if source.archive and what != "복사":
+            self.status = "압축에서는 꺼내기(복사)만 됩니다"
+            return None
+        if source.archive and dest.is_remote:
+            self.status = "압축에서 상대로 바로 보낼 수는 없습니다. 먼저 내 PC 로 꺼내세요"
+            return None
+
         if (source.is_remote or dest.is_remote) and not self.session:
             self.status = "먼저 n 으로 상대에 연결하세요"
             return None
@@ -2461,7 +2573,14 @@ class App:
                     transfer.current = rel
                     dest_path = dest.child(rel)
                     try:
-                        if source.is_remote:
+                        if source.archive:
+                            box, inner = src_path
+                            # 압축 안의 이름은 만든 쪽이 정한다. 목적지 밖을
+                            # 가리키는지 여기서 반드시 걸러야 한다 (zip slip)
+                            archive.safe_join(dest.path, rel)
+                            archive.extract(box, inner, dest_path)
+                            transfer.done += size
+                        elif source.is_remote:
                             active.pull_file(
                                 src_path, dest_path, on_progress=_adder(transfer)
                             )
@@ -2474,7 +2593,7 @@ class App:
                             fsops.copy_file(
                                 src_path, dest_path, on_progress=_adder(transfer)
                             )
-                    except (session.SessionError, OSError) as exc:
+                    except (session.SessionError, OSError, archive.ArchiveError, ValueError) as exc:
                         errors.append("%s - %s" % (rel, exc))
                         failed.add(rel.split("/", 1)[0])
 
@@ -2525,6 +2644,19 @@ class App:
         for item in items:
             name = item["name"]
             src = source.child(name)
+
+            if source.archive:
+                box, inner = src
+                if not item["is_dir"]:
+                    plan.append((name, src, item["size"]))
+                    continue
+                # 압축 안의 폴더는 그 아래 파일들을 통째로 펼친다. 압축은
+                # 평평한 목록이라 tree 를 물어볼 상대가 없다
+                dirs.append(name)
+                base = len(inner) + 1
+                for full, size in archive.walk(box, inner):
+                    plan.append(("%s/%s" % (name, full[base:]), (box, full), size))
+                continue
 
             if not item["is_dir"]:
                 plan.append((name, src, item["size"]))
