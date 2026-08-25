@@ -513,12 +513,77 @@ class InputDialog(Dialog):
         self.cursor += len(text)
 
 
+class RegionDialog(Dialog):
+    """S3 리전을 고른다. 코드를 외우고 있을 이유가 없다."""
+
+    title = "리전 선택"
+    VISIBLE = 12  # 한 번에 보여줄 줄 수. 화면이 낮으면 이보다 줄어든다
+
+    def __init__(self, current, on_choose):
+        # 지금 값이 목록에 있으면 그 자리에서 열린다. 다시 고를 때 처음부터
+        # 훑어 내려갈 이유가 없다
+        self.cursor = s3_mod.region_index(current)
+        self.offset = 0
+        self._on_choose = on_choose
+
+    def _visible(self):
+        """보여줄 줄 수. 상자가 화면보다 커지면 안내줄이 통째로 잘린다."""
+        return max(min(self.VISIBLE, (self.max_body or 18) - 2), 1)
+
+    def lines(self, inner):
+        visible = self._visible()
+        if self.cursor < self.offset:
+            self.offset = self.cursor
+        elif self.cursor >= self.offset + visible:
+            self.offset = self.cursor - visible + 1
+        self.offset = max(0, min(self.offset, max(len(s3_mod.REGIONS) - visible, 0)))
+
+        out = []
+        for index in range(self.offset, min(self.offset + visible, len(s3_mod.REGIONS))):
+            code, name = s3_mod.REGIONS[index]
+            text = screen.pad("  %-16s %s" % (code, name), inner)
+            out.append(term.BAR + text + term.RESET if index == self.cursor else text)
+
+        more = len(s3_mod.REGIONS) - self.offset - visible
+        out.append(term.DIM + ("  아래로 %d개 더" % more if more > 0 else "") + term.RESET)
+        out.append(term.DIM + "Enter 선택   Esc 취소" + term.RESET)
+        return out
+
+    def key(self, key):
+        last = len(s3_mod.REGIONS) - 1
+        visible = self._visible()
+
+        if key in (term.UP, "k"):
+            self.cursor = max(0, self.cursor - 1)
+        elif key in (term.DOWN, "j"):
+            self.cursor = min(last, self.cursor + 1)
+        elif key == term.PGUP:
+            self.cursor = max(0, self.cursor - visible)
+        elif key == term.PGDN:
+            self.cursor = min(last, self.cursor + visible)
+        elif key == term.HOME_KEY:
+            self.cursor = 0
+        elif key == term.END_KEY:
+            self.cursor = last
+        elif key == term.ENTER:
+            self._on_choose(s3_mod.REGIONS[self.cursor][0])
+            return True
+        elif key in (term.ESC, "q"):
+            self._on_choose(None)  # 고르지 않았다. 폼은 그대로 다시 연다
+            return True
+        return False
+
+
 class S3ConnectDialog(InputDialog):
     """AWS S3 접속 정보를 받는다. 칸이 여럿이라 Tab 으로 옮겨 다닌다.
 
     한 줄 입력창을 물려받아 편집 키(< > Home End Backspace Delete)를 그대로
     쓴다. `text` 는 늘 '지금 고치는 칸' 의 내용이고, 칸을 옮길 때 `values` 로
     옮겨 담는다. 입력 처리를 두 벌 갖지 않으려는 것이다.
+
+    **붙는 것은 맨 아래 `연결` 줄에서만** 한다. 입력 칸에서 Enter 는 다음 줄로
+    내려갈 뿐이다 - 시크릿 키를 치다 Enter 가 눌려 반쯤 채운 채로 연결을
+    시도하는 일이 없다.
     """
 
     # (키, 라벨, 가릴지). 버킷만 비워둘 수 있다
@@ -528,26 +593,35 @@ class S3ConnectDialog(InputDialog):
         ("secret_key", "시크릿 액세스 키", True),
         ("bucket", "버킷 (비우면 전체)", False),
     )
+    SUBMIT = len(FIELDS)  # 맨 아래 '연결' 줄의 자리
+    REQUIRED = 3          # 앞의 세 칸은 비울 수 없다
 
-    def __init__(self, on_submit, initial=None):
+    def __init__(self, on_submit, initial=None, on_regions=None):
         initial = initial or {}
         self.values = {key: str(initial.get(key) or "") for key, _, _ in self.FIELDS}
         self.at = 0
         self.error = ""
+        # 리전 목록 창을 여는 길. FolderDialog 가 드라이브 창을 여는 것과 같은
+        # 방식이다 - 다이얼로그는 자기를 바꿔치울 수 없으므로 앱에 맡긴다
+        self._on_regions = on_regions
         InputDialog.__init__(
             self, "AWS S3 연결", [], on_submit, initial=self.values[self.FIELDS[0][0]]
         )
 
-    # --- 칸 옮기기 ---
+    # --- 줄 옮기기 ---
 
     def _store(self):
-        self.values[self.FIELDS[self.at][0]] = self.text
+        if self.at < self.SUBMIT:
+            self.values[self.FIELDS[self.at][0]] = self.text
+
+    def _go(self, index):
+        self._store()
+        self.at = index % (self.SUBMIT + 1)
+        self.text = "" if self.at == self.SUBMIT else self.values[self.FIELDS[self.at][0]]
+        self.cursor = len(self.text)
 
     def _move(self, delta):
-        self._store()
-        self.at = (self.at + delta) % len(self.FIELDS)
-        self.text = self.values[self.FIELDS[self.at][0]]
-        self.cursor = len(self.text)
+        self._go(self.at + delta)
 
     # --- 그리기 ---
 
@@ -568,29 +642,58 @@ class S3ConnectDialog(InputDialog):
             )
             rows.append(screen.pad(head + body, inner))
 
+        on_button = self.at == self.SUBMIT
+        button = "[ 연결 ]"
+        rows.append("")
+        rows.append(screen.pad(
+            ("> " if on_button else "  ")
+            + (term.BAR + button + term.RESET if on_button else button),
+            inner,
+        ))
+
         rows.append("")
         if self.error:
             rows.append(term.BAD + screen.fit(self.error, inner) + term.RESET)
-        rows.append(term.DIM + "Tab 다음 칸   Enter 연결   Esc 취소" + term.RESET)
+        # 키 안내는 지금 있는 줄에 맞춘다. 늘 같은 문장을 띄우면 입력 칸에서도
+        # Enter 가 연결하는 줄 안다
+        hint = "Tab 이동   %s   Esc 취소" % ("Enter 연결" if on_button else "Enter 다음 줄")
+        if self.at == 0 and self._on_regions:
+            hint = "Space 리전 목록   " + hint
+        rows.append(term.DIM + hint + term.RESET)
         return rows
 
     # --- 입력 ---
+
+    def _connect(self):
+        """`연결` 줄에서 Enter. 빈 칸이 있으면 그 칸으로 데려간다."""
+        self._store()
+        missing = next(
+            (i for i in range(self.REQUIRED) if not self.values[self.FIELDS[i][0]].strip()),
+            None,
+        )
+        if missing is not None:
+            # 닫아버리면 쳐 넣은 것이 사라진다. 열어둔 채로 그 칸으로 옮겨준다
+            self.error = "%s 칸이 비었습니다" % self.FIELDS[missing][1]
+            self._go(missing)
+            return False
+        self._on_submit(dict(self.values))
+        return True
 
     def key(self, key):
         if key == term.ESC:
             return True
 
         if key == term.ENTER:
-            self._store()
-            missing = next(
-                (label for k, label, _ in self.FIELDS[:3] if not self.values[k].strip()), ""
-            )
-            if missing:
-                # 닫아버리면 쳐 넣은 것이 사라진다. 열어둔 채로 무엇이 빠졌는지만 말한다
-                self.error = "%s 칸이 비었습니다" % missing
+            if self.at != self.SUBMIT:
+                self._move(1)  # 입력 칸에서는 다음 줄로 내려갈 뿐이다
                 return False
-            self._on_submit(dict(self.values))
-            return True
+            return self._connect()
+
+        # 리전 이름에는 공백이 없다. 그 칸에서만 Space 를 목록 여는 키로 쓴다
+        if key == term.SPACE and self.at == 0 and self._on_regions:
+            self._store()
+            self._on_regions(dict(self.values))
+            return True  # 목록 창이 이 창을 대신한다. 고르면 값을 안고 다시 열린다
 
         if key in (term.TAB, term.DOWN):
             self._move(1)
@@ -600,6 +703,8 @@ class S3ConnectDialog(InputDialog):
             return False
 
         self.error = ""
+        if self.at == self.SUBMIT:
+            return False  # '연결' 줄에는 고칠 글자가 없다
         return InputDialog.key(self, key)
 
 
@@ -1754,7 +1859,19 @@ class App:
                 self.session.peer_name
             )
             return
-        self.modal = S3ConnectDialog(self._connect_s3, settings.load_s3_profile())
+        self._show_s3_dialog(settings.load_s3_profile())
+
+    def _show_s3_dialog(self, values):
+        """접속 폼을 연다. 리전 목록을 다녀와도 쳐 넣은 값을 잃지 않는다."""
+
+        def pick_region(current):
+            def chosen(code):
+                # 취소하면 code 가 None 이다. 그때는 리전을 그대로 두고 되돌아간다
+                self._show_s3_dialog(dict(current, region=code or current["region"]))
+
+            self.modal = RegionDialog(current["region"], chosen)
+
+        self.modal = S3ConnectDialog(self._connect_s3, values, on_regions=pick_region)
 
     def _connect_s3(self, values):
         """받은 자격증명으로 붙어본다.

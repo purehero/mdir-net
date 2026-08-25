@@ -583,14 +583,25 @@ class TestCommandsMenu(S3AppTestCase):
 
 
 class TestCredentialsDialog(S3AppTestCase):
-    def open(self, profile=None):
+    def open(self, profile=None, on_regions=None):
         got = []
-        dialog = app_module.S3ConnectDialog(got.append, profile)
+        dialog = app_module.S3ConnectDialog(got.append, profile, on_regions=on_regions)
         return dialog, got
 
     def type(self, dialog, text):
         for ch in text:
             dialog.key(ch)
+
+    def fill(self, dialog, region="ap-northeast-2", access=EXAMPLE_KEY, secret="s3cr3t"):
+        """세 필수 칸을 채우고 `연결` 줄로 내려간다."""
+        self.type(dialog, region)
+        dialog.key(term.TAB)
+        self.type(dialog, access)
+        dialog.key(term.TAB)
+        self.type(dialog, secret)
+        dialog.key(term.TAB)  # 버킷
+        dialog.key(term.TAB)  # 연결
+        return dialog
 
     def test_the_saved_profile_prefills_every_field_but_the_secret(self):
         dialog, _ = self.open(
@@ -620,32 +631,171 @@ class TestCredentialsDialog(S3AppTestCase):
         self.assertNotIn("s3cr3t", text)
         self.assertIn("*" * 6, text)
 
-    def test_enter_with_an_empty_field_keeps_the_dialog_open(self):
-        """닫아버리면 쳐 넣은 것이 다 사라진다. 무엇이 빠졌는지만 말한다."""
+    def test_enter_in_an_input_field_only_moves_down(self):
+        """시크릿 키를 치다 Enter 가 눌려 반쯤 채운 채 붙는 일이 없어야 한다."""
         dialog, got = self.open()
         self.type(dialog, "ap-northeast-2")
 
         self.assertFalse(dialog.key(term.ENTER))
         self.assertEqual(got, [])
-        self.assertIn("액세스 키 ID", "\n".join(dialog.lines(60)))
-        self.assertIn("비었습니다", dialog.error)
+        self.assertEqual(dialog.at, 1)
+
+    def test_connecting_happens_on_the_bottom_row(self):
+        dialog, got = self.open()
+        self.fill(dialog)
+
+        self.assertEqual(dialog.at, dialog.SUBMIT)
+        self.assertTrue(dialog.key(term.ENTER))
+        self.assertEqual(got[0]["region"], "ap-northeast-2")
+
+    def test_the_bottom_row_is_marked_on_screen(self):
+        dialog, _ = self.open()
+        self.assertIn("[ 연결 ]", "\n".join(dialog.lines(60)))
+
+    def test_an_empty_required_field_takes_the_cursor_back_to_it(self):
+        """닫아버리면 쳐 넣은 것이 다 사라진다. 그 칸으로 데려다 놓는다."""
+        dialog, got = self.open()
+        self.type(dialog, "ap-northeast-2")
+        for _ in range(4):
+            dialog.key(term.TAB)  # 채우지 않고 연결 줄로
+
+        self.assertFalse(dialog.key(term.ENTER))
+        self.assertEqual(got, [])
+        self.assertEqual(dialog.at, 1, "빈 칸으로 옮겨주지 않았다")
+        self.assertIn("액세스 키 ID", dialog.error)
+        self.assertEqual(dialog.values["region"], "ap-northeast-2", "쳐 넣은 것이 사라졌다")
 
     def test_the_bucket_may_be_left_empty(self):
         dialog, got = self.open()
-        self.type(dialog, "ap-northeast-2")
-        dialog.key(term.TAB)
-        self.type(dialog, EXAMPLE_KEY)
-        dialog.key(term.TAB)
-        self.type(dialog, "secret")
+        self.fill(dialog)
 
         self.assertTrue(dialog.key(term.ENTER))
         self.assertEqual(got[0]["bucket"], "")
+
+    def test_typing_on_the_bottom_row_changes_nothing(self):
+        dialog, _ = self.open()
+        self.fill(dialog)
+        self.type(dialog, "xyz")
+
+        self.assertEqual(dialog.values["bucket"], "")
+        self.assertEqual(dialog.at, dialog.SUBMIT)
 
     def test_escape_submits_nothing(self):
         dialog, got = self.open()
         self.type(dialog, "ap-northeast-2")
         self.assertTrue(dialog.key(term.ESC))
         self.assertEqual(got, [])
+
+    def test_space_on_the_region_field_asks_for_the_list(self):
+        asked = []
+        dialog, _ = self.open(on_regions=asked.append)
+        self.type(dialog, "ap-north")
+
+        self.assertTrue(dialog.key(term.SPACE))
+        self.assertEqual(asked[0]["region"], "ap-north", "쳐 넣던 값을 안고 가야 한다")
+
+    def test_space_elsewhere_is_just_a_space(self):
+        asked = []
+        dialog, _ = self.open(on_regions=asked.append)
+        dialog.key(term.TAB)
+        dialog.key(term.SPACE)
+
+        self.assertEqual(asked, [])
+        self.assertEqual(dialog.text, " ")
+
+    def test_the_list_hint_shows_only_on_the_region_field(self):
+        dialog, _ = self.open(on_regions=lambda v: None)
+        self.assertIn("Space 리전 목록", "\n".join(dialog.lines(60)))
+
+        dialog.key(term.TAB)
+        self.assertNotIn("Space 리전 목록", "\n".join(dialog.lines(60)))
+
+
+class TestRegionDialog(S3AppTestCase):
+    def picker(self, current="", on_choose=None):
+        dialog = app_module.RegionDialog(current, on_choose or (lambda code: None))
+        dialog.max_body = 18
+        return dialog
+
+    def test_every_region_can_be_reached(self):
+        dialog = self.picker()
+        dialog.key(term.END_KEY)
+        self.assertEqual(dialog.cursor, len(s3.REGIONS) - 1)
+
+    def test_the_list_opens_at_the_current_region(self):
+        """다시 고를 때 처음부터 훑어 내려갈 이유가 없다."""
+        dialog = self.picker("ap-northeast-2")
+        self.assertEqual(s3.REGIONS[dialog.cursor][0], "ap-northeast-2")
+
+    def test_an_unknown_region_opens_at_the_top(self):
+        self.assertEqual(self.picker("mars-north-1").cursor, 0)
+
+    def test_it_shows_the_code_and_a_readable_name(self):
+        text = "\n".join(self.picker("ap-northeast-2").lines(60))
+        self.assertIn("ap-northeast-2", text)
+        self.assertIn("서울", text)
+
+    def test_it_says_how_many_are_below(self):
+        self.assertIn("아래로", "\n".join(self.picker().lines(60)))
+
+    def test_choosing_returns_the_code(self):
+        got = []
+        dialog = self.picker("ap-northeast-2", got.append)
+        self.assertTrue(dialog.key(term.ENTER))
+        self.assertEqual(got, ["ap-northeast-2"])
+
+    def test_cancelling_reports_nothing_chosen(self):
+        got = []
+        dialog = self.picker("ap-northeast-2", got.append)
+        self.assertTrue(dialog.key(term.ESC))
+        self.assertEqual(got, [None])
+
+    def test_the_box_never_swallows_its_own_hint_line(self):
+        """낮은 화면에서 안내줄이 잘리면 고르는 키를 알 방법이 없다."""
+        dialog = self.picker()
+        dialog.max_body = 6
+        rows = dialog.lines(60)
+        self.assertLessEqual(len(rows), 6)
+        self.assertIn("Enter 선택", rows[-1])
+
+
+class TestRegionPickerFlow(S3AppTestCase):
+    """폼과 목록 사이를 오가도 쳐 넣은 값을 잃지 않는다."""
+
+    def form(self):
+        self.assertIsInstance(self.app.modal, app_module.S3ConnectDialog)
+        return self.app.modal
+
+    def test_space_swaps_the_form_for_the_list(self):
+        self.app._open_s3_dialog()
+        self.form().key(term.SPACE)
+        self.assertIsInstance(self.app.modal, app_module.RegionDialog)
+
+    def test_choosing_fills_the_region_and_keeps_the_rest(self):
+        self.app._open_s3_dialog()
+        form = self.form()
+        form._go(1)
+        for ch in EXAMPLE_KEY:
+            form.key(ch)
+        form._go(0)
+        form.key(term.SPACE)
+
+        picker = self.app.modal
+        picker.cursor = s3.region_index("ap-northeast-2")
+        picker.key(term.ENTER)
+
+        self.assertEqual(self.form().values["region"], "ap-northeast-2")
+        self.assertEqual(self.form().values["access_key"], EXAMPLE_KEY)
+
+    def test_cancelling_the_list_leaves_the_region_alone(self):
+        self.app._open_s3_dialog()
+        form = self.form()
+        for ch in "eu-west-1":
+            form.key(ch)
+        form.key(term.SPACE)
+        self.app.modal.key(term.ESC)
+
+        self.assertEqual(self.form().values["region"], "eu-west-1")
 
 
 class TestConnectedPane(S3AppTestCase):
