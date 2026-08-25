@@ -145,7 +145,7 @@ A Norton Commander style pull-down menu. `<` `>` moves between menus, `Enter` ru
 |---|---|
 | **Left** | Left pane (my PC) — sort, refresh, folder tree, drives |
 | **Files** | View file, copy, move, rename, make directory, delete, help, quit |
-| **Commands** | Find a PC to connect to, disconnect, manage shared folders |
+| **Commands** | Find a PC to connect to, connect to AWS S3, disconnect, manage shared folders |
 | **Options** | Show / hide dotfiles, colour set, mouse |
 | **Right** | Right pane (peer) — sort, refresh |
 
@@ -323,6 +323,39 @@ The LZH, ARJ, and RAR formats MDir handled are not supported; only what the stan
 
 If a name inside the archive **points outside it** (`../../somewhere`), the entry is hidden from the listing and the count of hidden entries is reported. Archives like that are used to write files outside the destination.
 
+## AWS S3
+
+**Connect to AWS S3** in the `Commands` menu points the right pane at an S3 bucket. Once attached it behaves exactly like a peer PC — `Enter` opens a folder, `F3` views the head of a file, `5` uploads or downloads, and `6`/`7`/`8` rename, make a folder, or delete.
+
+```
+리전                ap-northeast-2       (region)
+액세스 키 ID        AKIA................ (access key id)
+시크릿 액세스 키    ******************** (secret access key)
+버킷 (비우면 전체)  my-bucket            (bucket, blank = all)
+```
+
+`Tab` moves between fields, `Enter` connects. The secret key is masked with `*` on screen.
+
+**Leave the bucket blank** and every bucket in the account is listed at the virtual root like folders (this needs `ListBuckets`). Name one bucket and only that bucket appears, with no `ListBuckets` needed — keys scoped to a single bucket are common enough to be worth the case.
+
+**Connecting reads a listing once.** A wrong key or the wrong region is reported right there. When the region is wrong, S3 tells us the correct one and that is what you see.
+
+**A peer connection and an S3 connection are not used at the same time.** There is only one right pane, so with both attached there is no telling which one you are looking at. Approving a peer while on S3 lets go of S3 and says so.
+
+### Worth knowing
+
+- **S3 has no folders.** `7` writes an empty object whose name ends in `/`. That is the convention the console and other tools share. Empty folders are carried across the same way.
+- **Rename is a copy followed by a delete,** because S3 has no rename. For a folder, every object under it is moved one at a time, so a large folder takes a while.
+- **Files over 5GB cannot be uploaded,** because multipart upload is not implemented. Rather than fail halfway up, it is refused before sending.
+- Buckets themselves are neither created nor deleted here. Use the AWS console.
+- `boto3` is not used. SigV4 signing and the REST calls are done with the standard library (`mdirnet/s3.py`).
+
+### Where the keys end up
+
+**The secret access key is never stored.** It lives in memory only while the program is running.
+
+Only the region, access key id, and bucket go into `~/.mdirnet/settings.json`, to prefill the fields next time. Just the secret field needs typing again.
+
 ## Security scope
 
 This was built for the inside of one router. There is no protection beyond that line.
@@ -333,6 +366,7 @@ This was built for the inside of one router. There is no protection beyond that 
 - **Transfers are encrypted with TLS 1.3.** Capturing packets on the same network reveals nothing. The certificate is generated at start-up and never stored.
 - **But the peer is not authenticated.** The certificate is self-signed, so there is no chain to verify and an active man-in-the-middle (ARP spoofing and the like) is not stopped. To check, compare the **device fingerprint** shown on both screens. Do not use this on a network you do not trust (a café, public Wi-Fi).
 - **F8 delete applies remotely too.** An approved peer can delete files **inside** my shared folders. The shared folder itself, and anything outside it, cannot be deleted.
+- **The S3 secret key is never written to disk.** The settings file holds only the region, access key id, and bucket. Traffic to S3 goes over HTTPS.
 
 ## Firewall
 

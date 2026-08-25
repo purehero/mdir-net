@@ -58,3 +58,23 @@ def load_mouse(default=True):
 
 def save_mouse(enabled):
     _save("mouse", bool(enabled))
+
+
+def load_s3_profile():
+    """저장된 S3 접속 정보. 리전/액세스 키 ID/버킷만 들어 있다.
+
+    시크릿 키는 여기 넣지 않는다. 이 파일은 평문이라 한 번 새면 되돌릴 방법이
+    없다. 매번 입력받는 번거로움을 감수하는 편이 낫다.
+    """
+    raw = _load_all().get("s3")
+    if not isinstance(raw, dict):
+        return {"region": "", "access_key": "", "bucket": ""}
+    return {
+        key: raw.get(key) if isinstance(raw.get(key), str) else ""
+        for key in ("region", "access_key", "bucket")
+    }
+
+
+def save_s3_profile(region, access_key, bucket=""):
+    """다음 실행에서 자동으로 채워 넣을 값만 저장한다."""
+    _save("s3", {"region": region, "access_key": access_key, "bucket": bucket})

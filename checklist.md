@@ -1412,3 +1412,42 @@ SAF 권한과 공유 목록이 함께 날아간다.
 ### 남은 것
 - [ ] 자동 회귀 테스트가 없다. Compose UI 테스트 의존성(`ui-test-junit4`)을
       새로 받아야 해서 손대지 않았다
+
+## AWS S3 연결 (Commands 메뉴)
+
+오른쪽 패널을 S3 버킷에 붙인다. 키 정보는 다이얼로그로 받는다.
+
+### 만든 것
+- [x] `mdirnet/s3.py` - SigV4 서명과 S3 REST 호출을 표준 라이브러리로 (boto3 없음)
+- [x] `S3Link` 가 `session.Session` 과 같은 이름들을 내놓는다
+      (`remote_list` / `remote_tree` / `remote_head` / `remote_stat` /
+      `remote_mkdir` / `remote_delete` / `remote_rename` / `pull_file` / `push_file`)
+- [x] `S3Error(session.SessionError)` - 기존 오류 처리 경로를 그대로 탄다
+- [x] `App.link` 프로퍼티 - 피어 세션과 S3 가 같은 자리를 나눠 쓴다
+- [x] `S3ConnectDialog` - 리전/액세스 키 ID/시크릿 키/버킷 네 칸, Tab 이동, 시크릿 마스킹
+- [x] `settings.load_s3_profile` / `save_s3_profile` - 시크릿 키는 저장하지 않는다
+- [x] Commands 메뉴에 "AWS S3 연결". 끊기는 기존 "연결 끊기" 가 겸한다
+- [x] README.md / README.ko.md 에 `AWS S3` 절과 보안 범위 항목
+
+### 확인한 것
+- [x] SigV4 가 AWS 문서의 공식 예제 네 개와 서명값까지 일치
+      (GET+Range, ?lifecycle, ?max-keys&prefix, PUT+특수문자 키)
+- [x] 목록 - CommonPrefixes/Contents 분리, 폴더 자리표 숨김, continuation-token 페이지 넘김
+- [x] 전송 - 업로드 본문/Content-Length/진행률, 다운로드 `.part` 처리, 실패 시 반쪽 파일 없음
+- [x] 바꾸기 - mkdir 자리표, 폴더 삭제(깊은 것부터), 이름 바꾸기(복사 후 삭제)
+- [x] 오류 - XML 오류 본문 -> 문장, 리전 불일치 -> 맞는 리전 안내, 네트워크 실패 -> S3Error
+- [x] 엔드포인트 - 점 없는 버킷은 가상 호스트, 점 있으면 경로 방식(TLS 와일드카드 때문)
+- [x] 화면 - Commands 메뉴 항목, 다이얼로그 프리필/마스킹/필수 칸, 패널 목록, 헤더 표시
+- [x] F5 복사가 S3 를 상대로도 그대로 돈다 (업로드/다운로드 양방향)
+- [x] 전체 테스트 836개 통과 (S3 60개 추가)
+
+### 걸렸던 것
+- [x] **버킷을 지정하면 연결 검증이 네트워크를 지나지 않았다.** 루트 목록이
+      그 버킷 하나를 그대로 돌려주도록 만들어 두었더니, 틀린 키로도 연결이
+      성사됐다. 테스트가 잡았다. 검증은 `link.bucket or ROOT` 를 읽는다
+- [x] `·`(U+00B7)를 주석에 썼다가 폭 검사 테스트에 걸렸다. Ambiguous 폭이다
+
+### 하지 않은 것
+- [ ] 멀티파트 업로드. 5GB 넘는 파일은 보내기 전에 막는다
+- [ ] 버킷 만들기/지우기. AWS 콘솔의 일이다
+- [ ] S3 폴더 트리(`4`). 원격 패널 전체가 트리를 막고 있다 (기존 제약 그대로)
