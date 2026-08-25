@@ -7,7 +7,8 @@ import queue
 import threading
 from pathlib import Path
 
-from .. import archive, config, discovery, fsops, session, settings, shares as shares_mod, winfw
+from .. import (archive, config, discovery, fsops, s3 as s3_mod, session, settings,
+                shares as shares_mod, winfw)
 from . import screen, term
 
 # 테두리 문자. 폭이 정확히 1칸이고 East Asian Width 가 A(Ambiguous)가 아닌 것만
@@ -160,12 +161,12 @@ class Pane:
         """패널 이름. 왼쪽은 늘 내 PC, 오른쪽은 늘 상대다."""
         if not self.is_remote:
             return "내 PC"
-        return self.app.session.peer_name if self.app.session else "상대"
+        return self.app.link.peer_name if self.app.link else "상대"
 
     @property
     def location(self):
         """지금 보고 있는 위치."""
-        if self.is_remote and not self.app.session:
+        if self.is_remote and not self.app.link:
             return "(연결되지 않음)"
         if self.tree:
             return str(self.tree.node_at(self.cursor))
@@ -180,7 +181,7 @@ class Pane:
 
     @property
     def active(self):
-        return not self.is_remote or self.app.session is not None
+        return not self.is_remote or self.app.link is not None
 
     @property
     def at_top(self):
@@ -347,7 +348,7 @@ class Pane:
             return
 
         self.message = "불러오는 중..."
-        active = self.app.session
+        active = self.app.link
 
         def work():
             try:
@@ -457,11 +458,16 @@ class InputDialog(Dialog):
         self._prompt = prompt if isinstance(prompt, list) else [prompt]
         self._on_submit = on_submit
 
-    def _rendered(self, inner):
-        """커서 자리의 글자를 반전시켜 보여준다. 끝이면 빈칸을 반전시킨다."""
-        head = self.text[: self.cursor]
-        at = self.text[self.cursor : self.cursor + 1] or " "
-        tail = self.text[self.cursor + 1 :]
+    def _rendered(self, inner, text=None):
+        """커서 자리의 글자를 반전시켜 보여준다. 끝이면 빈칸을 반전시킨다.
+
+        `text` 를 주면 그것을 대신 그린다. 시크릿 키를 `*` 로 가려 보여주면서도
+        커서는 제자리에 두려는 것이다 (가린 글자도 길이가 1:1 이라 자리가 맞는다).
+        """
+        text = self.text if text is None else text
+        head = text[: self.cursor]
+        at = text[self.cursor : self.cursor + 1] or " "
+        tail = text[self.cursor + 1 :]
         body = term.BOLD + head + term.RESET + term.BAR + at + term.RESET
         body += term.BOLD + tail + term.RESET
         return screen.pad(body, inner)
@@ -505,6 +511,96 @@ class InputDialog(Dialog):
     def _insert(self, text):
         self.text = self.text[: self.cursor] + text + self.text[self.cursor :]
         self.cursor += len(text)
+
+
+class S3ConnectDialog(InputDialog):
+    """AWS S3 접속 정보를 받는다. 칸이 여럿이라 Tab 으로 옮겨 다닌다.
+
+    한 줄 입력창을 물려받아 편집 키(< > Home End Backspace Delete)를 그대로
+    쓴다. `text` 는 늘 '지금 고치는 칸' 의 내용이고, 칸을 옮길 때 `values` 로
+    옮겨 담는다. 입력 처리를 두 벌 갖지 않으려는 것이다.
+    """
+
+    # (키, 라벨, 가릴지). 버킷만 비워둘 수 있다
+    FIELDS = (
+        ("region", "리전", False),
+        ("access_key", "액세스 키 ID", False),
+        ("secret_key", "시크릿 액세스 키", True),
+        ("bucket", "버킷 (비우면 전체)", False),
+    )
+
+    def __init__(self, on_submit, initial=None):
+        initial = initial or {}
+        self.values = {key: str(initial.get(key) or "") for key, _, _ in self.FIELDS}
+        self.at = 0
+        self.error = ""
+        InputDialog.__init__(
+            self, "AWS S3 연결", [], on_submit, initial=self.values[self.FIELDS[0][0]]
+        )
+
+    # --- 칸 옮기기 ---
+
+    def _store(self):
+        self.values[self.FIELDS[self.at][0]] = self.text
+
+    def _move(self, delta):
+        self._store()
+        self.at = (self.at + delta) % len(self.FIELDS)
+        self.text = self.values[self.FIELDS[self.at][0]]
+        self.cursor = len(self.text)
+
+    # --- 그리기 ---
+
+    def lines(self, inner):
+        label_col = max(screen.width(label) for _, label, _ in self.FIELDS) + 2
+        rows = ["접속 정보를 입력하세요. 시크릿 키는 저장하지 않습니다.", ""]
+
+        for index, (key, label, secret) in enumerate(self.FIELDS):
+            here = index == self.at
+            value = self.text if here else self.values[key]
+            shown = "*" * len(value) if secret else value
+            head = ("> " if here else "  ") + screen.pad(label, label_col)
+            room = max(inner - screen.width(head), 1)
+            body = (
+                self._rendered(room, shown)
+                if here
+                else term.DIM + screen.pad(screen.fit_left(shown, room), room) + term.RESET
+            )
+            rows.append(screen.pad(head + body, inner))
+
+        rows.append("")
+        if self.error:
+            rows.append(term.BAD + screen.fit(self.error, inner) + term.RESET)
+        rows.append(term.DIM + "Tab 다음 칸   Enter 연결   Esc 취소" + term.RESET)
+        return rows
+
+    # --- 입력 ---
+
+    def key(self, key):
+        if key == term.ESC:
+            return True
+
+        if key == term.ENTER:
+            self._store()
+            missing = next(
+                (label for k, label, _ in self.FIELDS[:3] if not self.values[k].strip()), ""
+            )
+            if missing:
+                # 닫아버리면 쳐 넣은 것이 사라진다. 열어둔 채로 무엇이 빠졌는지만 말한다
+                self.error = "%s 칸이 비었습니다" % missing
+                return False
+            self._on_submit(dict(self.values))
+            return True
+
+        if key in (term.TAB, term.DOWN):
+            self._move(1)
+            return False
+        if key == term.UP:
+            self._move(-1)
+            return False
+
+        self.error = ""
+        return InputDialog.key(self, key)
 
 
 class ViewerDialog(Dialog):
@@ -814,6 +910,7 @@ class MenuBar(Dialog):
                 "Commands",
                 [
                     ("연결할 PC 찾기", "n", app._open_peer_dialog),
+                    ("AWS S3 연결", "", app._open_s3_dialog),
                     ("연결 끊기", "d", app._disconnect),
                     sep,
                     ("공유 폴더 관리", "o", app._open_share_manager),
@@ -1450,6 +1547,8 @@ class App:
         self.right = self.remote
 
         self.session = None
+        # S3 에 붙어 있으면 S3Link. 피어 세션과 자리를 나눠 쓴다 (link 를 보라)
+        self.s3 = None
         self.modal = None
         self.status = "n 을 눌러 연결할 PC 를 찾습니다"
         self.transfer = None
@@ -1473,6 +1572,26 @@ class App:
         self.use_mouse = settings.load_mouse()
         # Windows 에서만 방화벽을 묻는다. 다른 OS 는 물어볼 것이 없다
         self._firewall_asked = not winfw.available()
+
+    # --- 원격 상대 ---
+
+    @property
+    def link(self):
+        """오른쪽 패널이 실제로 말을 거는 상대. 없으면 None.
+
+        피어 세션과 S3 는 `remote_list` / `pull_file` 같은 같은 이름들을 내놓는다.
+        패널과 복사 경로는 이 자리만 보고 상대가 누구인지는 모른다. 그래서 S3 를
+        더하면서 전송 로직을 건드리지 않았다.
+
+        둘은 동시에 붙지 않는다. 오른쪽 패널이 하나뿐이라 둘 다 붙으면 어느 쪽을
+        보고 있는지 알 수 없다. 연결하는 자리에서 서로를 막는다.
+        """
+        return self.s3 or self.session
+
+    @property
+    def top_name(self):
+        """원격 패널의 최상위를 부르는 말. 안내문이 상대에 맞게 나가야 한다."""
+        return "버킷" if self.s3 else "공유 폴더"
 
     # --- 실행 ---
 
@@ -1626,6 +1745,58 @@ class App:
     def _open_peer_dialog(self):
         self.modal = PeerDialog(self)
 
+    # --- AWS S3 ---
+
+    def _open_s3_dialog(self):
+        """Commands > AWS S3 연결. 저장해 둔 프로필로 칸을 미리 채운다."""
+        if self.session:
+            self.status = "%s 와 연결되어 있습니다. 먼저 연결을 끊으세요" % (
+                self.session.peer_name
+            )
+            return
+        self.modal = S3ConnectDialog(self._connect_s3, settings.load_s3_profile())
+
+    def _connect_s3(self, values):
+        """받은 자격증명으로 붙어본다.
+
+        목록을 한 번 읽어보는 것이 곧 검증이다. 키가 틀렸거나 리전이 다르면
+        여기서 걸러져, 패널이 붙은 뒤에야 오류를 만나는 일이 없다.
+        """
+        link = s3_mod.S3Link(
+            values["region"].strip(),
+            values["access_key"].strip(),
+            values["secret_key"].strip(),
+            values["bucket"].strip(),
+        )
+        self.status = "S3 에 연결하는 중..."
+
+        def work():
+            try:
+                # 버킷을 정했으면 그 안을 읽어본다. 루트 목록은 버킷 하나를
+                # 그대로 되돌려주므로 네트워크를 지나지 않아 검증이 안 된다
+                link.remote_list(link.bucket or shares_mod.ROOT)
+            except session.SessionError as exc:
+                self.events.put(("error", "S3 에 연결하지 못했습니다: %s" % exc))
+                return
+            self.events.put(("s3_connected", link))
+
+        threading.Thread(target=work, name="s3-connect", daemon=True).start()
+
+    def _on_s3_connected(self, link):
+        self.s3 = link
+        # 연결했다는 것은 그쪽을 보겠다는 뜻이다. 피어 연결과 같은 자리다
+        self.right.is_remote = True
+        self.right.navigate(shares_mod.ROOT)
+        self.status = "%s 에 연결되었습니다" % link.peer_name
+
+        if not self.persist:
+            return
+        try:
+            # 시크릿 키는 넣지 않는다. 다음에도 그 칸만 다시 채우면 된다
+            settings.save_s3_profile(link.region, link.access_key, link.bucket)
+        except OSError as exc:
+            self.status = "접속 정보를 저장하지 못했습니다: %s" % exc
+
     def _open_menu(self):
         self.modal = MenuBar(self)
 
@@ -1643,18 +1814,18 @@ class App:
         고르는 것과 같은 자리다.
         """
         going_remote = not self.right.is_remote
-        if going_remote and not self.session:
-            self.status = "연결된 상대가 없습니다. n 으로 먼저 연결하세요"
+        if going_remote and not self.link:
+            self.status = "연결된 곳이 없습니다. n 으로 PC 를, 메뉴에서 S3 를 연결합니다"
             return
 
         self.right.set_remote(going_remote)
-        self.status = "오른쪽 패널: %s" % ("상대" if going_remote else "내 PC")
+        self.status = "오른쪽 패널: %s" % (self.link.peer_name if going_remote else "내 PC")
 
     def toggle_hidden(self):
         self.show_hidden = not self.show_hidden
         self.status = "숨김 파일 %s" % ("보임" if self.show_hidden else "감춤")
         self.local.refresh()
-        if self.session:
+        if self.link:
             self.remote.refresh()
 
     def toggle_theme(self):
@@ -1721,7 +1892,9 @@ class App:
         """
         pane = self.focus
         if pane.is_remote:
-            self.status = "상대 쪽은 공유 폴더 안으로 제한됩니다. 드라이브를 바꿀 수 없습니다"
+            self.status = "오른쪽 패널은 %s 안으로 제한됩니다. 드라이브를 바꿀 수 없습니다" % (
+                self.top_name
+            )
             return
 
         drives = fsops.list_drives()
@@ -1784,6 +1957,9 @@ class App:
 
         elif kind == "connected":
             self._on_connected(payload[0])
+
+        elif kind == "s3_connected":
+            self._on_s3_connected(payload[0])
 
         elif kind == "connect_failed":
             self.modal = MessageDialog("연결 실패", payload[0], term.BAD)
@@ -1852,7 +2028,7 @@ class App:
         보고 있고 연결이 없으면 복사한 파일이 화면에 안 나타났다.
         """
         for pane in (self.left, self.right):
-            if pane.is_remote and not self.session:
+            if pane.is_remote and not self.link:
                 continue
             pane.refresh()
 
@@ -1869,9 +2045,15 @@ class App:
         if self.session:
             new_session.close("이미 다른 연결이 있습니다")
             return
+        # S3 를 보고 있었다면 놓는다. 승인한 쪽이 사용자이므로 거절하지 않고
+        # 자리를 내준다. 조용히 바뀌면 헷갈리니 상태줄에 남긴다
+        dropped = self.s3.peer_name if self.s3 else ""
+        self.s3 = None
 
         self.session = new_session
         self.status = "%s 와 연결되었습니다" % new_session.peer_name
+        if dropped:
+            self.status += " (%s 연결은 놓았습니다)" % dropped
         if isinstance(self.modal, (PeerDialog, ApprovalDialog)):
             self.modal = None
 
@@ -1888,14 +2070,21 @@ class App:
 
         threading.Thread(target=load_home, name="remote-home", daemon=True).start()
 
+    def _clear_remote_pane(self):
+        """상대가 사라졌을 때 오른쪽 패널을 비운다.
+
+        오른쪽이 내 PC 를 보고 있으면 끊겼다고 지울 이유가 없다.
+        """
+        if not self.right.is_remote:
+            return
+        self.right.entries = []
+        self.right.selected.clear()
+        self.focus = self.local
+
     def _on_disconnected(self, reason):
         self.session = None
         self.transfer = None
-        # 오른쪽이 내 PC 를 보고 있으면 끊겼다고 지울 이유가 없다
-        if self.right.is_remote:
-            self.right.entries = []
-            self.right.selected.clear()
-            self.focus = self.local
+        self._clear_remote_pane()
         if isinstance(self.modal, ProgressDialog):
             self.modal = None
         self.status = reason
@@ -2104,6 +2293,13 @@ class App:
             pane.navigate(pane.up())
 
     def _disconnect(self):
+        """붙어 있는 쪽을 놓는다. S3 와 피어는 함께 붙지 않으므로 헷갈릴 것이 없다."""
+        if self.s3:
+            name = self.s3.peer_name
+            self.s3 = None
+            self._clear_remote_pane()
+            self.status = "%s 연결을 끊었습니다" % name
+            return
         if not self.session:
             self.status = "연결된 상대가 없습니다"
             return
@@ -2137,7 +2333,7 @@ class App:
 
     def _run_remote(self, work, on_done):
         """원격 요청은 응답을 기다리므로 반드시 워커 스레드에서 돌린다."""
-        active = self.session
+        active = self.link
 
         def runner():
             try:
@@ -2198,7 +2394,7 @@ class App:
 
         # 원격 파일은 앞부분만 받아온다. 통째로 내려받지 않는다
         self.status = "%s 를 불러오는 중..." % item["name"]
-        active = self.session
+        active = self.link
 
         def work():
             try:
@@ -2216,7 +2412,7 @@ class App:
         if not pane.active:
             return
         if pane.is_remote and pane.at_top:
-            self.status = "공유 목록에는 폴더를 만들 수 없습니다. 안으로 들어가세요"
+            self.status = "%s 목록에는 폴더를 만들 수 없습니다. 안으로 들어가세요" % self.top_name
             return
 
         def create(name):
@@ -2255,7 +2451,11 @@ class App:
             self.status = "이름을 바꿀 항목에 커서를 두세요"
             return
         if pane.is_remote and pane.at_top:
-            self.status = "공유 폴더 이름은 상대가 목록에서 정합니다"
+            self.status = (
+                "버킷 이름은 AWS 콘솔에서 바꿉니다"
+                if self.s3
+                else "공유 폴더 이름은 상대가 목록에서 정합니다"
+            )
             return
 
         old = item["name"]
@@ -2309,7 +2509,11 @@ class App:
         if not pane.active:
             return
         if pane.is_remote and pane.at_top:
-            self.status = "공유 폴더는 상대가 목록에서 빼야 합니다 (여기서는 못 지웁니다)"
+            self.status = (
+                "버킷은 AWS 콘솔에서 지웁니다 (여기서는 못 지웁니다)"
+                if self.s3
+                else "공유 폴더는 상대가 목록에서 빼야 합니다 (여기서는 못 지웁니다)"
+            )
             return
 
         items = pane.targets()
@@ -2317,7 +2521,7 @@ class App:
             self.status = "지울 항목을 고르세요 (Space 로 선택)"
             return
 
-        where = self.session.peer_name if pane.is_remote else "내 PC"
+        where = self.link.peer_name if pane.is_remote else "내 PC"
         names = [i["name"] + ("/" if i["is_dir"] else "") for i in items]
         has_dir = any(i["is_dir"] for i in items)
 
@@ -2503,9 +2707,9 @@ class App:
             return
         source, dest, items = picked
 
-        # 공유 폴더 자체는 옮길 수 없다. 지우는 것과 같은 규칙이다
+        # 공유 폴더(S3 면 버킷) 자체는 옮길 수 없다. 지우는 것과 같은 규칙이다
         if source.is_remote and source.at_top:
-            self.status = "공유 폴더 자체는 옮길 수 없습니다"
+            self.status = "%s 자체는 옮길 수 없습니다" % self.top_name
             return
 
         # 내 PC 안이면 rename 으로 즉시 끝난다. 그때는 진행률 창을 띄우지 않는다
@@ -2580,17 +2784,17 @@ class App:
             self.status = "압축에서 상대로 바로 보낼 수는 없습니다. 먼저 내 PC 로 꺼내세요"
             return None
 
-        if (source.is_remote or dest.is_remote) and not self.session:
-            self.status = "먼저 n 으로 상대에 연결하세요"
+        if (source.is_remote or dest.is_remote) and not self.link:
+            self.status = "먼저 연결하세요 (n 으로 PC, 메뉴에서 S3)"
             return None
         if source is dest:
             self.status = "같은 패널로는 %s할 수 없습니다" % what
             return None
         if dest.is_remote and dest.at_top:
-            self.status = "상대의 공유 폴더 안으로 들어가세요 (Enter)"
+            self.status = "%s 안으로 들어가세요 (Enter)" % self.top_name
             return None
         if source.is_remote and source.at_top:
-            self.status = "공유 폴더 안으로 들어가 파일을 고르세요 (Enter)"
+            self.status = "%s 안으로 들어가 파일을 고르세요 (Enter)" % self.top_name
             return None
 
         items = source.targets()
@@ -2623,7 +2827,7 @@ class App:
         transfer = Transfer("%d개 항목" % len(items), 0)
         self.transfer = transfer
         self.modal = ProgressDialog(transfer)
-        active = self.session
+        active = self.link
 
         def work():
             errors = []
@@ -2786,10 +2990,10 @@ class App:
 
         # 좁은 터미널에서도 연결 상태는 보여야 한다. 긴 형태부터 시도해
         # 들어가는 것을 고른다
-        if self.session:
+        if self.link:
             color, variants = term.GOOD, [
-                "* %s 연결됨" % self.session.peer_name,
-                "* %s" % self.session.peer_name,
+                "* %s 연결됨" % self.link.peer_name,
+                "* %s" % self.link.peer_name,
                 "*",
             ]
         else:
@@ -3004,7 +3208,8 @@ class App:
 
     def _pane_summary(self, pane):
         if not pane.active:
-            return "n 으로 연결하세요"
+            # 붙을 수 있는 곳이 둘이다. PC 는 키 하나로, S3 는 메뉴로 연다
+            return "n 또는 메뉴에서 연결하세요"
         if pane.selected:
             total = sum(e["size"] for e in pane.entries if e["name"] in pane.selected)
             return "%d개 선택 . %s" % (len(pane.selected), fsops.human_size(total))

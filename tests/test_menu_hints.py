@@ -139,7 +139,7 @@ class TestRightPaneSource(HintTestCase):
         app._on_key("=")  # 연결이 없으면 상대로 못 돌아간다
 
         self.assertFalse(app.right.is_remote)
-        self.assertIn("연결된 상대가 없습니다", app.status)
+        self.assertIn("연결된 곳이 없습니다", app.status)
 
     def test_switching_back_works_with_a_session(self):
         app = self.fresh_app()
