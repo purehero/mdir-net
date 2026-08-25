@@ -328,13 +328,34 @@ If a name inside the archive **points outside it** (`../../somewhere`), the entr
 **Connect to AWS S3** in the `Commands` menu points the right pane at an S3 bucket. Once attached it behaves exactly like a peer PC — `Enter` opens a folder, `F3` views the head of a file, `5` uploads or downloads, and `6`/`7`/`8` rename, make a folder, or delete.
 
 ```
-리전                ap-northeast-2       (region)
-액세스 키 ID        AKIA................ (access key id)
-시크릿 액세스 키    ******************** (secret access key)
-버킷 (비우면 전체)  my-bucket            (bucket, blank = all)
+> 리전                ap-northeast-2        (region)
+  액세스 키 ID        AKIA................  (access key id)
+  시크릿 액세스 키    ********************  (secret access key)
+  버킷 (비우면 전체)  my-bucket             (bucket, blank = all)
+
+  [ 연결 ]                                  (connect)
+
+Space 리전 목록   Tab 이동   Enter 다음 줄   Esc 취소
 ```
 
-`Tab` moves between fields, `Enter` connects. The secret key is masked with `*` on screen.
+`Tab` or `↑` `↓` moves between rows. The secret key is masked with `*` on screen.
+
+**Connecting happens only on the bottom `[ 연결 ]` row.** In an input field `Enter` just steps down a row — so a stray `Enter` while typing the secret key cannot fire off a half-filled connection. If a required field (region, access key id, secret key) is empty, the cursor is taken back to it and told what is missing.
+
+**`Space` on the region field opens a region list.** It shows the code alongside a readable name and opens on the current value if that is one of them. A region not on the list can still be typed into the field.
+
+```
+리전 선택
+------------------------------------
+  ap-northeast-1   아시아 태평양 (도쿄)
+> ap-northeast-2   아시아 태평양 (서울)
+  ap-northeast-3   아시아 태평양 (오사카)
+  ...
+  아래로 17개 더
+Enter 선택   Esc 취소
+```
+
+The list holds commercial regions only. China (`amazonaws.com.cn`) and GovCloud use a different endpoint shape and are not supported.
 
 **Leave the bucket blank** and every bucket in the account is listed at the virtual root like folders (this needs `ListBuckets`). Name one bucket and only that bucket appears, with no `ListBuckets` needed — keys scoped to a single bucket are common enough to be worth the case.
 
