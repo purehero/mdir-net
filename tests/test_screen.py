@@ -2,6 +2,7 @@
 
 import unittest
 
+from mdirnet import config
 from mdirnet.ui import screen, term
 
 
@@ -145,3 +146,40 @@ class TestRenderer(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestWindowSize(unittest.TestCase):
+    """켤 때 창을 키운다. 다만 남의 창을 좁히거나 바꿔놓고 나가지 않는다."""
+
+    def test_the_sequence_puts_rows_before_columns(self):
+        """xterm 의 CSI 8 은 행이 먼저다. 뒤집으면 창이 엉뚱하게 잡힌다."""
+        self.assertEqual(term.resize_seq(160, 48), "\x1b[8;48;160t")
+
+    def test_a_small_window_grows(self):
+        self.assertEqual(term.grown_to((80, 24), (160, 48)), (160, 48))
+
+    def test_a_wide_window_is_left_alone(self):
+        """넓게 쓰던 사람의 창을 좁히는 것은 도움이 아니다."""
+        self.assertEqual(term.grown_to((200, 60), (160, 48)), (200, 60))
+
+    def test_each_side_grows_on_its_own(self):
+        self.assertEqual(term.grown_to((200, 24), (160, 48)), (200, 48))
+        self.assertEqual(term.grown_to((80, 60), (160, 48)), (160, 60))
+
+    def test_it_is_twice_the_usual_terminal(self):
+        """80x24 가 터미널의 오랜 기본값이다. 그 두 배로 잡았다."""
+        self.assertEqual((config.WINDOW_COLS, config.WINDOW_ROWS), (160, 48))
+
+    def test_nothing_is_written_when_there_is_no_terminal(self):
+        """파이프로 돌 때 시퀀스를 뱉으면 출력에 쓰레기가 섞인다."""
+        written = []
+        original = term.write
+        term.write = written.append
+        self.addCleanup(lambda: setattr(term, "write", original))
+
+        term.resize(160, 48)  # 테스트 실행 중 stdout 은 tty 가 아니다
+        self.assertEqual(written, [])
+
+    def test_without_a_wanted_size_the_window_is_left_alone(self):
+        self.assertIsNone(term.Terminal()._want)
+        self.assertIsNone(term.Terminal()._size_before)
