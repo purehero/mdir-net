@@ -7,8 +7,8 @@ import queue
 import threading
 from pathlib import Path
 
-from .. import (archive, config, discovery, fsops, s3 as s3_mod, session, settings,
-                shares as shares_mod, winfw)
+from .. import (archive, config, discovery, fsops, keystore, s3 as s3_mod, session,
+                settings, shares as shares_mod, winfw)
 from . import screen, term
 
 # 테두리 문자. 폭이 정확히 1칸이고 East Asian Width 가 A(Ambiguous)가 아닌 것만
@@ -584,6 +584,10 @@ class S3ConnectDialog(InputDialog):
     **붙는 것은 맨 아래 `연결` 줄에서만** 한다. 입력 칸에서 Enter 는 다음 줄로
     내려갈 뿐이다 - 시크릿 키를 치다 Enter 가 눌려 반쯤 채운 채로 연결을
     시도하는 일이 없다.
+
+    `keep` 을 주면 시크릿 키를 맡길지 고르는 줄이 하나 더 생긴다. 맡길 곳이
+    없는 환경에서는 그 줄을 아예 만들지 않는다 - 고를 수 없는 것을 보여주면
+    왜 안 되는지 알 길이 없다.
     """
 
     # (키, 라벨, 가릴지). 버킷만 비워둘 수 있다
@@ -593,12 +597,14 @@ class S3ConnectDialog(InputDialog):
         ("secret_key", "시크릿 액세스 키", True),
         ("bucket", "버킷 (비우면 전체)", False),
     )
-    SUBMIT = len(FIELDS)  # 맨 아래 '연결' 줄의 자리
-    REQUIRED = 3          # 앞의 세 칸은 비울 수 없다
+    REQUIRED = 3  # 앞의 세 칸은 비울 수 없다
 
-    def __init__(self, on_submit, initial=None, on_regions=None):
+    def __init__(self, on_submit, initial=None, on_regions=None, keep=""):
         initial = initial or {}
         self.values = {key: str(initial.get(key) or "") for key, _, _ in self.FIELDS}
+        # 맡길 곳의 이름 ("키체인" 등). 비면 저장 줄이 없다
+        self.keep = str(keep or "")
+        self.remember = bool(initial.get("remember"))
         self.at = 0
         self.error = ""
         # 리전 목록 창을 여는 길. FolderDialog 가 드라이브 창을 여는 것과 같은
@@ -608,16 +614,38 @@ class S3ConnectDialog(InputDialog):
             self, "AWS S3 연결", [], on_submit, initial=self.values[self.FIELDS[0][0]]
         )
 
+    # --- 줄 ---
+
+    def rows(self):
+        """지금 화면에 있는 줄들. 맡길 곳이 없으면 저장 줄이 없다."""
+        names = [key for key, _, _ in self.FIELDS]
+        if self.keep:
+            names.append("remember")
+        names.append("submit")
+        return names
+
+    def submit_at(self):
+        return len(self.rows()) - 1
+
+    def _field(self, index):
+        """그 줄이 입력 칸이면 (키, 라벨, 가릴지), 아니면 None."""
+        return self.FIELDS[index] if index < len(self.FIELDS) else None
+
+    def _snapshot(self):
+        return dict(self.values, remember=self.remember)
+
     # --- 줄 옮기기 ---
 
     def _store(self):
-        if self.at < self.SUBMIT:
-            self.values[self.FIELDS[self.at][0]] = self.text
+        field = self._field(self.at)
+        if field:
+            self.values[field[0]] = self.text
 
     def _go(self, index):
         self._store()
-        self.at = index % (self.SUBMIT + 1)
-        self.text = "" if self.at == self.SUBMIT else self.values[self.FIELDS[self.at][0]]
+        self.at = index % len(self.rows())
+        field = self._field(self.at)
+        self.text = self.values[field[0]] if field else ""
         self.cursor = len(self.text)
 
     def _move(self, delta):
@@ -625,15 +653,18 @@ class S3ConnectDialog(InputDialog):
 
     # --- 그리기 ---
 
+    def _marker(self, index):
+        return "> " if index == self.at else "  "
+
     def lines(self, inner):
         label_col = max(screen.width(label) for _, label, _ in self.FIELDS) + 2
-        rows = ["접속 정보를 입력하세요. 시크릿 키는 저장하지 않습니다.", ""]
+        rows = ["접속 정보를 입력하세요.", ""]
 
         for index, (key, label, secret) in enumerate(self.FIELDS):
             here = index == self.at
             value = self.text if here else self.values[key]
             shown = "*" * len(value) if secret else value
-            head = ("> " if here else "  ") + screen.pad(label, label_col)
+            head = self._marker(index) + screen.pad(label, label_col)
             room = max(inner - screen.width(head), 1)
             body = (
                 self._rendered(room, shown)
@@ -642,11 +673,18 @@ class S3ConnectDialog(InputDialog):
             )
             rows.append(screen.pad(head + body, inner))
 
-        on_button = self.at == self.SUBMIT
+        if self.keep:
+            index = len(self.FIELDS)
+            head = self._marker(index) + screen.pad("시크릿 키 저장", label_col)
+            answer = "예 - %s에 맡깁니다" % self.keep if self.remember else "아니오"
+            body = answer if index == self.at else term.DIM + answer + term.RESET
+            rows.append(screen.pad(head + body, inner))
+
+        on_button = self.at == self.submit_at()
         button = "[ 연결 ]"
         rows.append("")
         rows.append(screen.pad(
-            ("> " if on_button else "  ")
+            self._marker(self.submit_at())
             + (term.BAR + button + term.RESET if on_button else button),
             inner,
         ))
@@ -654,13 +692,22 @@ class S3ConnectDialog(InputDialog):
         rows.append("")
         if self.error:
             rows.append(term.BAD + screen.fit(self.error, inner) + term.RESET)
-        # 키 안내는 지금 있는 줄에 맞춘다. 늘 같은 문장을 띄우면 입력 칸에서도
-        # Enter 가 연결하는 줄 안다
-        hint = "Tab 이동   %s   Esc 취소" % ("Enter 연결" if on_button else "Enter 다음 줄")
-        if self.at == 0 and self._on_regions:
-            hint = "Space 리전 목록   " + hint
-        rows.append(term.DIM + hint + term.RESET)
+        rows.append(term.DIM + self._hint() + term.RESET)
         return rows
+
+    def _hint(self):
+        """키 안내는 지금 있는 줄에 맞춘다.
+
+        늘 같은 문장을 띄우면 입력 칸에서도 Enter 가 연결하는 줄 안다.
+        """
+        here = self.rows()[self.at]
+        head = ""
+        if here == "region" and self._on_regions:
+            head = "Space 리전 목록   "
+        elif here == "remember":
+            head = "Space 켜고 끄기   "
+        tail = "Enter 연결" if here == "submit" else "Enter 다음 줄"
+        return "%sTab 이동   %s   Esc 취소" % (head, tail)
 
     # --- 입력 ---
 
@@ -676,24 +723,30 @@ class S3ConnectDialog(InputDialog):
             self.error = "%s 칸이 비었습니다" % self.FIELDS[missing][1]
             self._go(missing)
             return False
-        self._on_submit(dict(self.values))
+        self._on_submit(self._snapshot())
         return True
 
     def key(self, key):
         if key == term.ESC:
             return True
 
+        here = self.rows()[self.at]
+
         if key == term.ENTER:
-            if self.at != self.SUBMIT:
+            if here != "submit":
                 self._move(1)  # 입력 칸에서는 다음 줄로 내려갈 뿐이다
                 return False
             return self._connect()
 
-        # 리전 이름에는 공백이 없다. 그 칸에서만 Space 를 목록 여는 키로 쓴다
-        if key == term.SPACE and self.at == 0 and self._on_regions:
-            self._store()
-            self._on_regions(dict(self.values))
-            return True  # 목록 창이 이 창을 대신한다. 고르면 값을 안고 다시 열린다
+        if key == term.SPACE:
+            # 리전 이름에는 공백이 없다. 그 칸에서만 Space 를 목록 여는 키로 쓴다
+            if here == "region" and self._on_regions:
+                self._store()
+                self._on_regions(self._snapshot())
+                return True  # 목록 창이 이 창을 대신한다. 고르면 값을 안고 다시 열린다
+            if here == "remember":
+                self.remember = not self.remember
+                return False
 
         if key in (term.TAB, term.DOWN):
             self._move(1)
@@ -703,8 +756,8 @@ class S3ConnectDialog(InputDialog):
             return False
 
         self.error = ""
-        if self.at == self.SUBMIT:
-            return False  # '연결' 줄에는 고칠 글자가 없다
+        if not self._field(self.at):
+            return False  # 입력 칸이 아닌 줄에는 고칠 글자가 없다
         return InputDialog.key(self, key)
 
 
@@ -1859,7 +1912,33 @@ class App:
                 self.session.peer_name
             )
             return
-        self._show_s3_dialog(settings.load_s3_profile())
+        self._show_s3_dialog(self._s3_profile())
+
+    def _s3_profile(self):
+        """폼을 채울 값. 맡겨둔 시크릿 키가 있으면 그것까지 꺼내온다.
+
+        꺼내다 실패해도 그냥 비워둔다. 저장소가 잠겼거나 다른 사용자의 것일 수
+        있는데, 그걸로 연결을 막을 이유는 없다 - 치면 된다.
+        """
+        if not self.persist:
+            # 저장을 하지 않는 실행이면 읽지도 않는다. 테스트가 사람의 설정
+            # 파일과 키체인을 건드리지 않게 하는 선이기도 하다
+            return {"region": "", "access_key": "", "bucket": "", "remember": False}
+
+        profile = settings.load_s3_profile()
+        profile["remember"] = False
+        if not profile["access_key"] or not keystore.available():
+            return profile
+
+        try:
+            kept = keystore.load(profile["access_key"])
+        except keystore.KeystoreError:
+            return profile
+        if kept:
+            profile["secret_key"] = kept
+            # 이미 맡겨둔 것이 있으면 계속 맡기는 것이 뜻에 맞는다
+            profile["remember"] = True
+        return profile
 
     def _show_s3_dialog(self, values):
         """접속 폼을 연다. 리전 목록을 다녀와도 쳐 넣은 값을 잃지 않는다."""
@@ -1871,7 +1950,12 @@ class App:
 
             self.modal = RegionDialog(current["region"], chosen)
 
-        self.modal = S3ConnectDialog(self._connect_s3, values, on_regions=pick_region)
+        self.modal = S3ConnectDialog(
+            self._connect_s3,
+            values,
+            on_regions=pick_region,
+            keep=keystore.label() if self.persist else "",
+        )
 
     def _connect_s3(self, values):
         """받은 자격증명으로 붙어본다.
@@ -1898,11 +1982,11 @@ class App:
                     ("error", ["S3 에 연결하지 못했습니다."] + str(exc).split("\n"))
                 )
                 return
-            self.events.put(("s3_connected", link))
+            self.events.put(("s3_connected", link, bool(values.get("remember"))))
 
         threading.Thread(target=work, name="s3-connect", daemon=True).start()
 
-    def _on_s3_connected(self, link):
+    def _on_s3_connected(self, link, remember=False):
         self.s3 = link
         # 연결했다는 것은 그쪽을 보겠다는 뜻이다. 피어 연결과 같은 자리다
         self.right.is_remote = True
@@ -1912,10 +1996,31 @@ class App:
         if not self.persist:
             return
         try:
-            # 시크릿 키는 넣지 않는다. 다음에도 그 칸만 다시 채우면 된다
+            # 설정 파일은 평문이다. 시크릿 키는 여기에 넣지 않는다
             settings.save_s3_profile(link.region, link.access_key, link.bucket)
         except OSError as exc:
             self.status = "접속 정보를 저장하지 못했습니다: %s" % exc
+        self._keep_secret(link, remember)
+
+    def _keep_secret(self, link, remember):
+        """시크릿 키를 OS 비밀 저장소에 맡기거나 거기서 뺀다.
+
+        맡기지 않기로 했으면 **전에 맡긴 것도 지운다.** 껐는데 옛것이 남아 있으면
+        끈 것이 아니다.
+
+        실패해도 연결은 이미 됐다. 상태줄에만 남긴다 - 다 된 일을 오류 상자로
+        막을 이유가 없다.
+        """
+        if not keystore.available():
+            return
+        try:
+            if remember:
+                keystore.save(link.access_key, link.secret_key)
+                self.status += " (시크릿 키를 %s에 맡겼습니다)" % keystore.label()
+            else:
+                keystore.delete(link.access_key)
+        except keystore.KeystoreError as exc:
+            self.status = "연결했지만 시크릿 키를 저장하지 못했습니다: %s" % exc
 
     def _open_menu(self):
         self.modal = MenuBar(self)
@@ -2079,7 +2184,7 @@ class App:
             self._on_connected(payload[0])
 
         elif kind == "s3_connected":
-            self._on_s3_connected(payload[0])
+            self._on_s3_connected(*payload)
 
         elif kind == "connect_failed":
             self.modal = MessageDialog("연결 실패", payload[0], term.BAD)

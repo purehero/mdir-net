@@ -11,7 +11,7 @@ import threading
 import unittest
 from pathlib import Path
 
-from mdirnet import s3, session, settings
+from mdirnet import keystore, s3, session, settings
 from mdirnet import shares as shares_mod
 from mdirnet.ui import app as app_module
 from mdirnet.ui import term
@@ -168,6 +168,29 @@ def xml_listing(contents=(), prefixes=(), truncated=False, token=""):
         parts.append("<CommonPrefixes><Prefix>%s</Prefix></CommonPrefixes>" % prefix)
     parts.append("</ListBucketResult>")
     return "".join(parts).encode("utf-8")
+
+
+class FakeVault:
+    """저장소가 있는 것처럼 굴지만 메모리에만 둔다."""
+
+    label = "테스트 저장소"
+
+    def __init__(self):
+        self.items = {}
+        self.failing = False
+
+    def save(self, account, secret):
+        if self.failing:
+            raise keystore.KeystoreError("저장소가 잠겨 있습니다")
+        self.items[account] = secret
+
+    def load(self, account):
+        if self.failing:
+            raise keystore.KeystoreError("저장소가 잠겨 있습니다")
+        return self.items.get(account)
+
+    def delete(self, account):
+        self.items.pop(account, None)
 
 
 def link(reply, bucket=""):
@@ -790,7 +813,7 @@ class TestCredentialsDialog(S3AppTestCase):
         dialog, got = self.open()
         self.fill(dialog)
 
-        self.assertEqual(dialog.at, dialog.SUBMIT)
+        self.assertEqual(dialog.at, dialog.submit_at())
         self.assertTrue(dialog.key(term.ENTER))
         self.assertEqual(got[0]["region"], "ap-northeast-2")
 
@@ -824,7 +847,7 @@ class TestCredentialsDialog(S3AppTestCase):
         self.type(dialog, "xyz")
 
         self.assertEqual(dialog.values["bucket"], "")
-        self.assertEqual(dialog.at, dialog.SUBMIT)
+        self.assertEqual(dialog.at, dialog.submit_at())
 
     def test_escape_submits_nothing(self):
         dialog, got = self.open()
@@ -855,6 +878,200 @@ class TestCredentialsDialog(S3AppTestCase):
 
         dialog.key(term.TAB)
         self.assertNotIn("Space 리전 목록", "\n".join(dialog.lines(60)))
+
+
+class TestRememberRow(unittest.TestCase):
+    """맡길 곳이 있을 때만 저장 줄이 생긴다.
+
+    고를 수 없는 것을 보여주면 왜 안 되는지 알 길이 없다.
+    """
+
+    def open(self, keep="키체인", initial=None):
+        got = []
+        return app_module.S3ConnectDialog(got.append, initial, keep=keep), got
+
+    def test_no_store_means_no_row(self):
+        dialog, _ = self.open(keep="")
+        self.assertNotIn("remember", dialog.rows())
+        self.assertNotIn("시크릿 키 저장", "\n".join(dialog.lines(60)))
+
+    def test_a_store_adds_the_row_above_connect(self):
+        dialog, _ = self.open()
+        self.assertEqual(dialog.rows()[-2:], ["remember", "submit"])
+        self.assertIn("시크릿 키 저장", "\n".join(dialog.lines(60)))
+
+    def test_it_starts_off_and_names_the_store_when_on(self):
+        dialog, _ = self.open()
+        for _ in range(4):
+            dialog.key(term.TAB)
+
+        self.assertIn("아니오", "\n".join(dialog.lines(60)))
+        dialog.key(term.SPACE)
+        self.assertIn("키체인에 맡깁니다", "\n".join(dialog.lines(60)))
+
+    def test_an_already_kept_secret_starts_on(self):
+        """이미 맡겨둔 것이 있으면 계속 맡기는 것이 뜻에 맞는다."""
+        dialog, _ = self.open(initial={"remember": True})
+        self.assertTrue(dialog.remember)
+
+    def test_the_choice_rides_along_to_the_caller(self):
+        dialog, got = self.open()
+        for ch in "ap-northeast-2":
+            dialog.key(ch)
+        dialog.key(term.TAB)
+        for ch in EXAMPLE_KEY:
+            dialog.key(ch)
+        dialog.key(term.TAB)
+        for ch in "s3cr3t":
+            dialog.key(ch)
+        dialog.key(term.TAB)  # 버킷
+        dialog.key(term.TAB)  # 저장
+        dialog.key(term.SPACE)
+        dialog.key(term.TAB)  # 연결
+
+        self.assertTrue(dialog.key(term.ENTER))
+        self.assertTrue(got[0]["remember"])
+
+    def test_the_toggle_is_not_a_text_field(self):
+        dialog, _ = self.open()
+        for _ in range(4):
+            dialog.key(term.TAB)
+        for ch in "xyz":
+            dialog.key(ch)
+
+        self.assertEqual(dialog.values["bucket"], "")
+        self.assertEqual(dialog.rows()[dialog.at], "remember")
+
+    def test_the_hint_names_the_key_that_toggles(self):
+        dialog, _ = self.open()
+        for _ in range(4):
+            dialog.key(term.TAB)
+        self.assertIn("Space 켜고 끄기", "\n".join(dialog.lines(60)))
+
+    def test_the_choice_survives_a_trip_to_the_region_list(self):
+        asked = []
+        dialog = app_module.S3ConnectDialog(
+            lambda v: None, None, on_regions=asked.append, keep="키체인"
+        )
+        for _ in range(4):
+            dialog.key(term.TAB)
+        dialog.key(term.SPACE)  # 저장 켜기
+        dialog._go(0)
+        dialog.key(term.SPACE)  # 리전 목록 열기
+
+        self.assertTrue(asked[0]["remember"])
+
+
+class TestKeepingTheSecret(S3AppTestCase):
+    """연결에 성공했을 때만 맡긴다. 실패한 키를 남겨둘 이유가 없다."""
+
+    def setUp(self):
+        super().setUp()
+        self.vault = FakeVault()
+        before = (keystore._store, keystore._picked)
+        keystore._store, keystore._picked = self.vault, True
+        self.addCleanup(lambda: self._restore(before))
+        # 사람의 설정 파일과 키체인을 건드리지 않으면서 저장 경로를 돌린다
+        self.app.persist = True
+        self.saved = {}
+        original = settings.save_s3_profile
+        settings.save_s3_profile = lambda *a: self.saved.update(zip("rab", a))
+        self.addCleanup(lambda: setattr(settings, "save_s3_profile", original))
+        original_load = settings.load_s3_profile
+        settings.load_s3_profile = lambda: {
+            "region": "", "access_key": "", "bucket": ""
+        }
+        self.addCleanup(lambda: setattr(settings, "load_s3_profile", original_load))
+
+    @staticmethod
+    def _restore(before):
+        keystore._store, keystore._picked = before
+
+    def link(self):
+        made, _ = link(lambda m, p, b: FakeResponse(200, xml_listing()), bucket="my-bucket")
+        made.access_key = EXAMPLE_KEY
+        made.secret_key = "s3cr3t"
+        return made
+
+    def test_saying_yes_hands_it_to_the_store(self):
+        self.app._on_s3_connected(self.link(), True)
+        self.settle()
+
+        self.assertEqual(self.vault.items[EXAMPLE_KEY], "s3cr3t")
+        self.assertIn("맡겼습니다", self.app.status)
+
+    def test_saying_no_takes_back_what_was_kept(self):
+        """껐는데 옛것이 남아 있으면 끈 것이 아니다."""
+        self.vault.items[EXAMPLE_KEY] = "예전 것"
+        self.app._on_s3_connected(self.link(), False)
+        self.settle()
+
+        self.assertNotIn(EXAMPLE_KEY, self.vault.items)
+
+    def test_the_settings_file_never_gets_the_secret(self):
+        self.app._on_s3_connected(self.link(), True)
+        self.settle()
+
+        self.assertNotIn("s3cr3t", json.dumps(self.saved, ensure_ascii=False))
+
+    def test_a_store_failure_does_not_undo_the_connection(self):
+        """다 된 일을 오류 상자로 막을 이유가 없다."""
+        self.vault.failing = True
+        self.app._on_s3_connected(self.link(), True)
+        self.settle()
+
+        self.assertIsNotNone(self.app.s3)
+        self.assertIsNone(self.app.modal)
+        self.assertIn("저장하지 못했습니다", self.app.status)
+
+    def test_the_form_offers_the_row_when_a_store_exists(self):
+        self.app._open_s3_dialog()
+        self.assertEqual(self.app.modal.keep, "테스트 저장소")
+
+    def test_a_kept_secret_comes_back_into_the_form(self):
+        settings.load_s3_profile = lambda: {
+            "region": "ap-northeast-2", "access_key": EXAMPLE_KEY, "bucket": "b"
+        }
+        self.vault.items[EXAMPLE_KEY] = "맡겨둔 키"
+        self.app._open_s3_dialog()
+
+        self.assertEqual(self.app.modal.values["secret_key"], "맡겨둔 키")
+        self.assertTrue(self.app.modal.remember)
+
+    def test_a_store_that_will_not_open_leaves_the_field_empty(self):
+        """저장소가 잠겼을 수 있다. 그걸로 연결을 막을 이유는 없다 - 치면 된다."""
+        settings.load_s3_profile = lambda: {
+            "region": "ap-northeast-2", "access_key": EXAMPLE_KEY, "bucket": "b"
+        }
+        self.vault.failing = True
+        self.app._open_s3_dialog()
+
+        self.assertEqual(self.app.modal.values["secret_key"], "")
+        self.assertFalse(self.app.modal.remember)
+
+
+class TestNoStoreHere(S3AppTestCase):
+    def setUp(self):
+        super().setUp()
+        before = (keystore._store, keystore._picked)
+        keystore._store, keystore._picked = None, True
+        self.addCleanup(lambda: self._restore(before))
+        self.app.persist = True
+        original = settings.load_s3_profile
+        settings.load_s3_profile = lambda: {
+            "region": "", "access_key": "", "bucket": ""
+        }
+        self.addCleanup(lambda: setattr(settings, "load_s3_profile", original))
+
+    @staticmethod
+    def _restore(before):
+        keystore._store, keystore._picked = before
+
+    def test_the_form_has_no_save_row(self):
+        """맡길 곳이 없으면 물러서지 않는다. 매번 입력받는다."""
+        self.app._open_s3_dialog()
+        self.assertEqual(self.app.modal.keep, "")
+        self.assertNotIn("remember", self.app.modal.rows())
 
 
 class TestRegionDialog(S3AppTestCase):

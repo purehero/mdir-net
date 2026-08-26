@@ -399,9 +399,21 @@ It prints how many CA certificates were found, the request line, the signed head
 
 ### Where the keys end up
 
-**The secret access key is never stored.** It lives in memory only while the program is running.
+The region, access key id, and bucket go into `~/.mdirnet/settings.json` to prefill the fields next time. **That file is plain text, so the secret key never goes in it.**
 
-Only the region, access key id, and bucket go into `~/.mdirnet/settings.json`, to prefill the fields next time. Just the secret field needs typing again.
+The secret key is kept only if you turn on the `시크릿 키 저장` row with `Space`, and then it goes to **the OS secret store**. It is handed over only after a connection succeeds; turning it off also removes whatever was kept before.
+
+| | |
+|---|---|
+| **macOS** | login keychain (`/usr/bin/security`) |
+| **Windows** | DPAPI — ciphertext in `~/.mdirnet/s3-secrets.json` |
+| **Elsewhere** | not stored; the row does not appear at all |
+
+In both, **the decryption key derives from the user's login credentials.** Copying the file to another machine, or another user on the same one, does not open it.
+
+**With nowhere safe to put it, nothing is stored.** Deriving a key from machine identifiers and encrypting a file was deliberately not done. If the app can unlock it without asking anything, so can anything else running as that user, and the recipe is in the source. That is obfuscation, not encryption, and "it's encrypted" reassures more than it protects.
+
+Stored or not, **a key scoped in IAM to that one bucket** is a far bigger defence.
 
 ## Security scope
 
@@ -413,7 +425,7 @@ This was built for the inside of one router. There is no protection beyond that 
 - **Transfers are encrypted with TLS 1.3.** Capturing packets on the same network reveals nothing. The certificate is generated at start-up and never stored.
 - **But the peer is not authenticated.** The certificate is self-signed, so there is no chain to verify and an active man-in-the-middle (ARP spoofing and the like) is not stopped. To check, compare the **device fingerprint** shown on both screens. Do not use this on a network you do not trust (a café, public Wi-Fi).
 - **F8 delete applies remotely too.** An approved peer can delete files **inside** my shared folders. The shared folder itself, and anything outside it, cannot be deleted.
-- **The S3 secret key is never written to disk.** The settings file holds only the region, access key id, and bucket.
+- **The S3 secret key is never written to the settings file.** That holds only the region, access key id, and bucket. If you choose to keep it, it goes to the OS secret store (macOS keychain, Windows DPAPI). Where there is no such store it is not kept at all and gets typed each time.
 - **Traffic to S3 is HTTPS with the certificate always verified.** There is no way to turn that off. If Python has no CA bundle the OS one is used; if there is none either, the connection fails.
 
 ## Firewall
