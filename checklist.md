@@ -1461,3 +1461,12 @@ SAF 권한과 공유 목록이 함께 날아간다.
 - [x] 필수 칸이 비면 그 칸으로 커서를 데려간다
 - [x] 안내줄이 지금 있는 줄에 맞춰 바뀐다 (`Enter 연결` / `Enter 다음 줄`)
 - [x] 테스트 854개 통과 (S3 78개)
+
+### 첫 실전 연결 - 인증서에서 막혔다
+- [x] 원인 확인 - python.org 판 파이썬에 CA 묶음이 없다 (`etc/openssl/` 이 비어 있음)
+- [x] 가짜 키로 실제 AWS 확인 - `403 InvalidAccessKeyId` (서명은 통과했다는 뜻)
+- [x] `ssl.SSLCertVerificationError` 를 `OSError` 절에서 갈라냈다
+- [x] CA 묶음이 실제로 빈 경우에만 설치 안내를 붙인다
+- [x] 여러 줄 안내를 `MessageDialog` 에 줄 목록으로 넘긴다
+- [ ] **사용자 쪽 조치 필요** - `Install Certificates.command` 실행
+- [ ] 앱이 CA 묶음을 스스로 찾아 물러설지는 미정 (사용자에게 물어봄)
