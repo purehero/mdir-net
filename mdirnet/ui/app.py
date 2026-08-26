@@ -1764,7 +1764,7 @@ class App:
 
         self.local.refresh()
 
-        with term.Terminal() as terminal:
+        with term.Terminal(want_size=(config.WINDOW_COLS, config.WINDOW_ROWS)) as terminal:
             terminal.use_mouse(self.use_mouse)
             while self.running:
                 self._drain_events()

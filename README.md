@@ -32,6 +32,16 @@ Name and extension sit in separate columns; directories read `[ SubDir ]` and th
 
 Below **79 columns** there is no room for every column, so the time, then the date, then the extension fold away in that order.
 
+## Window size
+
+At start-up the terminal window is grown to **160x48** — twice the long-standing 80x24 default. Filenames show that much further, and the columns that fold away on a narrow window all stay put.
+
+- **A window already wider than that is not shrunk.** Width and height are considered separately; only the short side grows.
+- **The original size is restored on exit.** It does not leave your shell changed.
+- Some terminals ignore the resize request. Then nothing happens and it simply runs at whatever size the window already is — not being able to do it is not an error.
+
+The size lives in `mdirnet/config.py` as `WINDOW_COLS` / `WINDOW_ROWS`.
+
 ## Install
 
 Python 3.9 or newer, plus one package.

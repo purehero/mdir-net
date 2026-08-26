@@ -205,6 +205,42 @@ def size():
     return max(cols, 40), max(rows, 10)
 
 
+def resize_seq(cols, rows):
+    """창 크기를 바꾸라는 시퀀스. xterm 의 CSI 8 이다 (행이 먼저 온다)."""
+    return "\x1b[8;%d;%dt" % (rows, cols)
+
+
+def grown_to(current, want):
+    """지금 크기와 원하는 크기 중 큰 쪽.
+
+    **줄이지는 않는다.** 넓게 쓰던 사람의 창을 좁히는 것은 도움이 아니다.
+    """
+    return (max(current[0], want[0]), max(current[1], want[1]))
+
+
+def resize(cols, rows):
+    """터미널 창을 이 크기로 키운다. 실제로 된 크기를 돌려준다.
+
+    듣지 않는 터미널이 있다. 그때는 아무 일도 일어나지 않고 원래 크기가 그대로
+    나온다 - 못 하는 것을 오류로 다룰 이유가 없다.
+    """
+    if not sys.stdout.isatty():
+        return size()
+
+    write(resize_seq(cols, rows))
+    flush()
+
+    # 터미널이 창을 바꾸고 커널이 pty 크기를 갱신하기까지 시차가 있다. 기다리지
+    # 않으면 첫 프레임을 옛 크기로 그렸다가 곧바로 다시 그리며 한 번 번쩍인다.
+    # 듣지 않는 터미널에서는 이 상한을 통째로 기다리게 된다. 창을 바꾸는 것은
+    # 로컬 통신이라 보통 수십 ms 안에 끝나므로, 넉넉하되 짧게 잡는다
+    for _ in range(20):
+        if size() == (cols, rows):
+            break
+        time.sleep(0.01)
+    return size()
+
+
 def write(text):
     sys.stdout.write(text)
 
@@ -241,15 +277,26 @@ class Terminal:
     터미널이 망가진 채 셸로 돌아가지 않도록 atexit 과 시그널 핸들러를 함께 건다.
     """
 
-    def __init__(self):
+    def __init__(self, want_size=None):
         self._saved = None
         self._active = False
         self._mouse = False
         self._prev_handlers = {}
         self._real_stderr = None
         self._stderr_buffer = None
+        # 켤 때 창을 이만큼 키운다. None 이면 창에 손대지 않는다
+        self._want = want_size
+        self._size_before = None
 
     def __enter__(self):
+        # 대체 화면으로 들어가기 **전에** 키운다. 들어간 뒤에 바꾸면 첫 프레임을
+        # 그리는 도중에 크기가 달라진다
+        if self._want:
+            before = size()
+            grown = grown_to(before, self._want)
+            if grown != before and resize(*grown) != before:
+                self._size_before = before  # 실제로 바뀐 때만 되돌릴 것이 생긴다
+
         if IS_WINDOWS:
             _enable_windows_ansi()
         else:
@@ -297,6 +344,11 @@ class Terminal:
 
         # 여기서 RESET 을 쓰면 셸이 파란 바닥으로 남는다. 나갈 때는 HARD_RESET 이다
         write(SHOW_CURSOR + HARD_RESET + ALT_SCREEN_OFF)
+        # 창을 키웠으면 원래대로 돌려놓는다. 남의 셸을 바꿔놓고 나가지 않는다.
+        # 나가는 길이라 크기가 반영되기를 기다리지 않는다
+        if self._size_before:
+            write(resize_seq(*self._size_before))
+            self._size_before = None
         flush()
         if not IS_WINDOWS and self._saved is not None:
             termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, self._saved)

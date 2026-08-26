@@ -54,7 +54,8 @@ class TestConstantTable(unittest.TestCase):
     def test_no_constant_is_left_out(self):
         """config.py 에 상수를 더하고 문서를 잊는 것을 잡는다."""
         documented = set(self.NAMES)
-        skip = {"APP_NAME", "UI_TICK"}  # 선 위와 무관한 것
+        # 선 위와 무관한 것. 창 크기는 내 터미널 이야기이지 상대와 맞출 값이 아니다
+        skip = {"APP_NAME", "UI_TICK", "WINDOW_COLS", "WINDOW_ROWS"}
         actual = {
             name
             for name in dir(config)
