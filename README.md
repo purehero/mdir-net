@@ -387,6 +387,16 @@ These are the same files `curl` reads. On Windows Python already loads the syste
 
 **If nothing is found the connection simply fails.** Verification is never skipped to get past it; the screen says what to do instead (`SSL_CERT_FILE` can also point at a bundle directly).
 
+### When it will not connect
+
+The screen boils an error down to one sentence. When that is not enough, a tool dumps everything that went over the wire.
+
+```bash
+python3 tools/s3-probe.py --region ap-northeast-2 --bucket my-bucket
+```
+
+It prints how many CA certificates were found, the request line, the signed headers, the HTTP status, and the raw response body. It asks for the keys, and **the secret key is never printed**, so the output is safe to paste as-is.
+
 ### Where the keys end up
 
 **The secret access key is never stored.** It lives in memory only while the program is running.
