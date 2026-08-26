@@ -487,6 +487,114 @@ class TestErrors(unittest.TestCase):
             made.remote_list("bucket")
 
 
+def make_ca_pem():
+    """CA 로 쓸 수 있는 자기서명 인증서 한 장. OS 묶음 흉내를 낸다."""
+    import datetime as dt
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "테스트 루트")])
+    now = dt.datetime.now(dt.timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - dt.timedelta(days=1))
+        .not_valid_after(now + dt.timedelta(days=365))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(key, hashes.SHA256())
+    )
+    return cert.public_bytes(serialization.Encoding.PEM)
+
+
+class TestCertificateStore(unittest.TestCase):
+    """무엇을 믿을지는 찾아 나서되, 믿을지 말지는 묻지 않는다.
+
+    python.org 판 macOS 파이썬은 설치 직후 CA 묶음이 비어 있다. 쓰는 사람마다
+    `Install Certificates.command` 를 실행하게 만들 수는 없어서, OS 가 두는
+    묶음을 앱이 직접 찾는다.
+    """
+
+    def setUp(self):
+        s3._tls = None
+        self.addCleanup(lambda: setattr(s3, "_tls", None))
+
+    def empty_default(self):
+        """파이썬이 CA 를 하나도 안 들고 있는 상황을 만든다."""
+        import ssl as ssl_mod
+
+        original = ssl_mod.create_default_context
+        self.addCleanup(lambda: setattr(ssl_mod, "create_default_context", original))
+        ssl_mod.create_default_context = lambda *a, **k: ssl_mod.SSLContext(
+            ssl_mod.PROTOCOL_TLS_CLIENT
+        )
+
+    def use_bundles(self, *paths):
+        original = s3._CA_BUNDLES
+        self.addCleanup(lambda: setattr(s3, "_CA_BUNDLES", original))
+        s3._CA_BUNDLES = paths
+
+    def test_verification_is_never_turned_off(self):
+        import ssl as ssl_mod
+
+        ctx = s3.tls_context()
+        self.assertEqual(ctx.verify_mode, ssl_mod.CERT_REQUIRED)
+        self.assertTrue(ctx.check_hostname)
+
+    def test_the_context_is_built_once(self):
+        """묶음을 읽는 비용이 작지 않다. 요청마다 다시 읽으면 안 된다."""
+        self.assertIs(s3.tls_context(), s3.tls_context())
+
+    def test_an_os_bundle_fills_in_when_python_has_none(self):
+        bundle = Path(tempfile.mkdtemp()) / "cert.pem"
+        bundle.write_bytes(make_ca_pem())
+        self.empty_default()
+        self.use_bundles(str(bundle))
+
+        ctx = s3.tls_context()
+        self.assertEqual(ctx.cert_store_stats()["x509_ca"], 1)
+        self.assertTrue(s3.has_ca_bundle())
+
+    def test_a_missing_bundle_path_is_skipped_not_fatal(self):
+        bundle = Path(tempfile.mkdtemp()) / "cert.pem"
+        bundle.write_bytes(make_ca_pem())
+        self.empty_default()
+        self.use_bundles("/그런/파일/없음.pem", str(bundle))
+
+        self.assertTrue(s3.has_ca_bundle())
+
+    def test_finding_nothing_never_becomes_an_open_connection(self):
+        """못 찾았으면 악수에서 실패하게 둔다. 검증을 끄고 넘어가지 않는다."""
+        import ssl as ssl_mod
+
+        self.empty_default()
+        self.use_bundles("/그런/파일/없음.pem")
+
+        ctx = s3.tls_context()
+        self.assertEqual(ctx.cert_store_stats()["x509_ca"], 0)
+        self.assertEqual(ctx.verify_mode, ssl_mod.CERT_REQUIRED)
+        self.assertTrue(ctx.check_hostname)
+
+    def test_finding_nothing_is_what_triggers_the_advice(self):
+        self.empty_default()
+        self.use_bundles("/그런/파일/없음.pem")
+
+        self.assertIn("Install Certificates", s3._tls_message("무엇이든"))
+
+    def test_this_machine_can_verify_without_any_setup(self):
+        """실제로 쓰는 기계에서 아무 준비 없이 검증이 되는지 본다."""
+        self.assertTrue(
+            s3.has_ca_bundle(),
+            "CA 묶음을 찾지 못했습니다. HTTPS 가 되는 환경인지 확인하세요",
+        )
+
+
 class TestEndpoint(unittest.TestCase):
     def test_a_plain_bucket_uses_the_virtual_hosted_form(self):
         made, transport = link(lambda m, p, b: FakeResponse(200, xml_listing()))

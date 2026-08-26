@@ -236,15 +236,75 @@ def _epoch(iso):
     return 0.0
 
 
-def has_ca_bundle():
-    """기본 SSL 컨텍스트가 신뢰할 CA 를 하나라도 들고 있는가.
+# OS 가 CA 묶음을 두는 자리. 파이썬이 스스로 들고 있지 않을 때만 본다.
+#
+# 전부 배포판이나 OS 가 관리하는 파일이고, curl 이 보는 것과 같은 것이다.
+_CA_BUNDLES = (
+    "/etc/ssl/cert.pem",                   # macOS, FreeBSD
+    "/etc/ssl/certs/ca-certificates.crt",  # Debian, Ubuntu, Alpine
+    "/etc/pki/tls/certs/ca-bundle.crt",    # RHEL, Fedora
+    "/etc/ssl/ca-bundle.pem",              # openSUSE
+)
 
-    python.org 판 macOS 파이썬은 설치 직후 이 묶음이 비어 있다. 그 상태로는
-    어떤 HTTPS 도 검증에 실패한다 - 피어 연결은 자기서명이라 검증을 하지
-    않으므로, S3 가 이 프로젝트에서 CA 묶음을 처음 필요로 하는 곳이다.
+# 묶음을 읽는 데 드는 비용이 작지 않다. 한 번 만들어 두고 재사용한다
+_tls = None
+
+
+def _build_tls_context():
+    """검증에 쓸 CA 묶음을 찾아 넣은 SSL 컨텍스트.
+
+    **검증은 어떤 경우에도 끄지 않는다.** 찾는 것은 '무엇을 믿을지' 이지
+    '믿을지 말지' 가 아니다.
+
+    파이썬이 묶음을 들고 있으면 그대로 쓴다. 비어 있으면 (python.org 판 macOS
+    파이썬이 설치 직후 그렇다 - `Install Certificates.command` 를 실행해야
+    채워진다) certifi 와 OS 가 두는 묶음을 차례로 본다. 사용자마다 인증서를
+    설치하게 만들 수는 없다.
+
+    Windows 는 `create_default_context` 가 시스템 저장소를 이미 읽으므로 여기까지
+    오지 않는다. 아무것도 못 찾으면 빈 채로 돌려준다 - 악수에서 실패하고
+    `_tls_message` 가 무엇을 해야 하는지 알린다. 조용히 통과시키지 않는다.
+    """
+    ctx = ssl.create_default_context()
+    if ctx.cert_store_stats()["x509_ca"]:
+        return ctx
+
+    # certifi 가 있으면 가장 최신이다. 없다고 실패로 치지 않는다 (선택 사항이다)
+    try:
+        import certifi
+
+        ctx.load_verify_locations(cafile=certifi.where())
+        if ctx.cert_store_stats()["x509_ca"]:
+            return ctx
+    except Exception:  # noqa: BLE001
+        pass
+
+    for path in _CA_BUNDLES:
+        try:
+            ctx.load_verify_locations(cafile=path)
+        except (OSError, ssl.SSLError):
+            continue  # 없거나 읽을 수 없거나 형식이 다르다. 다음 것을 본다
+        if ctx.cert_store_stats()["x509_ca"]:
+            return ctx
+
+    return ctx
+
+
+def tls_context():
+    """S3 요청에 쓸 SSL 컨텍스트. 처음 한 번만 만든다."""
+    global _tls
+    if _tls is None:
+        _tls = _build_tls_context()
+    return _tls
+
+
+def has_ca_bundle():
+    """믿을 CA 를 하나라도 찾았는가.
+
+    OS 묶음까지 다 뒤진 결과를 본다. 여기서도 비었다면 사용자가 손을 대야 한다.
     """
     try:
-        return ssl.create_default_context().cert_store_stats()["x509_ca"] > 0
+        return tls_context().cert_store_stats()["x509_ca"] > 0
     except Exception:  # noqa: BLE001
         return True  # 모르면 안내를 붙이지 않는다. 틀린 안내가 없느니만 못하다
 
@@ -259,9 +319,10 @@ def _tls_message(exc):
     lines = ["TLS 인증서를 확인하지 못했습니다."]
     if not has_ca_bundle():
         lines += [
-            "이 파이썬에는 CA 인증서 묶음이 없습니다.",
-            "python.org 판 macOS 파이썬은 설치 후 한 번 실행해야 합니다:",
+            "믿을 CA 인증서 묶음을 어디서도 찾지 못했습니다.",
+            "python.org 판 macOS 파이썬이면 한 번 실행해 주세요:",
             "    /Applications/Python 3.x/Install Certificates.command",
+            "또는 SSL_CERT_FILE 로 묶음 파일을 지정해 주세요.",
         ]
     lines.append("원래 오류: %s" % exc)
     return "\n".join(lines)
@@ -307,7 +368,7 @@ def https(host, method, path, headers, body, timeout):
     테스트는 이 자리에 가짜를 꽂는다. 그래서 S3Link 는 실제 통신 없이도 목록과
     전송 흐름을 통째로 확인할 수 있다.
     """
-    conn = http.client.HTTPSConnection(host, timeout=timeout, context=ssl.create_default_context())
+    conn = http.client.HTTPSConnection(host, timeout=timeout, context=tls_context())
     try:
         conn.request(method, path, body=body, headers=headers)
         return Response(conn, conn.getresponse())

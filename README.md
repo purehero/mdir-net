@@ -371,6 +371,22 @@ The list holds commercial regions only. China (`amazonaws.com.cn`) and GovCloud 
 - Buckets themselves are neither created nor deleted here. Use the AWS console.
 - `boto3` is not used. SigV4 signing and the REST calls are done with the standard library (`mdirnet/s3.py`).
 
+### Certificates
+
+Traffic to S3 is HTTPS and **the certificate is always verified.** There is no way to turn that off.
+
+The catch: the python.org build of Python on macOS ships with an empty CA bundle until `Install Certificates.command` is run once. In that state no HTTPS works at all. This program's PC-to-PC connections use self-signed certificates and skip verification, which is why it never showed up before.
+
+Asking every user to install certificates is no answer, so when Python has no bundle of its own, **the OS bundle is located directly.**
+
+1. Whatever Python carries
+2. `certifi`, if installed
+3. The OS bundle — `/etc/ssl/cert.pem` (macOS), `/etc/ssl/certs/ca-certificates.crt` (Debian/Ubuntu), `/etc/pki/tls/certs/ca-bundle.crt` (RHEL/Fedora), `/etc/ssl/ca-bundle.pem` (openSUSE)
+
+These are the same files `curl` reads. On Windows Python already loads the system store, so it never gets this far.
+
+**If nothing is found the connection simply fails.** Verification is never skipped to get past it; the screen says what to do instead (`SSL_CERT_FILE` can also point at a bundle directly).
+
 ### Where the keys end up
 
 **The secret access key is never stored.** It lives in memory only while the program is running.
@@ -387,7 +403,8 @@ This was built for the inside of one router. There is no protection beyond that 
 - **Transfers are encrypted with TLS 1.3.** Capturing packets on the same network reveals nothing. The certificate is generated at start-up and never stored.
 - **But the peer is not authenticated.** The certificate is self-signed, so there is no chain to verify and an active man-in-the-middle (ARP spoofing and the like) is not stopped. To check, compare the **device fingerprint** shown on both screens. Do not use this on a network you do not trust (a café, public Wi-Fi).
 - **F8 delete applies remotely too.** An approved peer can delete files **inside** my shared folders. The shared folder itself, and anything outside it, cannot be deleted.
-- **The S3 secret key is never written to disk.** The settings file holds only the region, access key id, and bucket. Traffic to S3 goes over HTTPS.
+- **The S3 secret key is never written to disk.** The settings file holds only the region, access key id, and bucket.
+- **Traffic to S3 is HTTPS with the certificate always verified.** There is no way to turn that off. If Python has no CA bundle the OS one is used; if there is none either, the connection fails.
 
 ## Firewall
 

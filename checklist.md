@@ -1468,5 +1468,8 @@ SAF 권한과 공유 목록이 함께 날아간다.
 - [x] `ssl.SSLCertVerificationError` 를 `OSError` 절에서 갈라냈다
 - [x] CA 묶음이 실제로 빈 경우에만 설치 안내를 붙인다
 - [x] 여러 줄 안내를 `MessageDialog` 에 줄 목록으로 넘긴다
-- [ ] **사용자 쪽 조치 필요** - `Install Certificates.command` 실행
-- [ ] 앱이 CA 묶음을 스스로 찾아 물러설지는 미정 (사용자에게 물어봄)
+- [x] 앱이 OS 의 CA 묶음을 직접 찾는다 (파이썬 -> certifi -> OS 묶음)
+- [x] 못 찾으면 실패한다. 검증을 끄는 길은 만들지 않았다
+- [x] 컨텍스트는 한 번만 만든다 (묶음 파싱 비용)
+- [x] 환경변수/설치 없이 실제 AWS 도달 확인 (403 InvalidAccessKeyId)
+- [x] 테스트 864개 통과
