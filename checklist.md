@@ -1539,3 +1539,34 @@ SAF 권한과 공유 목록이 함께 날아간다.
 - [x] `WINDOW_*` 는 선 위와 무관하므로 프로토콜 상수 검사에서 제외
 - [x] 진짜 pty 로 왕복 확인 - 키우기 160x48, 되돌리기 80x24 둘 다 나간다
 - [x] 테스트 912개 통과
+
+## aws CLI 프로필로도 붙기
+
+직접 입력은 그대로 두고 갈래를 하나 더 만든다.
+
+### 만든 것
+- [x] `mdirnet/awscfg.py` - `~/.aws/credentials` + `config` 를 configparser 로
+- [x] aws CLI 를 부르지 않는다. 없을 수도 있고, 부르면 그것에 의존하게 된다
+- [x] `[profile 이름]` / `[default]` 섹션 규칙, credentials 가 config 를 이긴다
+- [x] `S3Link(session_token=)` - 임시 자격증명 지원 (x-amz-security-token, 서명 포함)
+- [x] `자격증명` 줄로 직접 입력 <-> 프로필 전환. **줄 구성 자체가 달라진다**
+- [x] `ProfileDialog` - 못 쓰는 프로필도 이유와 함께 보여준다
+- [x] 프로필이면 `시크릿 키 저장` 줄이 없다. aws CLI 가 이미 갖고 있다
+- [x] `settings` 에 `aws_profile` - 다음에 그 프로필로 연다 (키는 안 적는다)
+
+### 확인한 것
+- [x] 환경변수로 임시 파일을 물려 테스트. **사람의 ~/.aws 를 읽지 않는다**
+- [x] SSO / credentials_process / role_arn 각각의 이유 문구
+- [x] 정적 키가 있으면 다른 열쇠가 섞여 있어도 그것으로 붙는다 (aws CLI 와 같다)
+- [x] 갈래를 오가도 쳐 넣은 키가 남는다
+- [x] 못 쓰는 프로필에 Enter 하면 닫지 않고 이유를 말한다
+- [x] 세션 토큰이 서명된 헤더로 나간다
+- [x] 테스트 957개 통과
+
+### 걸렸던 것
+- [x] `_go` 에서 `_store()` 를 빼면서 직접 부르는 자리에서 입력이 사라졌다.
+      담기(`_store`)와 싣기(`_load`)를 나누고 `_go` 는 둘 다 한다
+- [x] **비ASCII 액세스 키가 raw 트레이스백을 냈다.** HTTP 헤더는 latin-1 만
+      담는데 UnicodeEncodeError 는 ValueError 라 except 절을 빠져나간다.
+      보내기 전에 검사한다. 시크릿 키는 서명이 되어 나가므로 무관하다
+- [x] `%-20s` 는 글자 수로 채운다. 한글 프로필 이름에서 칸이 밀렸다

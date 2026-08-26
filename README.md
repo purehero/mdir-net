@@ -338,15 +338,46 @@ If a name inside the archive **points outside it** (`../../somewhere`), the entr
 **Connect to AWS S3** in the `Commands` menu points the right pane at an S3 bucket. Once attached it behaves exactly like a peer PC — `Enter` opens a folder, `F3` views the head of a file, `5` uploads or downloads, and `6`/`7`/`8` rename, make a folder, or delete.
 
 ```
-> 리전                ap-northeast-2        (region)
+> 자격증명            직접 입력             (credentials: typed in)
+  리전                ap-northeast-2        (region)
   액세스 키 ID        AKIA................  (access key id)
   시크릿 액세스 키    ********************  (secret access key)
   버킷 (비우면 전체)  my-bucket             (bucket, blank = all)
+  시크릿 키 저장      아니오                (keep the secret: no)
 
   [ 연결 ]                                  (connect)
 
-Space 리전 목록   Tab 이동   Enter 다음 줄   Esc 취소
+Space 바꾸기   Tab 이동   Enter 다음 줄   Esc 취소
 ```
+
+`Space` on the top `자격증명` row switches to an **aws CLI profile**. The two key fields disappear and a profile field takes their place — leaving unused fields greyed out gives no clue why they do nothing.
+
+```
+> 자격증명            AWS 프로필 (~/.aws)
+  프로필              일하는계정
+  리전                ap-northeast-2
+  버킷 (비우면 전체)  my-bucket
+
+  [ 연결 ]
+```
+
+`Space` on the `프로필` row opens the list.
+
+```
+AWS 프로필 선택
+--------------------------------------
+  default              us-east-1
+> 일하는계정           ap-northeast-2
+  회사SSO              SSO 프로필입니다
+  역할위임             역할을 위임받는 프로필입니다
+Enter 선택   Esc 취소
+```
+
+`~/.aws/credentials` and `~/.aws/config` are read directly with `configparser`; the aws CLI is never invoked. A region recorded in the profile fills the region field too.
+
+**Only profiles with static keys can be used.** SSO, `credentials_process`, and assumed roles (`role_arn`) each have their own token-fetching dance that reading files cannot do. Those profiles are still **listed, with the reason they cannot be used** — dropping them silently just raises "where did my profile go". Temporary credentials carrying `aws_session_token` do work.
+
+A profile leaves nothing to keep, so the `시크릿 키 저장` row does not appear — the aws CLI already holds the key.
 
 `Tab` or `↑` `↓` moves between rows. The secret key is masked with `*` on screen.
 

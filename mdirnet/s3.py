@@ -328,6 +328,22 @@ def _tls_message(exc):
     return "\n".join(lines)
 
 
+def unsendable(headers):
+    """HTTP 헤더로 보낼 수 없는 값이 있으면 그 이름. 없으면 빈 문자열.
+
+    헤더는 latin-1 만 담는다. 액세스 키와 세션 토큰은 그대로 헤더에 실리므로,
+    한글 같은 것이 섞이면 `http.client` 안에서 UnicodeEncodeError 가 난다.
+    그것은 ValueError 라 우리 except 절에 걸리지 않고 워커 스레드에서 raw
+    트레이스백이 되어 나간다. 보내기 전에 걸러 사람이 읽을 문장으로 바꾼다.
+    """
+    for name, value in headers.items():
+        try:
+            str(value).encode("latin-1")
+        except UnicodeEncodeError:
+            return name
+    return ""
+
+
 def _error_message(status, body):
     """S3 가 XML 로 돌려준 오류를 사람이 읽을 문장으로 바꾼다."""
     try:
@@ -406,10 +422,13 @@ class S3Link:
     """
 
     def __init__(self, region, access_key, secret_key, bucket="", transport=None,
-                 clock=None):
+                 clock=None, session_token=""):
         self.region = region
         self.access_key = access_key
         self.secret_key = secret_key
+        # 임시 자격증명(SSO/역할 위임으로 받은 것, aws CLI 프로필에 흔하다)이면
+        # 토큰을 헤더로 함께 보내야 한다. 서명 대상에도 들어간다
+        self.session_token = session_token or ""
         # 버킷을 정해두면 가상 루트가 그 하나만 보여준다. ListBuckets 권한이
         # 없는 키(버킷 하나로 제한된 키)가 흔해서, 루트를 열자마자 막히지 않게 한다
         self.bucket = bucket
@@ -457,10 +476,21 @@ class S3Link:
         """
         host = self._host(bucket)
         path = self._url_path(bucket, key)
+
+        fields = dict(headers or {})
+        if self.session_token:
+            fields["x-amz-security-token"] = self.session_token
+
         signed = sign(
-            method, host, path, query, headers or {}, payload_hash,
+            method, host, path, query, fields, payload_hash,
             self.access_key, self.secret_key, self.region, self._clock(),
         )
+
+        bad = unsendable(signed)
+        if bad:
+            raise S3Error(
+                "자격증명에 쓸 수 없는 글자가 있습니다 (%s 헤더, ASCII 만 됩니다)" % bad
+            )
 
         query_text = _canonical_query(query)
         line = _quote_path(path) + ("?" + query_text if query_text else "")
@@ -469,6 +499,11 @@ class S3Link:
             resp = (self._transport or https)(
                 host, method, line, signed, body, timeout or config.REQUEST_TIMEOUT
             )
+        except UnicodeEncodeError:
+            # HTTP 헤더는 latin-1 만 담는다. 자격증명에 한글 같은 것이 섞이면
+            # 여기서 터진다. UnicodeEncodeError 는 ValueError 라 아래 절에 걸리지
+            # 않고, 워커 스레드에서 raw 트레이스백이 되어 나간다
+            raise S3Error("자격증명에 쓸 수 없는 글자가 있습니다 (ASCII 만 됩니다)")
         except ssl.SSLCertVerificationError as exc:
             # SSLError 는 OSError 라서 아래 절에 삼켜진다. 원인이 전혀 다르고
             # 고치는 방법도 달라 먼저 갈라낸다
