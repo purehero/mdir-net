@@ -2863,3 +2863,25 @@ AWS 가 `403 InvalidAccessKeyId` 를 돌려줬다. **`SignatureDoesNotMatch` 가
 
 여러 줄 안내라 `MessageDialog` 에 줄 목록으로 넘긴다. 한 줄로 붙이면
 `screen.pad` 가 상자 폭에서 잘라내 안내가 통째로 사라진다.
+
+### 사용자마다 인증서를 설치하게 할 수는 없다
+
+`Install Certificates.command` 는 이 기계의 답이지 배포의 답이 아니다. 다른 PC
+에서 쓸 때마다 그걸 시킬 수는 없다.
+
+그래서 파이썬이 CA 묶음을 들고 있지 않으면 **OS 가 두는 묶음을 앱이 직접
+찾는다.** 파이썬 자신 -> certifi(있으면) -> OS 묶음 순이다. `/etc/ssl/cert.pem`
+(macOS), `ca-certificates.crt`(Debian), `ca-bundle.crt`(RHEL) 같은 것들로,
+전부 curl 이 보는 그 파일이다. Windows 는 파이썬이 시스템 저장소를 이미 읽어
+여기까지 오지 않는다.
+
+**찾는 것은 '무엇을 믿을지' 이지 '믿을지 말지' 가 아니다.** 하나도 못 찾으면
+빈 컨텍스트를 그대로 돌려주고 악수에서 실패하게 둔다. `verify_mode` 를 낮추거나
+`check_hostname` 을 끄는 길은 만들지 않았다 - 그 한 줄이 있으면 언젠가 누군가
+"일단 되게" 하려고 켠다. 못 찾았을 때 무엇을 해야 하는지는 화면이 알려준다.
+
+컨텍스트는 한 번만 만든다. 묶음을 파싱하는 비용이 작지 않아 요청마다 다시 읽으면
+파일 하나 옮길 때마다 그 값을 치른다.
+
+확인: 환경변수도 인증서 설치도 없이 실제 AWS 가 `403 InvalidAccessKeyId` 를
+돌려줬다. TLS 검증이 통과했다는 뜻이다.
