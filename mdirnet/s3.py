@@ -236,6 +236,37 @@ def _epoch(iso):
     return 0.0
 
 
+def has_ca_bundle():
+    """기본 SSL 컨텍스트가 신뢰할 CA 를 하나라도 들고 있는가.
+
+    python.org 판 macOS 파이썬은 설치 직후 이 묶음이 비어 있다. 그 상태로는
+    어떤 HTTPS 도 검증에 실패한다 - 피어 연결은 자기서명이라 검증을 하지
+    않으므로, S3 가 이 프로젝트에서 CA 묶음을 처음 필요로 하는 곳이다.
+    """
+    try:
+        return ssl.create_default_context().cert_store_stats()["x509_ca"] > 0
+    except Exception:  # noqa: BLE001
+        return True  # 모르면 안내를 붙이지 않는다. 틀린 안내가 없느니만 못하다
+
+
+def _tls_message(exc):
+    """인증서 검증 실패를 사람이 고칠 수 있는 문장으로 바꾼다.
+
+    가장 흔한 원인은 CA 묶음이 없는 것이다. **그때만** 그 안내를 붙인다 -
+    이름이 안 맞거나 만료된 인증서는 전혀 다른 이야기이고, 중간자를 만난
+    것일 수도 있다.
+    """
+    lines = ["TLS 인증서를 확인하지 못했습니다."]
+    if not has_ca_bundle():
+        lines += [
+            "이 파이썬에는 CA 인증서 묶음이 없습니다.",
+            "python.org 판 macOS 파이썬은 설치 후 한 번 실행해야 합니다:",
+            "    /Applications/Python 3.x/Install Certificates.command",
+        ]
+    lines.append("원래 오류: %s" % exc)
+    return "\n".join(lines)
+
+
 def _error_message(status, body):
     """S3 가 XML 로 돌려준 오류를 사람이 읽을 문장으로 바꾼다."""
     try:
@@ -377,6 +408,10 @@ class S3Link:
             resp = (self._transport or https)(
                 host, method, line, signed, body, timeout or config.REQUEST_TIMEOUT
             )
+        except ssl.SSLCertVerificationError as exc:
+            # SSLError 는 OSError 라서 아래 절에 삼켜진다. 원인이 전혀 다르고
+            # 고치는 방법도 달라 먼저 갈라낸다
+            raise S3Error(_tls_message(exc))
         except OSError as exc:
             raise S3Error("S3 에 닿지 못했습니다: %s" % exc)
 

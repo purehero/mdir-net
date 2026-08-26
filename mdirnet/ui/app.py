@@ -1893,7 +1893,10 @@ class App:
                 # 그대로 되돌려주므로 네트워크를 지나지 않아 검증이 안 된다
                 link.remote_list(link.bucket or shares_mod.ROOT)
             except session.SessionError as exc:
-                self.events.put(("error", "S3 에 연결하지 못했습니다: %s" % exc))
+                # 여러 줄짜리 안내가 올 수 있다. 한 줄로 붙이면 상자 폭에 잘린다
+                self.events.put(
+                    ("error", ["S3 에 연결하지 못했습니다."] + str(exc).split("\n"))
+                )
                 return
             self.events.put(("s3_connected", link))
 

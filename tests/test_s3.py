@@ -439,6 +439,44 @@ class TestErrors(unittest.TestCase):
             made.remote_list("bucket")
         self.assertIn("us-west-2", str(caught.exception))
 
+    def test_a_certificate_failure_says_how_to_fix_it(self):
+        """SSLError 는 OSError 라서 그냥 두면 '닿지 못했습니다' 에 삼켜진다.
+
+        원인도 고치는 방법도 전혀 다르다. python.org 판 macOS 파이썬은 설치
+        직후 CA 묶음이 비어 있어 어떤 HTTPS 도 검증에 실패한다.
+        """
+        import ssl
+
+        def refuse(*args, **kwargs):
+            raise ssl.SSLCertVerificationError(
+                "[SSL: CERTIFICATE_VERIFY_FAILED] unable to get local issuer certificate"
+            )
+
+        made = s3.S3Link("ap-northeast-2", "k", "s", transport=refuse,
+                         clock=lambda: EXAMPLE_TIME)
+        with self.assertRaises(s3.S3Error) as caught:
+            made.remote_list("bucket")
+
+        self.assertIn("TLS 인증서", str(caught.exception))
+        self.assertNotIn("닿지 못했습니다", str(caught.exception))
+
+    def test_the_ca_advice_appears_only_when_the_bundle_is_empty(self):
+        """이름이 안 맞거나 만료된 인증서는 전혀 다른 이야기다."""
+        original = s3.has_ca_bundle
+        self.addCleanup(lambda: setattr(s3, "has_ca_bundle", original))
+
+        s3.has_ca_bundle = lambda: False
+        self.assertIn("Install Certificates", s3._tls_message("무엇이든"))
+
+        s3.has_ca_bundle = lambda: True
+        self.assertNotIn("Install Certificates", s3._tls_message("무엇이든"))
+
+    def test_a_multi_line_error_reaches_the_dialog_as_lines(self):
+        """한 줄로 붙이면 상자 폭에 잘려 안내가 통째로 사라진다."""
+        message = "첫 줄\n둘째 줄\n셋째 줄"
+        dialog = app_module.MessageDialog("오류", message.split("\n"))
+        self.assertIn("셋째 줄", "\n".join(dialog.lines(60)))
+
     def test_a_network_failure_is_reported_not_raised_raw(self):
         def boom(*args, **kwargs):
             raise OSError("이름을 못 찾았다")
