@@ -11,7 +11,7 @@ import threading
 import unittest
 from pathlib import Path
 
-from mdirnet import keystore, s3, session, settings
+from mdirnet import awscfg, keystore, s3, session, settings
 from mdirnet import shares as shares_mod
 from mdirnet.ui import app as app_module
 from mdirnet.ui import term
@@ -649,8 +649,17 @@ class TestProfileStorage(unittest.TestCase):
         settings.save_s3_profile("ap-northeast-2", EXAMPLE_KEY, "my-bucket")
         self.assertEqual(
             settings.load_s3_profile(),
-            {"region": "ap-northeast-2", "access_key": EXAMPLE_KEY, "bucket": "my-bucket"},
+            {"region": "ap-northeast-2", "access_key": EXAMPLE_KEY,
+             "bucket": "my-bucket", "aws_profile": ""},
         )
+
+    def test_an_aws_profile_is_remembered_without_any_key(self):
+        """aws CLI 가 키를 갖고 있다. 우리가 또 적어둘 이유가 없다."""
+        settings.save_s3_profile("ap-northeast-2", "", "my-bucket", "일하는계정")
+        stored = settings.load_s3_profile()
+
+        self.assertEqual(stored["aws_profile"], "일하는계정")
+        self.assertEqual(stored["access_key"], "")
 
     def test_the_secret_key_is_never_written_to_disk(self):
         settings.save_s3_profile("ap-northeast-2", EXAMPLE_KEY, "my-bucket")
@@ -658,7 +667,8 @@ class TestProfileStorage(unittest.TestCase):
 
     def test_a_missing_profile_reads_as_empty_fields(self):
         self.assertEqual(
-            settings.load_s3_profile(), {"region": "", "access_key": "", "bucket": ""}
+            settings.load_s3_profile(),
+            {"region": "", "access_key": "", "bucket": "", "aws_profile": ""},
         )
 
     def test_saving_the_profile_does_not_wipe_other_settings(self):
@@ -1072,6 +1082,314 @@ class TestNoStoreHere(S3AppTestCase):
         self.app._open_s3_dialog()
         self.assertEqual(self.app.modal.keep, "")
         self.assertNotIn("remember", self.app.modal.rows())
+
+
+class ProfileStub:
+    def __init__(self, name, usable=True, reason="", region="", token=""):
+        self.name = name
+        self.usable = usable
+        self.reason = reason
+        self.region = region
+        # HTTP 헤더에 실리므로 ASCII 여야 한다 (latin-1 로 인코딩된다)
+        self.access_key = "AKIAPROFILEKEY" if usable else ""
+        self.secret_key = "profile-secret" if usable else ""
+        self.session_token = token
+
+
+class TestProfileRow(unittest.TestCase):
+    """자격증명 갈래에 따라 줄 구성 자체가 달라진다.
+
+    쓰지 않는 칸을 회색으로 남겨두면 왜 안 먹는지 알 길이 없다.
+    """
+
+    def open(self, on_profiles=lambda v: None, initial=None, keep="키체인"):
+        got = []
+        dialog = app_module.S3ConnectDialog(
+            got.append, initial, keep=keep, on_profiles=on_profiles
+        )
+        return dialog, got
+
+    def test_without_any_aws_config_there_is_no_choice_row(self):
+        dialog, _ = self.open(on_profiles=None)
+        self.assertNotIn("source", dialog.rows())
+        self.assertIn("access_key", dialog.rows())
+
+    def test_the_choice_row_comes_first(self):
+        dialog, _ = self.open()
+        self.assertEqual(dialog.rows()[0], "source")
+
+    def test_switching_swaps_the_key_fields_for_a_profile_field(self):
+        dialog, _ = self.open()
+        self.assertIn("access_key", dialog.rows())
+
+        dialog.key(term.SPACE)
+        self.assertIn("profile", dialog.rows())
+        self.assertNotIn("access_key", dialog.rows())
+        self.assertNotIn("secret_key", dialog.rows())
+
+    def test_a_profile_needs_no_place_to_keep_a_secret(self):
+        """aws CLI 가 이미 키를 갖고 있다. 우리가 또 맡아둘 이유가 없다."""
+        dialog, _ = self.open()
+        self.assertIn("remember", dialog.rows())
+
+        dialog.key(term.SPACE)
+        self.assertNotIn("remember", dialog.rows())
+
+    def test_typed_keys_are_not_required_when_a_profile_is_used(self):
+        dialog, _ = self.open()
+        dialog.key(term.SPACE)
+        self.assertEqual(dialog.required(), ("region",))
+
+    def test_switching_back_keeps_what_was_typed(self):
+        dialog, _ = self.open()
+        dialog._jump_to("access_key")
+        for ch in "AKIATYPED":
+            dialog.key(ch)
+        dialog._jump_to("source")
+        dialog.key(term.SPACE)  # 프로필로
+        dialog.key(term.SPACE)  # 다시 직접 입력으로
+
+        self.assertEqual(dialog.values["access_key"], "AKIATYPED")
+
+    def test_space_on_the_profile_row_asks_for_the_list(self):
+        asked = []
+        dialog, _ = self.open(on_profiles=asked.append)
+        dialog.key(term.SPACE)
+        dialog._jump_to("profile")
+
+        self.assertTrue(dialog.key(term.SPACE))
+        self.assertTrue(asked[0]["use_profile"])
+
+    def test_connecting_without_a_profile_says_so(self):
+        dialog, got = self.open()
+        dialog.key(term.SPACE)
+        dialog._jump_to("region")
+        for ch in "ap-northeast-2":
+            dialog.key(ch)
+        dialog._jump_to("submit")
+
+        self.assertFalse(dialog.key(term.ENTER))
+        self.assertEqual(got, [])
+        self.assertIn("프로필을 고르세요", dialog.error)
+        self.assertEqual(dialog.rows()[dialog.at], "profile")
+
+    def test_a_chosen_profile_rides_along(self):
+        dialog, got = self.open(initial={"profile": "일하는계정", "use_profile": True})
+        dialog._jump_to("region")
+        for ch in "ap-northeast-2":
+            dialog.key(ch)
+        dialog._jump_to("submit")
+
+        self.assertTrue(dialog.key(term.ENTER))
+        self.assertEqual(got[0]["profile"], "일하는계정")
+        self.assertTrue(got[0]["use_profile"])
+
+    def test_the_hint_names_the_key_for_each_row(self):
+        dialog, _ = self.open()
+        self.assertIn("Space 바꾸기", "\n".join(dialog.lines(60)))
+        dialog.key(term.SPACE)
+        dialog._jump_to("profile")
+        self.assertIn("Space 프로필 목록", "\n".join(dialog.lines(60)))
+
+
+class TestProfileDialog(unittest.TestCase):
+    def picker(self, profiles, current="", on_choose=None):
+        dialog = app_module.ProfileDialog(
+            profiles, current, on_choose or (lambda name: None)
+        )
+        dialog.max_body = 18
+        return dialog
+
+    def test_it_lists_the_name_and_the_region(self):
+        text = "\n".join(
+            self.picker([ProfileStub("일하는계정", region="ap-northeast-2")]).lines(60)
+        )
+        self.assertIn("일하는계정", text)
+        self.assertIn("ap-northeast-2", text)
+
+    def test_an_unusable_profile_is_shown_with_its_reason(self):
+        """조용히 빼버리면 '내 프로필이 왜 없지' 가 된다."""
+        text = "\n".join(
+            self.picker([ProfileStub("회사", usable=False, reason="SSO 프로필입니다")]).lines(60)
+        )
+        self.assertIn("회사", text)
+        self.assertIn("SSO", text)
+
+    def test_choosing_an_unusable_one_says_why_instead_of_closing(self):
+        got = []
+        dialog = self.picker(
+            [ProfileStub("회사", usable=False, reason="SSO 프로필입니다")], "", got.append
+        )
+        self.assertFalse(dialog.key(term.ENTER))
+        self.assertEqual(got, [])
+        self.assertIn("SSO", "\n".join(dialog.lines(60)))
+
+    def test_choosing_a_usable_one_returns_its_name(self):
+        got = []
+        dialog = self.picker([ProfileStub("일하는계정")], "", got.append)
+        self.assertTrue(dialog.key(term.ENTER))
+        self.assertEqual(got, ["일하는계정"])
+
+    def test_it_opens_on_the_current_profile(self):
+        dialog = self.picker(
+            [ProfileStub("가"), ProfileStub("나"), ProfileStub("다")], "다"
+        )
+        self.assertEqual(dialog.cursor, 2)
+
+    def test_cancelling_reports_nothing_chosen(self):
+        got = []
+        dialog = self.picker([ProfileStub("가")], "", got.append)
+        self.assertTrue(dialog.key(term.ESC))
+        self.assertEqual(got, [None])
+
+    def test_a_hangul_name_does_not_push_the_next_column(self):
+        """한글은 한 글자가 두 칸이다. 글자 수로 채우면 칸이 밀린다."""
+        from mdirnet.ui import screen
+
+        rows = self.picker([
+            ProfileStub("default", region="us-east-1"),
+            ProfileStub("일하는계정", region="ap-northeast-2"),
+        ]).lines(60)
+
+        starts = [row.index("us-east-1") if "us-east-1" in row else None for row in rows]
+        here = [screen.width(row[: row.index(note)])
+                for row, note in zip(rows[:2], ("us-east-1", "ap-northeast-2"))]
+        self.assertEqual(here[0], here[1], "리전 칸이 줄마다 어긋난다")
+
+    def test_an_empty_list_still_explains_the_way_out(self):
+        text = "\n".join(self.picker([]).lines(60))
+        self.assertIn("찾지 못했습니다", text)
+        self.assertIn("직접 입력", text)
+
+
+class TestConnectingWithAProfile(S3AppTestCase):
+    def use(self, *profiles):
+        original = (awscfg.profiles, awscfg.get, awscfg.available, awscfg.preferred)
+        table = {p.name: p for p in profiles}
+        awscfg.profiles = lambda: list(profiles)
+        awscfg.get = table.get
+        awscfg.available = lambda: bool(profiles)
+        awscfg.preferred = lambda: profiles[0].name if profiles else ""
+        self.addCleanup(lambda: self._restore(original))
+
+    @staticmethod
+    def _restore(original):
+        (awscfg.profiles, awscfg.get, awscfg.available, awscfg.preferred) = original
+
+    def watch_links(self):
+        """만들어지는 S3Link 를 붙잡고, 실제 통신은 가짜로 돌린다."""
+        seen = {}
+        original = s3.S3Link
+        self.intercept(lambda m, p, b: FakeResponse(200, xml_listing()))
+
+        def spy(*args, **kwargs):
+            seen["args"], seen["kwargs"] = args, kwargs
+            return original(*args, **kwargs)
+
+        s3.S3Link = spy
+        self.addCleanup(lambda: setattr(s3, "S3Link", original))
+        return seen
+
+    def intercept(self, reply):
+        """테스트가 바깥으로 나가면 안 된다."""
+        original = s3.https
+        s3.https = FakeTransport(reply)
+        self.addCleanup(lambda: setattr(s3, "https", original))
+
+    def test_the_profiles_keys_are_what_gets_used(self):
+        self.use(ProfileStub("일하는계정", region="ap-northeast-2"))
+        seen = self.watch_links()
+
+        self.app._connect_s3({
+            "region": "ap-northeast-2", "bucket": "b", "profile": "일하는계정",
+            "use_profile": True, "access_key": "쓰이면안됨", "secret_key": "쓰이면안됨",
+        })
+        self.settle()
+
+        self.assertEqual(seen["args"][1], "AKIAPROFILEKEY")
+        self.assertEqual(seen["args"][2], "profile-secret")
+
+    def test_a_session_token_reaches_the_link(self):
+        self.use(ProfileStub("임시", token="temp-token"))
+        seen = self.watch_links()
+
+        self.app._connect_s3({
+            "region": "ap-northeast-2", "bucket": "", "profile": "임시",
+            "use_profile": True, "access_key": "", "secret_key": "",
+        })
+        self.settle()
+
+        self.assertEqual(seen["kwargs"]["session_token"], "temp-token")
+
+    def test_an_unusable_profile_never_becomes_a_connection(self):
+        self.use(ProfileStub("회사", usable=False, reason="SSO 프로필입니다"))
+        self.app._connect_s3({
+            "region": "ap-northeast-2", "bucket": "", "profile": "회사",
+            "use_profile": True, "access_key": "", "secret_key": "",
+        })
+        self.settle()
+
+        self.assertIsNone(self.app.s3)
+        self.assertIsInstance(self.app.modal, app_module.MessageDialog)
+
+    def test_a_vanished_profile_is_reported_not_ignored(self):
+        """폼을 열어둔 사이 ~/.aws 가 바뀌었을 수 있다."""
+        self.use()
+        self.app._connect_s3({
+            "region": "ap-northeast-2", "bucket": "", "profile": "사라진것",
+            "use_profile": True, "access_key": "", "secret_key": "",
+        })
+        self.settle()
+
+        self.assertIsNone(self.app.s3)
+        self.assertIsInstance(self.app.modal, app_module.MessageDialog)
+
+
+class TestSessionTokenOnTheWire(unittest.TestCase):
+    def test_a_credential_with_non_ascii_is_refused_before_sending(self):
+        """HTTP 헤더는 latin-1 만 담는다. 워커 스레드에서 raw 트레이스백이 나가면 안 된다.
+
+        액세스 키와 세션 토큰이 그대로 헤더에 실린다. 시크릿 키는 서명(16진수)이
+        되어 나가므로 여기에 걸리지 않는다.
+        """
+        made, transport = link(lambda m, p, b: FakeResponse(200, xml_listing()))
+        made.access_key = "AKIA한글"
+
+        with self.assertRaises(s3.S3Error) as caught:
+            made.remote_list("bucket")
+        self.assertIn("ASCII", str(caught.exception))
+        self.assertEqual(transport.calls, [], "보내지 말았어야 했다")
+
+    def test_a_non_ascii_session_token_is_caught_too(self):
+        made, transport = link(lambda m, p, b: FakeResponse(200, xml_listing()))
+        made.session_token = "토큰값"
+
+        with self.assertRaises(s3.S3Error):
+            made.remote_list("bucket")
+        self.assertEqual(transport.calls, [])
+
+    def test_an_ordinary_secret_key_is_never_a_problem(self):
+        """시크릿 키는 서명이 되어 나간다. 어떤 글자든 헤더에 그대로 실리지 않는다."""
+        made, transport = link(lambda m, p, b: FakeResponse(200, xml_listing()))
+        made.secret_key = "한글이 섞인 비밀"
+        made.remote_list("bucket")
+
+        self.assertTrue(transport.calls)
+
+    def test_the_token_goes_out_as_a_signed_header(self):
+        made, transport = link(lambda m, p, b: FakeResponse(200, xml_listing()))
+        made.session_token = "temp-token"
+        made.remote_list("bucket")
+
+        sent = transport.calls[0]["headers"]
+        self.assertEqual(sent["x-amz-security-token"], "temp-token")
+        self.assertIn("x-amz-security-token", sent["Authorization"])
+
+    def test_no_token_means_no_header(self):
+        made, transport = link(lambda m, p, b: FakeResponse(200, xml_listing()))
+        made.remote_list("bucket")
+
+        self.assertNotIn("x-amz-security-token", transport.calls[0]["headers"])
 
 
 class TestRegionDialog(S3AppTestCase):

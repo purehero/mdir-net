@@ -7,8 +7,8 @@ import queue
 import threading
 from pathlib import Path
 
-from .. import (archive, config, discovery, fsops, keystore, s3 as s3_mod, session,
-                settings, shares as shares_mod, winfw)
+from .. import (archive, awscfg, config, discovery, fsops, keystore, s3 as s3_mod,
+                session, settings, shares as shares_mod, winfw)
 from . import screen, term
 
 # 테두리 문자. 폭이 정확히 1칸이고 East Asian Width 가 A(Ambiguous)가 아닌 것만
@@ -574,8 +574,103 @@ class RegionDialog(Dialog):
         return False
 
 
+class ProfileDialog(Dialog):
+    """aws CLI 프로필을 고른다.
+
+    쓸 수 없는 프로필도 보여주되 이유를 적는다. 목록에서 조용히 빼버리면
+    "내 프로필이 왜 없지" 가 된다.
+    """
+
+    title = "AWS 프로필 선택"
+    VISIBLE = 12
+
+    def __init__(self, profiles, current, on_choose):
+        self.profiles = list(profiles)
+        self.cursor = next(
+            (i for i, p in enumerate(self.profiles) if p.name == current), 0
+        )
+        self.offset = 0
+        self.error = ""
+        self._on_choose = on_choose
+
+    def _visible(self):
+        return max(min(self.VISIBLE, (self.max_body or 18) - 2), 1)
+
+    def lines(self, inner):
+        if not self.profiles:
+            return [
+                term.DIM + "~/.aws 에서 프로필을 찾지 못했습니다." + term.RESET,
+                "",
+                term.DIM + "Esc 로 돌아가 직접 입력하세요" + term.RESET,
+            ]
+
+        visible = self._visible()
+        if self.cursor < self.offset:
+            self.offset = self.cursor
+        elif self.cursor >= self.offset + visible:
+            self.offset = self.cursor - visible + 1
+        self.offset = max(0, min(self.offset, max(len(self.profiles) - visible, 0)))
+
+        out = []
+        for index in range(self.offset, min(self.offset + visible, len(self.profiles))):
+            profile = self.profiles[index]
+            note = profile.reason or profile.region or ""
+            # `%-20s` 는 글자 수로 채운다. 한글 이름은 한 글자가 두 칸이라
+            # 칸이 밀린다. 폭을 세는 pad 를 쓴다
+            text = screen.pad("  %s %s" % (screen.pad(profile.name, 20), note), inner)
+            if index == self.cursor:
+                out.append(term.BAR + text + term.RESET)
+            elif not profile.usable:
+                out.append(term.DIM + text + term.RESET)
+            else:
+                out.append(text)
+
+        more = len(self.profiles) - self.offset - visible
+        out.append(term.DIM + ("  아래로 %d개 더" % more if more > 0 else "") + term.RESET)
+        if self.error:
+            out.append(term.BAD + screen.fit(self.error, inner) + term.RESET)
+        out.append(term.DIM + "Enter 선택   Esc 취소" + term.RESET)
+        return out
+
+    def key(self, key):
+        if key in (term.ESC, "q"):
+            self._on_choose(None)
+            return True
+        if not self.profiles:
+            return False
+
+        last = len(self.profiles) - 1
+        visible = self._visible()
+
+        if key in (term.UP, "k"):
+            self.cursor = max(0, self.cursor - 1)
+        elif key in (term.DOWN, "j"):
+            self.cursor = min(last, self.cursor + 1)
+        elif key == term.PGUP:
+            self.cursor = max(0, self.cursor - visible)
+        elif key == term.PGDN:
+            self.cursor = min(last, self.cursor + visible)
+        elif key == term.HOME_KEY:
+            self.cursor = 0
+        elif key == term.END_KEY:
+            self.cursor = last
+        elif key == term.ENTER:
+            picked = self.profiles[self.cursor]
+            if not picked.usable:
+                # 닫고 나서 연결에 실패하면 무엇이 문제였는지 알기 어렵다.
+                # 고를 수 없는 이유를 그 자리에서 말한다
+                self.error = "%s - 쓸 수 없습니다" % picked.reason
+                return False
+            self._on_choose(picked.name)
+            return True
+        else:
+            return False
+        self.error = ""
+        return False
+
+
 class S3ConnectDialog(InputDialog):
-    """AWS S3 접속 정보를 받는다. 칸이 여럿이라 Tab 으로 옮겨 다닌다.
+    """AWS S3 접속 정보를 받는다. 줄이 여럿이라 Tab 으로 옮겨 다닌다.
 
     한 줄 입력창을 물려받아 편집 키(< > Home End Backspace Delete)를 그대로
     쓴다. `text` 는 늘 '지금 고치는 칸' 의 내용이고, 칸을 옮길 때 `values` 로
@@ -585,41 +680,56 @@ class S3ConnectDialog(InputDialog):
     내려갈 뿐이다 - 시크릿 키를 치다 Enter 가 눌려 반쯤 채운 채로 연결을
     시도하는 일이 없다.
 
-    `keep` 을 주면 시크릿 키를 맡길지 고르는 줄이 하나 더 생긴다. 맡길 곳이
-    없는 환경에서는 그 줄을 아예 만들지 않는다 - 고를 수 없는 것을 보여주면
-    왜 안 되는지 알 길이 없다.
+    자격증명은 두 갈래다. 직접 입력이면 키 두 칸이 나오고, aws CLI 프로필이면
+    프로필 한 칸이 대신 나온다. **줄 구성 자체가 달라진다** - 쓰지 않는 칸을
+    회색으로 남겨두면 왜 안 먹는지 알 길이 없다.
     """
 
-    # (키, 라벨, 가릴지). 버킷만 비워둘 수 있다
-    FIELDS = (
-        ("region", "리전", False),
+    # (키, 라벨, 가릴지)
+    TYPED = (
         ("access_key", "액세스 키 ID", False),
         ("secret_key", "시크릿 액세스 키", True),
-        ("bucket", "버킷 (비우면 전체)", False),
     )
-    REQUIRED = 3  # 앞의 세 칸은 비울 수 없다
+    COMMON_HEAD = (("region", "리전", False),)
+    COMMON_TAIL = (("bucket", "버킷 (비우면 전체)", False),)
 
-    def __init__(self, on_submit, initial=None, on_regions=None, keep=""):
+    def __init__(self, on_submit, initial=None, on_regions=None, keep="",
+                 on_profiles=None):
         initial = initial or {}
-        self.values = {key: str(initial.get(key) or "") for key, _, _ in self.FIELDS}
+        self.values = {
+            key: str(initial.get(key) or "")
+            for key, _, _ in self.TYPED + self.COMMON_HEAD + self.COMMON_TAIL
+        }
+        self.values["profile"] = str(initial.get("profile") or "")
+        # 프로필을 고를 수 있을 때만 자격증명 줄이 생긴다
+        self._on_profiles = on_profiles
+        self.use_profile = bool(initial.get("use_profile")) and bool(on_profiles)
         # 맡길 곳의 이름 ("키체인" 등). 비면 저장 줄이 없다
         self.keep = str(keep or "")
         self.remember = bool(initial.get("remember"))
         self.at = 0
         self.error = ""
-        # 리전 목록 창을 여는 길. FolderDialog 가 드라이브 창을 여는 것과 같은
-        # 방식이다 - 다이얼로그는 자기를 바꿔치울 수 없으므로 앱에 맡긴다
         self._on_regions = on_regions
-        InputDialog.__init__(
-            self, "AWS S3 연결", [], on_submit, initial=self.values[self.FIELDS[0][0]]
-        )
+        InputDialog.__init__(self, "AWS S3 연결", [], on_submit, initial="")
+        self._load(0)
 
     # --- 줄 ---
 
+    def fields(self):
+        """지금 보이는 입력 칸들. 자격증명 갈래에 따라 달라진다."""
+        middle = () if self.use_profile else self.TYPED
+        return self.COMMON_HEAD + middle + self.COMMON_TAIL
+
     def rows(self):
-        """지금 화면에 있는 줄들. 맡길 곳이 없으면 저장 줄이 없다."""
-        names = [key for key, _, _ in self.FIELDS]
-        if self.keep:
+        """지금 화면에 있는 줄 이름들."""
+        names = []
+        if self._on_profiles:
+            names.append("source")
+        if self.use_profile:
+            names.append("profile")
+        names += [key for key, _, _ in self.fields()]
+        if self.keep and not self.use_profile:
+            # 프로필을 쓰면 맡길 시크릿이 없다. aws CLI 가 이미 갖고 있다
             names.append("remember")
         names.append("submit")
         return names
@@ -627,82 +737,132 @@ class S3ConnectDialog(InputDialog):
     def submit_at(self):
         return len(self.rows()) - 1
 
-    def _field(self, index):
+    def required(self):
+        """비울 수 없는 칸들."""
+        if self.use_profile:
+            return ("region",)
+        return ("region", "access_key", "secret_key")
+
+    def _label_of(self, key):
+        for name, label, _ in self.TYPED + self.COMMON_HEAD + self.COMMON_TAIL:
+            if name == key:
+                return label
+        return key
+
+    def _field(self, row):
         """그 줄이 입력 칸이면 (키, 라벨, 가릴지), 아니면 None."""
-        return self.FIELDS[index] if index < len(self.FIELDS) else None
+        return next((f for f in self.fields() if f[0] == row), None)
 
     def _snapshot(self):
-        return dict(self.values, remember=self.remember)
+        return dict(
+            self.values,
+            use_profile=self.use_profile,
+            remember=self.remember and not self.use_profile,
+        )
 
     # --- 줄 옮기기 ---
 
     def _store(self):
-        field = self._field(self.at)
+        field = self._field(self.rows()[self.at])
         if field:
             self.values[field[0]] = self.text
 
-    def _go(self, index):
-        self._store()
-        self.at = index % len(self.rows())
-        field = self._field(self.at)
+    def _load(self, index):
+        """그 줄로 자리를 옮기고 그 칸의 값을 편집 버퍼에 싣는다."""
+        rows = self.rows()
+        self.at = index % len(rows)
+        field = self._field(rows[self.at])
         self.text = self.values[field[0]] if field else ""
         self.cursor = len(self.text)
+
+    def _go(self, index):
+        """다른 줄로 옮긴다. 떠나기 전에 쳐 넣던 것을 반드시 담아둔다.
+
+        담는 일을 부르는 쪽에 맡겼더니 `_go` 를 직접 부르는 자리에서 빠뜨려
+        입력이 사라졌다. 옮기는 길이 하나뿐이므로 여기서 한다. 처음 열 때는
+        담을 것이 없으므로 `_load` 만 부른다 - 빈 버퍼로 첫 칸을 덮어쓴다.
+        """
+        self._store()
+        self._load(index)
 
     def _move(self, delta):
         self._go(self.at + delta)
 
+    def _jump_to(self, key):
+        rows = self.rows()
+        if key in rows:
+            self._go(rows.index(key))
+
     # --- 그리기 ---
 
-    def _marker(self, index):
-        return "> " if index == self.at else "  "
+    def _labels(self):
+        wide = [label for _, label, _ in self.TYPED + self.COMMON_HEAD + self.COMMON_TAIL]
+        wide += ["자격증명", "프로필", "시크릿 키 저장"]
+        return max(screen.width(label) for label in wide) + 2
+
+    def _line(self, index, label, body, label_col, inner):
+        head = ("> " if index == self.at else "  ") + screen.pad(label, label_col)
+        return screen.pad(head + body, inner)
 
     def lines(self, inner):
-        label_col = max(screen.width(label) for _, label, _ in self.FIELDS) + 2
-        rows = ["접속 정보를 입력하세요.", ""]
+        label_col = self._labels()
+        out = ["접속 정보를 입력하세요.", ""]
 
-        for index, (key, label, secret) in enumerate(self.FIELDS):
+        for index, row in enumerate(self.rows()):
             here = index == self.at
+            if row == "source":
+                answer = "AWS 프로필 (~/.aws)" if self.use_profile else "직접 입력"
+                out.append(self._line(index, "자격증명",
+                                      answer if here else term.DIM + answer + term.RESET,
+                                      label_col, inner))
+                continue
+            if row == "profile":
+                shown = self.values["profile"] or "(고르지 않음)"
+                out.append(self._line(index, "프로필",
+                                      shown if here else term.DIM + shown + term.RESET,
+                                      label_col, inner))
+                continue
+            if row == "remember":
+                answer = "예 - %s에 맡깁니다" % self.keep if self.remember else "아니오"
+                out.append(self._line(index, "시크릿 키 저장",
+                                      answer if here else term.DIM + answer + term.RESET,
+                                      label_col, inner))
+                continue
+            if row == "submit":
+                button = "[ 연결 ]"
+                out.append("")
+                out.append(self._line(
+                    index, "", term.BAR + button + term.RESET if here else button,
+                    0, inner,
+                ))
+                continue
+
+            key, label, secret = self._field(row)
             value = self.text if here else self.values[key]
             shown = "*" * len(value) if secret else value
-            head = self._marker(index) + screen.pad(label, label_col)
-            room = max(inner - screen.width(head), 1)
+            room = max(inner - screen.width("  " + screen.pad(label, label_col)), 1)
             body = (
                 self._rendered(room, shown)
                 if here
                 else term.DIM + screen.pad(screen.fit_left(shown, room), room) + term.RESET
             )
-            rows.append(screen.pad(head + body, inner))
+            out.append(self._line(index, label, body, label_col, inner))
 
-        if self.keep:
-            index = len(self.FIELDS)
-            head = self._marker(index) + screen.pad("시크릿 키 저장", label_col)
-            answer = "예 - %s에 맡깁니다" % self.keep if self.remember else "아니오"
-            body = answer if index == self.at else term.DIM + answer + term.RESET
-            rows.append(screen.pad(head + body, inner))
-
-        on_button = self.at == self.submit_at()
-        button = "[ 연결 ]"
-        rows.append("")
-        rows.append(screen.pad(
-            self._marker(self.submit_at())
-            + (term.BAR + button + term.RESET if on_button else button),
-            inner,
-        ))
-
-        rows.append("")
+        out.append("")
         if self.error:
-            rows.append(term.BAD + screen.fit(self.error, inner) + term.RESET)
-        rows.append(term.DIM + self._hint() + term.RESET)
-        return rows
+            out.append(term.BAD + screen.fit(self.error, inner) + term.RESET)
+        out.append(term.DIM + self._hint() + term.RESET)
+        return out
 
     def _hint(self):
-        """키 안내는 지금 있는 줄에 맞춘다.
-
-        늘 같은 문장을 띄우면 입력 칸에서도 Enter 가 연결하는 줄 안다.
-        """
+        """키 안내는 지금 있는 줄에 맞춘다."""
         here = self.rows()[self.at]
         head = ""
-        if here == "region" and self._on_regions:
+        if here == "source":
+            head = "Space 바꾸기   "
+        elif here == "profile":
+            head = "Space 프로필 목록   "
+        elif here == "region" and self._on_regions:
             head = "Space 리전 목록   "
         elif here == "remember":
             head = "Space 켜고 끄기   "
@@ -714,17 +874,32 @@ class S3ConnectDialog(InputDialog):
     def _connect(self):
         """`연결` 줄에서 Enter. 빈 칸이 있으면 그 칸으로 데려간다."""
         self._store()
-        missing = next(
-            (i for i in range(self.REQUIRED) if not self.values[self.FIELDS[i][0]].strip()),
-            None,
-        )
-        if missing is not None:
-            # 닫아버리면 쳐 넣은 것이 사라진다. 열어둔 채로 그 칸으로 옮겨준다
-            self.error = "%s 칸이 비었습니다" % self.FIELDS[missing][1]
-            self._go(missing)
+        if self.use_profile and not self.values["profile"]:
+            self.error = "프로필을 고르세요"
+            self._jump_to("profile")
             return False
+
+        missing = next(
+            (key for key in self.required() if not self.values[key].strip()), ""
+        )
+        if missing:
+            # 닫아버리면 쳐 넣은 것이 사라진다. 열어둔 채로 그 칸으로 옮겨준다
+            self.error = "%s 칸이 비었습니다" % self._label_of(missing)
+            self._jump_to(missing)
+            return False
+
         self._on_submit(self._snapshot())
         return True
+
+    def _toggle_source(self):
+        """직접 입력 <-> 프로필. 줄 구성이 바뀌므로 자리를 다시 잡는다.
+
+        바꾸기 **전에** 담는다. 바꾸고 나면 지금 줄이 어느 칸이었는지 알 수 없다.
+        """
+        self._store()
+        self.use_profile = not self.use_profile
+        self.error = ""
+        self._go(self.rows().index("source"))
 
     def key(self, key):
         if key == term.ESC:
@@ -739,11 +914,18 @@ class S3ConnectDialog(InputDialog):
             return self._connect()
 
         if key == term.SPACE:
+            if here == "source":
+                self._toggle_source()
+                return False
+            if here == "profile":
+                self._store()
+                self._on_profiles(self._snapshot())
+                return True  # 목록 창이 이 창을 대신한다
             # 리전 이름에는 공백이 없다. 그 칸에서만 Space 를 목록 여는 키로 쓴다
             if here == "region" and self._on_regions:
                 self._store()
                 self._on_regions(self._snapshot())
-                return True  # 목록 창이 이 창을 대신한다. 고르면 값을 안고 다시 열린다
+                return True
             if here == "remember":
                 self.remember = not self.remember
                 return False
@@ -756,7 +938,7 @@ class S3ConnectDialog(InputDialog):
             return False
 
         self.error = ""
-        if not self._field(self.at):
+        if not self._field(here):
             return False  # 입력 칸이 아닌 줄에는 고칠 글자가 없다
         return InputDialog.key(self, key)
 
@@ -1927,6 +2109,8 @@ class App:
 
         profile = settings.load_s3_profile()
         profile["remember"] = False
+        profile["use_profile"] = bool(profile.get("aws_profile"))
+        profile["profile"] = profile.get("aws_profile") or awscfg.preferred()
         if not profile["access_key"] or not keystore.available():
             return profile
 
@@ -1950,11 +2134,26 @@ class App:
 
             self.modal = RegionDialog(current["region"], chosen)
 
+        def pick_profile(current):
+            def chosen(name):
+                # 취소하면 name 이 None 이다. 고르던 것을 그대로 두고 되돌아간다
+                picked = dict(current, profile=name or current.get("profile", ""))
+                found = awscfg.get(picked["profile"]) if name else None
+                if found and found.region and not picked.get("region"):
+                    # 프로필이 리전을 갖고 있으면 채워준다. 두 번 고를 이유가 없다
+                    picked["region"] = found.region
+                self._show_s3_dialog(picked)
+
+            self.modal = ProfileDialog(
+                awscfg.profiles(), current.get("profile", ""), chosen
+            )
+
         self.modal = S3ConnectDialog(
             self._connect_s3,
             values,
             on_regions=pick_region,
             keep=keystore.label() if self.persist else "",
+            on_profiles=pick_profile if awscfg.available() else None,
         )
 
     def _connect_s3(self, values):
@@ -1963,12 +2162,24 @@ class App:
         목록을 한 번 읽어보는 것이 곧 검증이다. 키가 틀렸거나 리전이 다르면
         여기서 걸러져, 패널이 붙은 뒤에야 오류를 만나는 일이 없다.
         """
+        access, secret, token = values["access_key"], values["secret_key"], ""
+        if values.get("use_profile"):
+            found = awscfg.get(values.get("profile", ""))
+            if found is None or not found.usable:
+                why = found.reason if found else "프로필을 찾지 못했습니다"
+                self.modal = MessageDialog("연결 실패", why, term.BAD)
+                return
+            access, secret, token = found.access_key, found.secret_key, found.session_token
+
         link = s3_mod.S3Link(
             values["region"].strip(),
-            values["access_key"].strip(),
-            values["secret_key"].strip(),
+            access.strip(),
+            secret.strip(),
             values["bucket"].strip(),
+            session_token=token,
         )
+        # 어느 프로필로 붙었는지 기억해 두었다가 다음에 그대로 연다
+        link.aws_profile = values.get("profile", "") if values.get("use_profile") else ""
         self.status = "S3 에 연결하는 중..."
 
         def work():
@@ -1995,11 +2206,17 @@ class App:
 
         if not self.persist:
             return
+        used = getattr(link, "aws_profile", "")
         try:
             # 설정 파일은 평문이다. 시크릿 키는 여기에 넣지 않는다
-            settings.save_s3_profile(link.region, link.access_key, link.bucket)
+            settings.save_s3_profile(
+                link.region, "" if used else link.access_key, link.bucket, used
+            )
         except OSError as exc:
             self.status = "접속 정보를 저장하지 못했습니다: %s" % exc
+        if used:
+            # aws CLI 가 이미 키를 갖고 있다. 우리가 또 맡아둘 이유가 없다
+            return
         self._keep_secret(link, remember)
 
     def _keep_secret(self, link, remember):

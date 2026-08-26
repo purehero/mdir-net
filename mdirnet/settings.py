@@ -67,14 +67,23 @@ def load_s3_profile():
     없다. 매번 입력받는 번거로움을 감수하는 편이 낫다.
     """
     raw = _load_all().get("s3")
+    keys = ("region", "access_key", "bucket", "aws_profile")
     if not isinstance(raw, dict):
-        return {"region": "", "access_key": "", "bucket": ""}
+        return {key: "" for key in keys}
     return {
-        key: raw.get(key) if isinstance(raw.get(key), str) else ""
-        for key in ("region", "access_key", "bucket")
+        key: raw.get(key) if isinstance(raw.get(key), str) else "" for key in keys
     }
 
 
-def save_s3_profile(region, access_key, bucket=""):
-    """다음 실행에서 자동으로 채워 넣을 값만 저장한다."""
-    _save("s3", {"region": region, "access_key": access_key, "bucket": bucket})
+def save_s3_profile(region, access_key, bucket="", aws_profile=""):
+    """다음 실행에서 자동으로 채워 넣을 값만 저장한다.
+
+    `aws_profile` 은 aws CLI 프로필로 붙었을 때의 이름이다. 그 경우 키는
+    ~/.aws 가 갖고 있으므로 여기에도, 비밀 저장소에도 넣지 않는다.
+    """
+    _save("s3", {
+        "region": region,
+        "access_key": access_key,
+        "bucket": bucket,
+        "aws_profile": aws_profile,
+    })
