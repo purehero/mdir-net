@@ -93,12 +93,12 @@ class TestApprovalDialog(ApprovalTestCase):
         _, dialog = self.make()
         button_line = [l for l in dialog.lines(60) if "수락" in l][0]
         # 처음에는 '수락' 쪽이 반전되어 있어야 한다
-        self.assertIn(term.REVERSE, button_line.split("수락")[0])
+        self.assertIn(term.BAR, button_line.split("수락")[0])
 
         dialog.key(term.RIGHT)
         moved = [l for l in dialog.lines(60) if "수락" in l][0]
-        self.assertNotIn(term.REVERSE, moved.split("수락")[0])
-        self.assertIn(term.REVERSE, moved.split("거부")[0].rsplit("수락", 1)[-1])
+        self.assertNotIn(term.BAR, moved.split("수락")[0])
+        self.assertIn(term.BAR, moved.split("거부")[0].rsplit("수락", 1)[-1])
 
     def test_footer_explains_the_keys(self):
         _, dialog = self.make()

@@ -6,7 +6,8 @@ import socket
 import sys
 from pathlib import Path
 
-from . import config, shares as shares_mod
+from . import config, settings, shares as shares_mod
+from .ui import term
 from .ui.app import App
 
 
@@ -41,6 +42,12 @@ def parse_args(argv=None):
         action="store_true",
         help="자동 발견을 끈다 (브로드캐스트가 막힌 망에서)",
     )
+    parser.add_argument(
+        "--theme",
+        choices=term.THEMES,
+        default=None,
+        help="화면 색상셋 (이번 실행에만 적용, 저장 안 함). 기본은 저장된 값",
+    )
     return parser.parse_args(argv)
 
 
@@ -50,6 +57,9 @@ def main(argv=None):
     if not sys.stdin.isatty():
         print("터미널에서 실행해야 합니다.", file=sys.stderr)
         return 1
+
+    # 색상셋은 인자가 있으면 그것을, 없으면 저장된 것을 쓴다 (--share 와 같은 결)
+    term.use_theme(args.theme or settings.load_theme())
 
     # 인자로 폴더를 줬으면 그것만 쓰고 저장하지 않는다. 저장된 목록을 건드리지
     # 않으므로 시험용이나 일회성 실행에 안전하다

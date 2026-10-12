@@ -24,21 +24,125 @@ HIDE_CURSOR = "\x1b[?25l"
 SHOW_CURSOR = "\x1b[?25h"
 ALT_SCREEN_ON = "\x1b[?1049h"
 ALT_SCREEN_OFF = "\x1b[?1049l"
-RESET = "\x1b[0m"
 
-# 색상. 256색이 아니라 기본 16색만 써서 어느 터미널에서나 같게 보이게 한다
-BOLD = "\x1b[1m"
-DIM = "\x1b[2m"
-REVERSE = "\x1b[7m"
-FG_CYAN = "\x1b[36m"
-FG_YELLOW = "\x1b[33m"
-FG_GREEN = "\x1b[32m"
-FG_RED = "\x1b[31m"
-FG_GRAY = "\x1b[90m"
+# 마우스 보고. 1000 은 누름/뗌, 1006 은 좌표를 십진수로 보내는 확장이다.
+# 1006 이 없으면 223칸을 넘는 자리에서 좌표가 망가진다
+MOUSE_ON = "\x1b[?1000h\x1b[?1006h"
+MOUSE_OFF = "\x1b[?1006l\x1b[?1000l"
+
+# 색상. 256색이 아니라 기본 16색만 써서 어느 터미널에서나 같게 보이게 한다.
+# 사용자 터미널이 흰 바탕일 수도 있으니 물려받지 않고 바닥을 직접 칠한다
+HARD_RESET = "\x1b[0m"  # 터미널을 원래 색으로. 화면을 떠날 때만 쓴다
+BOLD = "\x1b[1m"  # 어두운 바닥에서는 밝은 흰색이 된다 - 제목
+
+# 글자색 번호. MDir 은 같은 색의 어두운 것과 밝은 것을 둘 다 썼다
+# (문서는 청록, COM 은 하늘색=밝은청록). 그래서 색을 숫자로 들고 ink() 가
+# 밝기를 붙인다. 배경은 색상셋이 정한다
+BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE = 30, 31, 32, 33, 34, 35, 36, 37
+
+# 색상셋. MDir 3.06 배포판에 든 것이 이 둘뿐이다.
+#   BLACK.COL - 검은 바닥. 배포판 초기치
+#   BLUE.COL  - 파란 바닥. 같이 들어있던 예제
+# 두 파일의 글자색은 완전히 같고 배경만 다르다. 다른 곳은 딱 한 군데인데,
+# 파란 바닥에서 파랑 글자(H OBJ LIB)가 안 보이므로 검정으로 바꿔놓았다.
+# 그 조정을 ink() 가 규칙으로 한다
+THEMES = ("black", "blue")
+_bg = BLACK  # 배경을 '같은 색의 글자색 번호' 로 들고 있는다. +10 하면 배경 코드다
+
+
+def ink(color, bright=True):
+    """지금 색상셋의 바닥 위에 얹는 글자색.
+
+    글자색이 배경색과 같으면 안 보이므로 바꿔치운다. MSET.DOC 도 MDir 이
+    "사용자가 지정한 색깔에 문제가 있을경우는 최대한 자동으로 조정" 한다고
+    적어두었고, BLUE.COL 의 H OBJ LIB 가 실제로 그렇게 조정된 값이다.
+    """
+    color, bright = _visible(color, bright)
+    return "\x1b[%s%d;%dm" % ("1;" if bright else "", color, _bg + 10)
+
+
+def bar(color, bright=True):
+    """커서 줄. 그 항목의 글자색을 바탕으로 깔고 글자를 뒤집는다.
+
+    색을 하나로 고정하면 커서가 놓인 순간 그 파일이 무슨 종류였는지 알 수
+    없게 된다. 그래서 바탕색이 항목마다 달라진다.
+
+    밝기는 배경에 실을 수 없다. VGA 텍스트 모드의 속성 바이트에서 그 자리는
+    깜빡임이었고 배경은 8색뿐이었다. MDir 도 같은 제약 아래 있었다.
+
+    그래서 **글자색이 밝든 어둡든 바탕은 어두운 색으로 깔린다.** 밝은자홍(ZIP)의
+    바탕은 자홍이고 밝은파랑(PY)의 바탕은 파랑이다. 어두운 바탕에 검은 글자를
+    얹으면 안 읽히므로 흰 글자를 얹는다.
+
+    밝은회색만 예외다. 이것만 바탕이 밝게 깔리므로 검은 글자가 맞다.
+    BLACK.COL 의 `70`(검정 on 밝은회색)이 바로 이 값이다.
+    """
+    color, bright = _visible(color, bright)
+    text = BLACK if color == WHITE else WHITE
+    return "\x1b[%d;%dm" % (text, color + 10)
+
+
+def _visible(color, bright):
+    """배경에 묻히는 글자색을 보이는 색으로 바꿔준다.
+
+    밝은 것은 묻히지 않는다. DOS 에서 밝은파랑(9)과 파랑(1)은 다른 색이고,
+    배경은 어두운 8색뿐이므로 파란 바닥 위의 밝은파랑은 잘 보인다. BLUE.COL 도
+    소스(밝은파랑)는 그대로 두고 H OBJ LIB(파랑)만 검정으로 바꿔놓았다.
+    """
+    if bright or color != _bg:
+        return color, bright
+    return (WHITE if _bg == BLACK else BLACK), False
+
+
+def use_theme(name):
+    """색상셋을 갈아끼운다. 이름은 THEMES 중 하나다."""
+    global _bg, NORMAL, RESET, DIM, BAR, MARK, GOOD, BAD
+    if name not in THEMES:
+        raise ValueError("모르는 색상셋입니다: %s" % name)
+
+    _bg = BLACK if name == "black" else BLUE
+
+    NORMAL = ink(WHITE, False)  # 바탕이자 '나머지 파일' 색. BLACK.COL 의 07
+    # 그리는 동안의 '보통 상태'. app.py 곳곳의 RESET 이 바탕색을 지우지 않고
+    # 되돌아오게 하려면 이것이 바탕을 함께 들고 있어야 한다. 이 한 줄 덕분에
+    # 줄 끝의 \x1b[K 도, 화면 지우기도, splice() 도 바닥을 유지한다
+    RESET = HARD_RESET + NORMAL
+    DIM = ink(CYAN, False)  # 테두리, 가로줄, 안내 문구. '메인화면 선' 색이다
+    BAR = bar(WHITE, False)  # 패널 제목, 기능키 라벨, 상자 선택
+    MARK = ink(YELLOW, True)  # 고른 항목, 경고
+    GOOD = ink(GREEN, True)  # 연결됨, 진행바
+    BAD = ink(RED, True)  # 오류
+
+
+def theme():
+    """지금 쓰는 색상셋 이름."""
+    return "black" if _bg == BLACK else "blue"
+
+
+use_theme("black")  # MDir 배포판 초기치
+
 
 # 키 이름 상수
 UP, DOWN, LEFT, RIGHT = "UP", "DOWN", "LEFT", "RIGHT"
 ENTER, ESC, TAB, SPACE, BACKSPACE = "ENTER", "ESC", "TAB", "SPACE", "BACKSPACE"
+
+
+class Mouse:
+    """마우스 한 번. `read_key` 가 문자열 대신 이것을 돌려줄 수 있다.
+
+    행과 열은 **1부터**다 (터미널이 그렇게 보낸다). 쓰는 쪽에서 0부터로 바꾼다.
+    """
+
+    PRESS, RELEASE, WHEEL_UP, WHEEL_DOWN = "press", "release", "wheel_up", "wheel_down"
+
+    def __init__(self, kind, row, col, button=0):
+        self.kind = kind
+        self.row = row
+        self.col = col
+        self.button = button
+
+    def __repr__(self):
+        return "Mouse(%s, row=%d, col=%d)" % (self.kind, self.row, self.col)
 HOME_KEY, END_KEY, PGUP, PGDN = "HOME", "END", "PGUP", "PGDN"
 INSERT, DELETE = "INSERT", "DELETE"
 
@@ -101,6 +205,42 @@ def size():
     return max(cols, 40), max(rows, 10)
 
 
+def resize_seq(cols, rows):
+    """창 크기를 바꾸라는 시퀀스. xterm 의 CSI 8 이다 (행이 먼저 온다)."""
+    return "\x1b[8;%d;%dt" % (rows, cols)
+
+
+def grown_to(current, want):
+    """지금 크기와 원하는 크기 중 큰 쪽.
+
+    **줄이지는 않는다.** 넓게 쓰던 사람의 창을 좁히는 것은 도움이 아니다.
+    """
+    return (max(current[0], want[0]), max(current[1], want[1]))
+
+
+def resize(cols, rows):
+    """터미널 창을 이 크기로 키운다. 실제로 된 크기를 돌려준다.
+
+    듣지 않는 터미널이 있다. 그때는 아무 일도 일어나지 않고 원래 크기가 그대로
+    나온다 - 못 하는 것을 오류로 다룰 이유가 없다.
+    """
+    if not sys.stdout.isatty():
+        return size()
+
+    write(resize_seq(cols, rows))
+    flush()
+
+    # 터미널이 창을 바꾸고 커널이 pty 크기를 갱신하기까지 시차가 있다. 기다리지
+    # 않으면 첫 프레임을 옛 크기로 그렸다가 곧바로 다시 그리며 한 번 번쩍인다.
+    # 듣지 않는 터미널에서는 이 상한을 통째로 기다리게 된다. 창을 바꾸는 것은
+    # 로컬 통신이라 보통 수십 ms 안에 끝나므로, 넉넉하되 짧게 잡는다
+    for _ in range(20):
+        if size() == (cols, rows):
+            break
+        time.sleep(0.01)
+    return size()
+
+
 def write(text):
     sys.stdout.write(text)
 
@@ -137,14 +277,26 @@ class Terminal:
     터미널이 망가진 채 셸로 돌아가지 않도록 atexit 과 시그널 핸들러를 함께 건다.
     """
 
-    def __init__(self):
+    def __init__(self, want_size=None):
         self._saved = None
         self._active = False
+        self._mouse = False
         self._prev_handlers = {}
         self._real_stderr = None
         self._stderr_buffer = None
+        # 켤 때 창을 이만큼 키운다. None 이면 창에 손대지 않는다
+        self._want = want_size
+        self._size_before = None
 
     def __enter__(self):
+        # 대체 화면으로 들어가기 **전에** 키운다. 들어간 뒤에 바꾸면 첫 프레임을
+        # 그리는 도중에 크기가 달라진다
+        if self._want:
+            before = size()
+            grown = grown_to(before, self._want)
+            if grown != before and resize(*grown) != before:
+                self._size_before = before  # 실제로 바뀐 때만 되돌릴 것이 생긴다
+
         if IS_WINDOWS:
             _enable_windows_ansi()
         else:
@@ -158,7 +310,8 @@ class Terminal:
         sys.stderr = self._stderr_buffer
 
         self._active = True
-        write(ALT_SCREEN_ON + HIDE_CURSOR + CLEAR + HOME)
+        # RESET 을 CLEAR 앞에 놓아야 첫 프레임 전에 터미널 색이 비치지 않는다
+        write(ALT_SCREEN_ON + HIDE_CURSOR + RESET + CLEAR + HOME)
         flush()
 
         atexit.register(self.restore)
@@ -183,7 +336,19 @@ class Terminal:
             return
         self._active = False
 
-        write(SHOW_CURSOR + RESET + ALT_SCREEN_OFF)
+        # 마우스를 켠 채로 나가면 셸에서 클릭할 때마다 이상한 글자가 찍힌다.
+        # 화면 복원보다 먼저 끈다
+        if self._mouse:
+            write(MOUSE_OFF)
+            self._mouse = False
+
+        # 여기서 RESET 을 쓰면 셸이 파란 바닥으로 남는다. 나갈 때는 HARD_RESET 이다
+        write(SHOW_CURSOR + HARD_RESET + ALT_SCREEN_OFF)
+        # 창을 키웠으면 원래대로 돌려놓는다. 남의 셸을 바꿔놓고 나가지 않는다.
+        # 나가는 길이라 크기가 반영되기를 기다리지 않는다
+        if self._size_before:
+            write(resize_seq(*self._size_before))
+            self._size_before = None
         flush()
         if not IS_WINDOWS and self._saved is not None:
             termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, self._saved)
@@ -203,6 +368,20 @@ class Terminal:
             self._real_stderr = None
 
     # --- 키 입력 ---
+
+    def use_mouse(self, enabled):
+        """마우스 보고를 켜고 끈다.
+
+        윈도우에서는 켜지 않는다. msvcrt 로 읽는 경로에는 이 시퀀스가 오지
+        않고, 켜두면 콘솔에 따라 깨진 글자만 들어온다.
+        """
+        enabled = bool(enabled) and not IS_WINDOWS
+        if enabled == self._mouse:
+            return
+        self._mouse = enabled
+        if self._active:
+            write(MOUSE_ON if enabled else MOUSE_OFF)
+            flush()
 
     def read_key(self, timeout):
         """키 하나를 이름 문자열로 돌려준다. timeout 안에 없으면 None.
@@ -250,13 +429,20 @@ class Terminal:
 
         # CSI: 숫자와 ';' 를 모으고 마지막 글자가 종료 문자다
         body = ""
+        mouse = False
         while True:
             if not select.select([fd], [], [], 0.03)[0]:
                 return ESC
             ch = os.read(fd, 1).decode("latin-1")
+            if ch == "<" and not body:
+                # SGR 마우스. `ESC [ < 단추 ; 열 ; 행 M` (뗄 때는 m)
+                mouse = True
+                continue
             if ch.isdigit() or ch == ";":
                 body += ch
                 continue
+            if mouse and ch in ("M", "m"):
+                return _mouse_from(body, pressed=ch == "M")
             if ch == "~":
                 return _CSI_KEYS.get(body + "~")
             return _CSI_KEYS.get(ch)
@@ -274,6 +460,23 @@ class Terminal:
                 break
             buf.extend(os.read(fd, 1))
         return buf.decode("utf-8", "replace")
+
+
+def _mouse_from(body, pressed):
+    """`단추;열;행` 을 Mouse 로. 알아볼 수 없으면 None (조용히 버린다)."""
+    try:
+        button, col, row = (int(part) for part in body.split(";"))
+    except ValueError:
+        return None
+
+    # 64 부터는 휠이다. 33/34 처럼 32 가 더해진 값은 끌기(드래그)인데 쓰지 않는다
+    if button in (64, 65):
+        return Mouse(Mouse.WHEEL_UP if button == 64 else Mouse.WHEEL_DOWN, row, col)
+    if button & 32:
+        return None
+
+    kind = Mouse.PRESS if pressed else Mouse.RELEASE
+    return Mouse(kind, row, col, button=button & 3)
 
 
 # 두벌식 자판에서 한글 입력이 켜져 있으면 y 를 눌러도 터미널에는 'ㅛ' 가 들어온다.

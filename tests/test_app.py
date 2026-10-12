@@ -185,6 +185,17 @@ class TestDialogs(AppTestCase):
         for line in lines:
             self.assertEqual(screen.width(line), size[0])
 
+    def test_cut_box_is_marked(self):
+        """줄일 수 없는 상자가 화면보다 크면 잘렸다는 표시를 남긴다.
+
+        표시가 없으면 사용자는 상자 아래에 아무것도 없는 줄 안다.
+        """
+        self.app.modal = app_module.ConfirmDialog(
+            "확인", ["줄 %d" % i for i in range(12)], lambda ok: None
+        )
+        self.assertIn("~~", self.app._compose((64, 12))[-1])
+        self.assertNotIn("~~", "\n".join(self.app._compose((64, 30))))
+
     def test_incoming_approval_shows_dialog_and_yes_accepts(self):
         request = session.ApprovalRequest("other-pc", "192.168.0.9", "windows")
         self.app.events.put(("approval", request))
@@ -309,7 +320,7 @@ class TestSessionLifecycle(AppTestCase):
 
     def test_copy_done_with_errors_opens_message(self):
         self.app.transfer = app_module.Transfer("x", 1)
-        self.app.events.put(("copy_done", 2, ["a.txt — 권한 없음"]))
+        self.app.events.put(("copy_done", 2, ["a.txt — 권한 없음"], False, None))
         self.app._drain_events()
 
         self.assertIsInstance(self.app.modal, app_module.MessageDialog)
@@ -317,7 +328,7 @@ class TestSessionLifecycle(AppTestCase):
 
     def test_copy_done_clean_sets_status(self):
         self.app.transfer = app_module.Transfer("x", 1)
-        self.app.events.put(("copy_done", 3, []))
+        self.app.events.put(("copy_done", 3, [], False, None))
         self.app._drain_events()
 
         self.assertIsNone(self.app.modal)
@@ -367,6 +378,13 @@ class TestFolderDialog(AppTestCase):
         self.assertTrue(dialog.key("CTRL-D"))
         self.assertEqual(self.chosen, [self.root])
 
+    def test_space_and_insert_also_choose(self):
+        """Ctrl 이 없는 자판에서도 결정할 수 있어야 한다."""
+        for key in (term.SPACE, term.INSERT):
+            dialog = self.make()
+            self.assertTrue(dialog.key(key), key)
+            self.assertEqual(self.chosen, [self.root], key)
+
     def test_ctrl_d_chooses_the_folder_you_navigated_into(self):
         dialog = self.make()
         dialog.cursor = dialog.rows().index("문서")
@@ -399,7 +417,32 @@ class TestFolderDialog(AppTestCase):
 
     def test_cancel_hint_is_shown(self):
         self.assertIn("Esc 종료", "\n".join(self.make(hint="Esc 종료").lines(60)))
-        self.assertIn("Ctrl-D", "\n".join(self.make().lines(60)))
+        self.assertIn("Space 이 폴더로 결정", "\n".join(self.make().lines(60)))
+
+    def test_confirm_hint_survives_a_short_screen(self):
+        """상자가 화면보다 커지면 아래쪽이 잘려 결정하는 방법을 알 수 없다."""
+        many = self.root / "많은폴더"
+        many.mkdir()
+        for i in range(30):
+            (many / ("sub%02d" % i)).mkdir()
+
+        self.app.modal = self.make(many)
+        for rows in range(10, 31):
+            drawn = "\n".join(self.app._compose((64, rows)))
+            self.assertIn("Space 이 폴더로 결정", drawn, "rows=%d" % rows)
+
+    def test_short_screen_keeps_the_cursor_row_visible(self):
+        """안내줄을 살리려고 목록을 0줄로 만들어 버리면 고를 수가 없다.
+
+        낮은 화면에서는 목록이 한 줄까지 줄어든다. 그래도 커서가 놓인 줄은 늘
+        보여야 움직이며 고를 수 있다.
+        """
+        dialog = self.make()
+        self.app.modal = dialog
+        self.app._compose((64, 12))  # max_body 를 낮은 화면 값으로 채운다
+
+        dialog.cursor = dialog.rows().index("문서")
+        self.assertIn("문서", "\n".join(self.app._compose((64, 12))))
 
     def test_dialog_height_is_stable_between_folders(self):
         """폴더마다 상자 높이가 들썩이면 화면이 어지럽다."""
@@ -416,9 +459,16 @@ class TestFolderDialog(AppTestCase):
 
     def test_overlay_keeps_line_widths(self):
         self.app.modal = self.make()
-        for size in ((80, 24), (100, 30), (40, 12)):
+        for size in ((80, 24), (100, 30), (40, 12), (64, 10)):
             for line in self.app._compose(size):
                 self.assertEqual(screen.width(line), size[0])
+
+    def test_box_fits_at_every_height(self):
+        """어느 높이에서도 상자가 화면 안에 들어가야 잘리지 않는다."""
+        self.app.modal = self.make()
+        for rows in range(10, 31):
+            drawn = "\n".join(self.app._compose((64, rows)))
+            self.assertIn(app_module.BOX_BL, drawn, "rows=%d" % rows)
 
 
 class TestShareSelection(unittest.TestCase):
@@ -478,17 +528,17 @@ class TestShareSelection(unittest.TestCase):
         app.start_services()
         self.assertTrue(app._services_started)
 
-    def test_f4_opens_the_share_manager_when_idle(self):
+    def test_o_opens_the_share_manager_when_idle(self):
         app = self.make(self.root)
-        app._on_key("F4")
+        app._on_key("o")
         self.assertIsInstance(app.modal, app_module.ShareDialog)
 
-    def test_f4_opens_while_connected_too(self):
+    def test_o_opens_while_connected_too(self):
         """세션이 목록 객체를 그대로 보므로 연결 중 변경도 곧바로 적용된다."""
         app = self.make(self.root)
         app.session = _StubSession()
 
-        app._on_key("F4")
+        app._on_key("o")
         self.assertIsInstance(app.modal, app_module.ShareDialog)
         self.assertIn("곧바로 적용", app.status)
 
@@ -502,6 +552,9 @@ class _StubSession:
 
     peer_name = "stub-pc"
     peer_host = "127.0.0.1"
+
+    def notify_shares_changed(self):
+        pass
 
     def close(self, reason=None):
         pass

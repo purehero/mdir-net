@@ -94,7 +94,7 @@ class TestEveryHintMatchesItsAction(HintTestCase):
         app = self.fresh_app()
         bound = {n for n, _ in app_module._FKEYS}
         bound |= {"F%d" % i for i in range(1, 11)}
-        bound |= {"n", "d", "r", "s", "v", "o", "c", "m", "q", "?", "\\", ".", "=", "+", "-"}
+        bound |= {"n", "d", "r", "s", "v", "o", "c", "m", "q", "x", "t", "?", "\\", ".", "=", "+", "-"}
 
         for title, items in app_module.MenuBar(app).menus:
             for label, hint, action in items:
@@ -139,7 +139,7 @@ class TestRightPaneSource(HintTestCase):
         app._on_key("=")  # 연결이 없으면 상대로 못 돌아간다
 
         self.assertFalse(app.right.is_remote)
-        self.assertIn("연결된 상대가 없습니다", app.status)
+        self.assertIn("연결된 곳이 없습니다", app.status)
 
     def test_switching_back_works_with_a_session(self):
         app = self.fresh_app()
@@ -287,6 +287,9 @@ class _StubSession:
     peer_name = "stub-pc"
     peer_host = "127.0.0.1"
 
+    def notify_shares_changed(self):
+        pass
+
     def close(self, reason=None):
         pass
 
@@ -360,7 +363,7 @@ class TestNoStaleKeyNamesOnScreen(HintTestCase):
         """연결 중에도 F4 가 열리므로 '끊고 다시' 안내가 남아 있으면 안 된다."""
         app = self.fresh_app()
         app.session = _StubSession()
-        app._on_key("F4")
+        app._on_key("o")
         self.assertIsInstance(app.modal, app_module.ShareDialog)
         for stale in ("끊고", "F6", "바꿀 수 없습니다"):
             self.assertNotIn(stale, app.status, app.status)

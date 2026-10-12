@@ -168,11 +168,11 @@ class TestDriveDialog(unittest.TestCase):
     def test_highlight_moves_with_the_cursor(self):
         _, dialog = self.make()
         first = dialog.lines(60)
-        self.assertIn(term.REVERSE, first[0])
+        self.assertIn(term.BAR, first[0])
         dialog.key(term.DOWN)
         second = dialog.lines(60)
-        self.assertNotIn(term.REVERSE, second[0])
-        self.assertIn(term.REVERSE, second[1])
+        self.assertNotIn(term.BAR, second[0])
+        self.assertIn(term.BAR, second[1])
 
 
 class DriveAppTestCase(unittest.TestCase):
@@ -298,7 +298,7 @@ class TestFolderDialogDriveRoute(DriveAppTestCase):
         """F4 > a(추가) > \\ > 드라이브 고르기 > 그 루트에서 선택상자가 열린다."""
         fake = [{"path": "/", "label": "/", "kind": "루트"}]
         with mock.patch.object(fsops, "list_drives", return_value=fake):
-            self.app._on_key("F4")
+            self.app._on_key("o")
             self.assertIsInstance(self.app.modal, app_module.ShareDialog)
 
             self.app._on_key("a")  # 추가 → 폴더 선택상자
@@ -315,7 +315,7 @@ class TestFolderDialogDriveRoute(DriveAppTestCase):
     def test_choosing_a_folder_after_a_drive_hop_adds_a_share(self):
         fake = [{"path": str(self.root), "label": "T:", "kind": "고정"}]
         with mock.patch.object(fsops, "list_drives", return_value=fake):
-            self.app._on_key("F4")
+            self.app._on_key("o")
             self.app._on_key("a")
             self.app._on_key("\\")
             self.app._on_key(term.ENTER)  # self.root 로 이동
@@ -333,6 +333,9 @@ class TestFolderDialogDriveRoute(DriveAppTestCase):
 class _StubSession:
     peer_name = "stub-pc"
     peer_host = "127.0.0.1"
+
+    def notify_shares_changed(self):
+        pass
 
     def close(self, reason=None):
         pass

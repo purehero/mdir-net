@@ -1,67 +1,60 @@
+**English** | [한국어](README.ko.md)
+
 # MDirNet
 
-같은 공유기에 연결된 PC 끼리 파일과 폴더를 주고받는, DOS 시절 MDir 풍 터미널 프로그램.
+A terminal file manager for moving files and folders between PCs on the same router, in the style of MDir — the DOS-era Korean file manager.
 
-> **MDir 과의 관계.** 화면 구성과 조작 방식(듀얼 패널, 하단 기능키 줄, 파일 보기,
-> 마스크 선택)은 MDir 및 그 계보인 Norton Commander 관습을 따랐습니다. 다만
-> **MDir 자체에는 PC 간 네트워크 전송 기능이 없었습니다.** 그 시절 두 대 사이의
-> 파일 전송은 이야기·새롬데이타맨 같은 통신 프로그램으로 ZMODEM 을 태우는 쪽이었죠.
-> 이 도구는 MDir 의 조작 감성에 MDir 에 없던 LAN 전송을 붙인 것이고, 기능키 배치는
-> MDir 의 실제 키 맵이 아니라 Norton Commander 관습을 기준으로 정했습니다.
+> **Note on the interface language.** The program's own screens, menus, and messages are in Korean. This README is in English, but the UI is not localized.
+
+> **Relationship to MDir.** The layout and the way you drive it — dual panes, a function-key bar along the bottom, a built-in file viewer, mask selection — follow MDir and its ancestor Norton Commander. But **MDir itself had no PC-to-PC networking.** Back then you moved files between two machines with a comms program such as 이야기 or 새롬데이타맨 over ZMODEM. This tool bolts LAN transfer, which MDir never had, onto MDir's feel; the function-key assignments follow Norton Commander convention rather than MDir's actual key map.
 
 ```
- MDirNet  node-alpha                                          * node-beta 연결됨
- 내 PC  ~/Documents                             | node-beta  /프로젝트
-------------------------------------------------+---------------------------------
-  ..                  [ Up-Dir ]                |  ..                  [ Up-Dir ]
-  FONT                [ SubDir ] 26-07-28  9:29a|  src                 [ SubDir ] ..
- *공유자료             [ SubDir ] 26-07-28  9:29a|  README      MD         412 B ..
-  보고서          TXT     2.0 KB 26-07-28  9:29a|  main        PY        12.6 KB ..
-  노래            MP3     3.3 MB 26-07-28  9:29a|
-------------------------------------------------+---------------------------------
- 3 File  2 Dir  3,502,048 Byte  . 이름순        | 2 File  1 Dir  13,316 Byte  . 이름순
+ MDirNet  node-alpha                                                           * node-beta 연결됨
+내 PC  ~/Documents                              |node-beta  /project/src
+================================================+=================================================
+ ..                   [ Up-Dir ]                | ..                    [ Up-Dir ]
+ FONT                 [ SubDir ] 26-07-28  3:41p| assets                [ SubDir ] 26-07-28  3:41p
+*shared               [ SubDir ] 26-07-28  3:41p| README            MD       412 B 26-07-28  3:41p
+ backup           SH        10 B 26-07-28  3:41p| main              PY     12.6 KB 26-07-28  3:41p
+ report           TXT     2.0 KB 26-07-28  3:41p|
+ song             MP3     3.3 MB 26-07-28  3:41p|
+================================================+=================================================
+1개 선택 . 0 B                                  |2 File  1 Dir  13,301 Byte  . 이름순
  node-beta 와 연결되었습니다
-1도움     2정렬     3보기     4폴더     5복사     6이름     7만들     8삭제     9메뉴     0끝내
+1도움    2정렬    3보기    4폴더    5복사    6이름    7만들    8삭제    9메뉴    0끝내
 ```
 
-MDir 처럼 **바깥 벽이 없습니다.** 위아래는 각각 두 줄이고(제목 줄 + 가로줄,
-가로줄 + 요약 줄), 가운데 구분선만 세로로 하나 지납니다. 벽을 없앤 만큼 두 칸이
-내용으로 돌아갑니다. 초점이 있는 패널은 **제목 줄이 반전**됩니다.
+Like MDir, there are **no outer walls.** A single `=` rule runs above and below the listing, and one vertical divider splits the panes. Dropping the walls hands two more columns back to content, and both panes start flush against their edge. The focused pane has its **title row inverted.**
 
-MDir 처럼 이름과 확장자를 나누고, 폴더는 `[ SubDir ]`, 상위는 `[ Up-Dir ]` 로 표시합니다.
+Name and extension sit in separate columns; directories read `[ SubDir ]` and the parent `[ Up-Dir ]`.
 
-**확장자·크기·날짜·시간 칸은 폭이 고정**이고, **남는 자리는 이름 칸이 모두 가져갑니다.**
-창을 넓히면 그만큼 긴 파일 이름이 더 보이고, 오른쪽 칸들은 늘 같은 자리에 있습니다.
-크기는 `3.3 MB` 처럼 GB/MB/KB 로 보여줍니다.
+**The extension, size, date, and time columns are fixed width, and the name column takes whatever is left.** Widen the window and you see more of long filenames while the right-hand columns stay put. Sizes are shown as `3.3 MB`.
 
-창 폭이 **82칸 미만**이면 모든 칸을 담을 수 없어 시간, 날짜, 확장자 순으로 접습니다.
+Below **79 columns** there is no room for every column, so the time, then the date, then the extension fold away in that order.
 
+## Window size
 
-MDir 처럼 이름과 확장자를 나누고, 폴더는 `[ SubDir ]`, 상위는 `[ Up-Dir ]` 로 표시합니다.
+At start-up the terminal window is grown to **160x48** — twice the long-standing 80x24 default. Filenames show that much further, and the columns that fold away on a narrow window all stay put.
 
-**확장자·크기·날짜·시간 칸은 폭이 고정**이고, **남는 자리는 이름 칸이 모두 가져갑니다.**
-창을 넓히면 그만큼 긴 파일 이름이 더 보이고, 오른쪽 칸들은 늘 같은 자리에 있습니다.
-크기는 `3.3 MB` 처럼 GB/MB/KB 로 보여줍니다.
+- **A window already wider than that is not shrunk.** Width and height are considered separately; only the short side grows.
+- **The original size is restored on exit.** It does not leave your shell changed.
+- Some terminals ignore the resize request. Then nothing happens and it simply runs at whatever size the window already is — not being able to do it is not an error.
 
-창 폭이 **82칸 미만**이면 모든 칸을 담을 수 없어 시간, 날짜, 확장자 순으로 접습니다.
+The size lives in `mdirnet/config.py` as `WINDOW_COLS` / `WINDOW_ROWS`.
 
+## Install
 
-MDir 처럼 이름과 확장자를 나누고, 폴더는 `[ SubDir ]`, 상위는 `[ Up-Dir ]` 로 표시합니다.
+Python 3.9 or newer, plus one package.
 
-**확장자·크기·날짜·시간 칸은 폭이 고정**이고, **남는 자리는 이름 칸이 모두 가져갑니다.**
-창을 넓히면 그만큼 긴 파일 이름이 더 보이고, 오른쪽 칸들은 늘 같은 자리에 있습니다.
-크기는 `3.3 MB` 처럼 GB/MB/KB 로 보여줍니다.
+```bash
+pip install -r requirements.txt
+```
 
-창 폭이 **82칸 미만**이면 모든 칸을 담을 수 없어 시간, 날짜, 확장자 순으로 접습니다.
+That package is `cryptography`, used to make the certificate for TLS. The Python standard
+library has no way to create one. Everything else is standard library.
 
-
-MDir 처럼 이름과 확장자를 나누고, 폴더는 `[ SubDir ]`, 상위는 `[ Up-Dir ]` 로 표시하며
-크기는 천 단위로 끊습니다. 하단에 `3 File 2 Dir 3,502,048 Byte` 요약이 나옵니다.
-
-
-## 설치
-
-없습니다. Python 3.9 이상이면 그대로 실행됩니다. 표준 라이브러리만 씁니다.
+You can also just run a launcher (`run.sh`, `run.command`, `run.bat`). If the package is
+missing it offers to install it and, once you agree, carries on into the app.
 
 **macOS · Linux**
 ```bash
@@ -73,35 +66,31 @@ MDir 처럼 이름과 확장자를 나누고, 폴더는 `[ SubDir ]`, 상위는 
 run.bat
 ```
 
-런처는 자기가 놓인 폴더를 스스로 찾아 모듈 경로로 잡습니다. 어느 위치에서 호출해도
-되고, 인자는 그대로 전달됩니다 (`./run.sh --name 거실PC --root ~/Downloads`).
+The launchers locate their own directory and put it on the module path, so you can call them from anywhere and arguments pass straight through (`./run.sh --name 거실PC --share ~/Downloads`).
 
-런처 없이 직접 실행하려면 프로젝트 폴더 안에서 해야 합니다.
+To skip the launcher, run from inside the project directory:
 ```bash
 python3 -m mdirnet
 ```
 
-양쪽 PC 에서 각각 실행하면 서로를 자동으로 찾습니다.
+Start it on both PCs and they find each other automatically.
 
-## 공유 폴더 목록
+## Shared folders
 
-상대에게 열어줄 폴더를 **여러 개** 등록할 수 있습니다. 목록은 저장되어 다음
-실행에도 남고, 상대에게는 **가상 루트**의 폴더들로 보입니다.
+You can register **several** folders to open up to the other side. The list persists across runs, and the peer sees its entries as folders in a **virtual root.**
 
 ```
-내가 관리하는 목록                     상대가 보는 화면
+what I manage                         what the peer sees
   Downloads  -> ~/Downloads          ⌜-beta  / ----------------⌝
   프로젝트    -> ~/works/proj_03      |  Downloads/            |
-  사진        -> /Volumes/USB/photo   |  사진/                  |
+  photos     -> /Volumes/USB/photo   |  photos/               |
                                      |  프로젝트/               |
-                                     ⌞-3개 항목 --------------⌟
+                                     ⌞-3 items ---------------⌟
 ```
 
-상대는 이 목록 위로 올라갈 수 없고, 목록에 없는 폴더는 이름으로 지정해도
-거부됩니다. **내 호스트 경로는 상대에게 전달되지 않습니다** — 주고받는 경로는
-`프로젝트/src/main.py` 처럼 공유 이름으로 시작하는 상대 경로뿐입니다.
+The peer cannot climb above that list, and a folder that is not on it is refused even if named directly. **Your host paths are never sent** — every path on the wire is relative and starts with a share name, like `프로젝트/src/main.py`.
 
-### 목록 관리 (F4)
+### Managing the list (`o`)
 
 ```
 ⌜- 공유 폴더 관리 --------------------------------⌝
@@ -109,152 +98,126 @@ python3 -m mdirnet
 | ---------------------------------------------- |
 |   Downloads          ~/Downloads               |
 |   프로젝트            ~/works/proj_03           |
-|   사진        (없음)  /Volumes/USB/photo        |
+|   photos      (없음)  /Volumes/USB/photo        |
 |                                                |
 | ---------------------------------------------- |
 | a 추가   d 삭제   Esc 닫기                      |
 ⌞------------------------------------------------⌟
 ```
 
-- **`a`** 또는 `Insert` — 폴더 선택상자를 열어 목록에 추가합니다
-- **`d`** 또는 `Delete` — 목록에서 뺍니다. **폴더와 파일은 그대로 남습니다**
-- `(없음)` 은 외장 디스크를 뺀 경우입니다. 목록에는 남기고 상대에게만 감춥니다
+- **`a`** or `Insert` — open the folder picker and add to the list
+- **`d`** or `Delete` — drop from the list. **The folder and its files stay where they are**
+- `(없음)` means "missing", as when an external disk has been unplugged. It stays on the list but is hidden from the peer
 
-첫 실행 때 목록이 비어 있으면 폴더 선택상자가 떠서 첫 항목을 받습니다. **폴더가
-하나라도 정해지기 전에는 네트워크에 아무것도 열리지 않습니다.**
+On first run, if the list is empty, a folder picker opens to take the first entry. **Nothing is exposed to the network until at least one folder is settled.**
 
-연결 중에는 목록을 바꿀 수 없습니다. 상대는 이미 가상 루트를 화면에 띄운 상태여서
-목록이 바뀌면 화면과 어긋나기 때문입니다. `d` 로 끊고 바꾸세요.
+The list can be edited **while connected.** The session reads the live list, so an addition or removal takes effect on the peer's very next request. The peer's screen keeps showing the old listing until it refreshes, but entering a share you just removed is refused.
 
-### 저장 위치
+### Where it is stored
 
 `~/.mdirnet/shares.json`
 
 ```json
 [
-  { "name": "Downloads", "path": "/Users/inka/Downloads" }
+  { "name": "Downloads", "path": "/Users/you/Downloads" }
 ]
 ```
 
-이름은 폴더 이름에서 따고, 겹치면 `Downloads (2)` 처럼 숫자를 붙입니다.
+Names come from the folder name, with a number appended on collision (`Downloads (2)`).
 
-### 인자로 지정하기
+### Passing folders as arguments
 
 ```bash
 ./run.sh --share ~/Downloads --share ~/works/proj_03
 ```
 
-`--share` 로 준 폴더는 **이번 실행에만 적용되고 저장된 목록을 건드리지 않습니다.**
-시험용이나 일회성 실행에 안전합니다.
+Folders given with `--share` **apply to that run only and never touch the saved list** — safe for testing or one-off use.
 
-## 쓰는 순서
+## How you use it
 
-1. 두 PC 에서 `./run.sh` 를 실행하고, 공유할 폴더를 등록합니다 (F4 로 더 추가할 수 있습니다).
-2. 한쪽에서 **`n`** 을 눌러 발견된 PC 목록을 열고, 상대를 골라 **Enter**.
-3. 상대 화면에 승인 창이 뜹니다. **Y** 로 수락, **N** 으로 거부하고, `< >` 로 골라 **Enter** 로 확정할 수도 있습니다.
-4. 오른쪽 패널에 상대의 공유 폴더 목록이 보입니다. **Enter** 로 안에 들어갑니다.
-5. **Tab** 으로 패널을 옮기고, **Space** 로 파일을 고른 뒤 **5** 로 반대쪽에 복사합니다.
+1. Run `./run.sh` on both PCs and register a folder to share (F4 adds more).
+2. On one side press **`n`** for the list of discovered PCs, pick the peer, press **Enter**.
+3. An approval dialog appears on the peer's screen. **Y** accepts, **N** refuses; you can also pick with `< >` and confirm with **Enter**.
+4. The right pane shows the peer's shared folders. **Enter** goes inside.
+5. **Tab** switches panes, **Space** picks files, **5** copies them to the other side.
 
-공유 목록 자체에는 파일을 둘 수 없습니다. 복사하려면 공유 폴더 **안으로** 들어가세요.
+Files cannot live in the share list itself. Go **inside** a shared folder to copy.
 
-**왼쪽 패널은 늘 내 PC** 입니다. 오른쪽은 상대 또는 **내 PC** 를 볼 수 있고 `=` 로 바꿉니다.
-양쪽이 모두 내 PC 면 복사는 네트워크를 거치지 않는 로컬 복사가 됩니다.
-왼쪽은 공유 폴더에 갇히지 않고 내 PC 어디든 `..` 로 올라가며 탐색할 수 있습니다.
-`--root` 로 정한 공유 폴더는 **상대에게 보여줄 범위**일 뿐입니다.
+**The left pane is always my PC.** The right one shows either the peer or **my PC**, toggled with `=`. With both sides local, copying is a plain local copy that never touches the network. The left pane is not confined to the shared folders — you can walk anywhere on your own machine with `..`. The folders you share only define **what the peer may see.**
 
-연결은 대칭입니다. 승인한 쪽도 상대 폴더를 그대로 탐색하고 가져올 수 있습니다.
+Sessions are symmetric: the side that approved can browse and fetch from the requester just the same.
 
-## 상단 메뉴 (`9`, `F9`, `/`)
+## Menu bar (`9`, `F9`, `/`)
 
-Norton Commander 식 풀다운 메뉴입니다. `<` `>` 로 메뉴를 옮기고 `Enter` 로 실행합니다.
-`9`, `F9`, `/` 중 아무거나 눌러 열고, 같은 키로 다시 닫습니다.
+A Norton Commander style pull-down menu. `<` `>` moves between menus, `Enter` runs an item. Any of `9`, `F9`, `/` opens it, and the same key closes it.
 
-```
-   Left    Files    Commands    Options    Right
-⌜-내 PC  ⌜--------------------⌝0000gn/T/tmp6f-⌝⌜-상대  (연결 안 됨)--⌝
-|  ..    | 파일 보기        3 |Dir ]              ||                    |
-|  FONT  | 복사             5 |Dir ] 26-07-28 9:2a||                    |
-|  SAMPLE| 폴더 만들기      7 |Dir ] 26-07-28 9:2a||                    |
-|  HWP   | 삭제             8 |1,054 26-07-28 9:2a||                    |
-|  MERGED|--------------------|5,210 26-07-28 9:2a||                    |
-|  README| 도움말           1 |3,347 26-07-28 9:2a||                    |
-|  TESTFA| 끝내기           0 |8,989 26-07-28 9:2a||                    |
-|  노래  ⌞--------------------⌟0,000 26-07-28 9:2a||                    |
-```
-
-| 메뉴 | 담긴 것 |
+| Menu | Contents |
 |---|---|
-| **Left** | 왼쪽(내 PC) 패널 설정 — 이름, 확장자, 크기, 날짜순 정렬, 새로고침, 드라이브 |
-| **Files** | 파일 보기, 복사, 폴더 만들기, 삭제, 도움말, 끝내기 |
-| **Commands** | 연결할 PC 찾기, 연결 끊기, 공유 폴더 관리 |
-| **Options** | 숨김 파일 보기 / 감추기 |
-| **Right** | 오른쪽(상대) 패널 설정 — 정렬, 새로고침 |
+| **Left** | Left pane (my PC) — sort, refresh, folder tree, drives |
+| **Files** | View file, copy, move, rename, make directory, delete, help, quit |
+| **Commands** | Find a PC to connect to, connect to AWS S3, disconnect, manage shared folders |
+| **Options** | Show / hide dotfiles, colour set, mouse |
+| **Right** | Right pane (peer) — sort, refresh |
 
-NC 처럼 `Left` 와 `Right` 가 **각 패널을 따로** 설정합니다. 왼쪽에만 드라이브
-항목이 있는데, 상대 쪽은 공유 폴더 안으로 제한되어 드라이브 개념이 없기 때문입니다.
+As in NC, `Left` and `Right` configure **their own pane.** Only the left has a drives item, because the peer side is confined to shared folders and has no notion of drives.
 
-`Right` 메뉴 맨 위에는 **내 PC 보기 / 상대 보기** 전환이 있습니다 (`=`). 오른쪽이
-내 PC 를 보고 있으면 그 패널에도 드라이브 항목이 생깁니다.
+The top of the `Right` menu toggles **my PC / peer** (`=`). When the right pane is showing my PC, it gets a drives item too.
 
-**연결과 끊기는 하단 바에 없습니다.** NC 의 10칸 배치를 지키려고 `Commands` 메뉴와
-문자 키(`n` / `d`)에만 두었습니다. 새로고침(`r`)과 드라이브(`\`)도 같은 이유로
-`Left`/`Right` 메뉴에 있습니다. 6번은 NC 의 `RenMov` 자리이므로 이름 바꾸기입니다.
+**Connect and disconnect are not on the bottom bar.** To keep NC's ten slots intact they live in the `Commands` menu and on the letter keys `n` / `d`. Refresh (`r`) and drives (`\`) are in the `Left`/`Right` menus for the same reason. Slot 6 is NC's `RenMov` position, so it renames.
 
-## 키 바인딩
+## Key bindings
 
-**기능키는 하단 바에 적힌 숫자를 그대로 눌러도 됩니다.** macOS 는 F 키에 `fn` 이
-필요하고 F 키의 이스케이프 시퀀스는 터미널마다 다르지만, 숫자는 어느 OS·터미널에서나
-ASCII 한 바이트로 도착해 변형이 없습니다. 한글 입력 상태에도 영향받지 않습니다.
-(상단 숫자열만 해당합니다. 숫자 키패드는 터미널에 따라 이스케이프 시퀀스를 보냅니다.)
+**Every function key can be pressed as the digit printed on the bottom bar.** macOS needs `fn` for F-keys and their escape sequences differ between terminals, but a digit arrives as one unchanged ASCII byte on every OS and terminal, and it survives a Korean input method. (Top-row digits only — the numeric keypad sends escape sequences on some terminals.)
 
-| 키 | 동작 |
+| Key | Action |
 |---|---|
-| `Tab` | 패널 전환 |
-| `↑` `↓` / `k` `j` | 커서 이동 |
-| `PgUp` `PgDn` | 페이지 단위 이동 |
-| `Home` `End` | 처음 / 끝으로 |
-| `Enter` | 디렉터리 열기, 파일이면 보기 |
-| `←` / `h` | 상위 디렉터리 |
-| `→` / `l` | 폴더 안으로 (파일이면 아무 일도 하지 않음) |
-| `Space` | 선택 토글 (여러 개 고를 수 있음) |
-| `Insert` | 선택 토글 (Space 와 같음) |
-| `+` `-` | 마스크로 한꺼번에 선택 / 해제 (`*.txt`) |
-| `1` / `F1` / `?` | 도움말 |
-| `2` / `F2` / `s` | 정렬 바꾸기 |
-| `3` / `F3` / `v` | 파일 보기 (텍스트·16진수) |
-| `4` / `F4` / `o` | 공유 폴더 관리 (연결 끊은 상태에서만) |
-| `5` / `F5` / `c` | 반대 패널로 복사 — 디렉터리는 재귀 |
-| `6` / `F6` | 이름 바꾸기 |
-| `7` / `F7` / `m` | 폴더 만들기 |
-| `8` / `F8` / `Delete` | 삭제 (되돌릴 수 없음) |
-| `9` / `F9` / `/` | 상단 메뉴 |
-| `Esc` (전송 중) | 전송 취소 |
-| `Backspace` | 상위 디렉터리 (맥의 delete 키) |
-| `n` | 연결할 PC 찾기 |
-| `d` | 연결 끊기 |
-| `.` | 숨김 파일 보이기 / 감추기 |
-| `=` | 오른쪽 패널을 내 PC / 상대 로 전환 |
-| `0` / `F10` / `q` | 종료 |
+| `Tab` | Switch pane |
+| `↑` `↓` / `k` `j` | Move cursor |
+| `PgUp` `PgDn` | Move by page |
+| `Home` `End` | First / last entry |
+| `Enter` | Open directory; run the file if it is executable, otherwise view it |
+| `←` / `h` | Parent directory |
+| `→` / `l` | Into the folder (nothing on a file) |
+| `Space` | Toggle selection (multiple allowed) |
+| `Insert` | Toggle selection (same as Space) |
+| `+` `-` | Select / deselect by mask (`*.txt`) |
+| `1` / `F1` / `?` | Help |
+| `2` / `F2` / `s` | Change sort order |
+| `3` / `F3` / `v` | View file (text or hex) |
+| `4` / `F4` / `t` | **Folder tree** — the pane turns into a tree; press again to go back (MDir's MCD) |
+| `5` / `F5` / `c` | Copy to the other pane — directories recursively |
+| `x` | **Move** to the other pane — the source is removed after the move |
+| `Enter` (on an archive) | **Step inside** — browse ZIP/TAR like a folder (read-only) |
+| `6` / `F6` | Rename |
+| `7` / `F7` / `m` | Make directory |
+| `8` / `F8` / `Delete` | Delete (cannot be undone) |
+| `9` / `F9` / `/` | Menu bar |
+| `\` | Switch drive / volume (my PC side only) |
+| `r` | Refresh |
+| `o` | Manage shared folders — what the peer may see |
+| `n` | Find a PC to connect to |
+| `d` | Disconnect |
+| `.` | Show / hide dotfiles |
+| `=` | Toggle the right pane between my PC and the peer |
+| `Esc` (during a transfer) | Cancel the transfer |
+| `Backspace` | Parent directory (the `delete` key on a Mac) |
+| `0` / `F10` / `q` | Quit |
 
-하단 바에 적힌 숫자가 곧 눌러야 하는 키입니다 (`0` 이 종료).
-| `\` | 드라이브 / 볼륨 바꾸기 (내 PC 쪽만) |
-| `r` | 새로고침 |
+Because every action has a digit or letter alternative, nothing is out of reach on a terminal that swallows F-keys. In dialogs that take text — a folder name, a mask — digits are just characters, so `2025` and `*.mp3` type through normally.
 
-숫자와 문자 키 대안이 있어 Fn 키가 막힌 터미널에서도 모든 기능을 쓸 수 있습니다.
-폴더 이름이나 마스크를 입력하는 창에서는 숫자가 그대로 글자로 들어갑니다
-(`2025`, `*.mp3` 처럼 칠 수 있습니다).
+**Shortcuts work with a Korean input method active.** On a 두벌식 keyboard, pressing `y` delivers `ㅛ` to the terminal; where a keystroke is read as a command it is mapped back. Text fields do not map it back, so Korean folder names type through. Confirmation dialogs also accept `← →` plus `Enter`, which works whatever the input method is doing.
 
-**한글 입력 상태에서도 단축키가 동작합니다.** 두벌식에서 `y` 를 누르면 터미널에는
-`ㅛ` 가 들어오는데, 명령으로 쓰이는 자리에서는 원래 글자로 되돌려 해석합니다.
-입력창에서는 되돌리지 않으므로 한글 폴더 이름을 그대로 적을 수 있습니다.
-확인 창들은 `← →` 와 `Enter` 로도 고를 수 있어 입력기 상태와 무관하게 쓸 수 있습니다.
-정렬은 이름 → 확장자 → 크기 → 날짜 순으로 돌아가고, 어느 기준이든 폴더가 위로 모입니다.
-`+` 와 `-` 는 `*.txt` 같은 패턴으로 여러 항목을 한꺼번에 고르거나 풉니다.
+Sort order cycles name → extension → size → date, and directories group at the top under every order. `+` and `-` take patterns like `*.txt` to select or deselect many entries at once.
 
-## 드라이브 / 볼륨
+## Running a file with Enter
 
-Windows 에서 `C:\` 의 부모는 자기 자신이라 `..` 으로는 **D: 에 갈 수 없습니다.**
-그래서 `\` 키로 드라이브를 고릅니다.
+If the file under the cursor is executable — the `x` bit on POSIX, a `PATHEXT` extension on Windows — **Enter runs it** in the background, and the status line records it. Anything else opens in the viewer, as before. F3 always views, even for an executable.
+
+Output is discarded so a child process cannot scribble over the TUI, and the child is detached from us so quitting MDirNet does not take it down. Remote files are never run: the directory listing carries no permission bits, so there is no way to tell whether a peer's file is executable. Copy it over first.
+
+## Drives / volumes
+
+On Windows the parent of `C:\` is itself, so `..` **cannot reach D:.** The `\` key picks a drive instead.
 
 ```
 ⌜- 드라이브 선택 --------------------⌝
@@ -266,120 +229,295 @@ Windows 에서 `C:\` 의 부모는 자기 자신이라 `..` 으로는 **D: 에 �
 ⌞-----------------------------------⌟
 ```
 
-**공유 폴더 선택상자(F4)에서도** `\` 를 누르거나 최상위의 `[드라이브]` 항목을 열면
-드라이브를 바꿀 수 있습니다. 이게 없으면 D: 에 있는 폴더를 공유할 방법이 없습니다.
+**The share picker (F4) has the same door** — press `\` or open the `[드라이브]` entry at the top. Without it there would be no way to share a folder on D:.
 
-macOS·Linux 에서는 같은 화면이 `/` 와 마운트된 볼륨(`/Volumes`, `/media`, `/mnt`)을
-보여줍니다. 외장 디스크로 한 번에 건너뛰는 용도입니다.
+On macOS and Linux the same screen lists `/` and mounted volumes (`/Volumes`, `/media`, `/mnt`), for jumping straight to an external disk.
 
-오른쪽(상대) 패널에는 쓸 수 없습니다. 상대는 공유 폴더 안으로 제한되므로 드라이브를
-옮겨가도 곧바로 거부됩니다.
+It does not apply to the right pane when that pane shows the peer: they are confined to shared folders, so moving to another drive would be refused immediately.
 
-## 옵션
+## Options
 
 ```bash
 python3 -m mdirnet --help
 ```
 
-| 옵션 | 뜻 | 기본값 |
+| Option | Meaning | Default |
 |---|---|---|
-| `--name` | 상대에게 보여줄 이름 | 호스트 이름 |
-| `--share` | 열어줄 폴더 (여러 번 가능, 저장 안 함) | 저장된 목록을 쓴다 |
-| `--root` | `--share` 하나와 같다 (호환용) | — |
-| `--port` | 세션 TCP 포트 | 9600 |
-| `--udp-port` | 발견용 UDP 포트 | 9601 |
-| `--no-discovery` | 자동 발견을 끈다 | 꺼져 있음 |
+| `--name` | Name shown to the peer | host name |
+| `--share` | Folder to open up (repeatable, not saved) | the saved list |
+| `--root` | Same as one `--share` (compatibility) | — |
+| `--port` | Session TCP port | 9600 |
+| `--udp-port` | Discovery UDP port | 9601 |
+| `--no-discovery` | Turn off automatic discovery | off |
+| `--theme` | Color set, `black` or `blue` (not saved) | the saved choice |
 
 ```bash
 ./run.sh --share ~/Downloads --name 거실PC
 ```
 
-## 화면 문자는 폭이 확정된 것만 씁니다
+## Only characters of settled width reach the screen
 
-테두리는 모서리 `⌜⌝⌞⌟`(U+231C~231F)와 ASCII `- |` 로 그리고, 나머지 표시는
-ASCII(`~ . * o _ #`)를 씁니다. 기준은 "ASCII 인가" 가 아니라 **"폭이 확정인가"** 입니다.
+Borders are drawn with the corner glyphs `⌜⌝⌞⌟` (U+231C–231F) and ASCII `- | =`; everything else on screen is ASCII (`~ . * o _ #`). The test is not "is it ASCII" but **"is its width settled."**
 
-`─│┌┐` 같은 박스 문자(U+2500~257F) **112자는 전부 East Asian Width 가
-`A`(Ambiguous)** 입니다. 한글·CJK 환경의 터미널은 이들을 **두 칸**으로 그리는데
-폭을 한 칸으로 계산하면 줄이 밀리거나 넘쳐 화면이 깨집니다. 실제로 이 한 원인에서
-세 가지 증상이 나왔습니다 — 생략 표시(`…`) 때문에 줄이 1칸 밀리고, 헤더의 `·` 두
-개 때문에 포트번호 2자리가 잘리고, Windows 콘솔에서 네모칸이 닫히지 않았습니다.
+All **112 box-drawing characters** (U+2500–257F) such as `─│┌┐` have East Asian Width `A` (Ambiguous). Terminals in a Korean or CJK environment draw them **two columns** wide, so counting them as one shifts or overflows the line. That single cause produced three separate symptoms here: an ellipsis (`…`) pushed lines one column over, two `·` in the header truncated two digits of the port number, and boxes failed to close in the Windows console.
 
-MDir 의 그 각진 테두리는 ASCII 가 아니라 **CP437**(IBM 확장 문자표) 상위 절반에
-있던 문자였습니다. ASCII 95자에는 모서리 모양이 아예 없어 `+` 로 대신하는 수밖에
-없지만, 모서리 전용 문자 `⌜⌝⌞⌟` 는 EAW 가 `N` 이라 1칸이 보장되므로 안전하게
-쓸 수 있습니다.
+MDir's angular borders were not ASCII either — they came from the upper half of **CP437**, the IBM extended character set. The 95 printable ASCII characters have no corner shapes at all, so `+` is the only substitute; the dedicated corner glyphs `⌜⌝⌞⌟` have EAW `N`, which guarantees one column, so they are safe.
 
-파일 이름에 그런 문자가 들어있는 경우는 피할 수 없으므로, 폭이 애매한 문자는
-**두 칸으로 계산합니다.** 넘쳐서 화면이 깨지는 것보다 빈틈이 생기는 편이 낫기
-때문입니다. `tests/test_width_safety.py` 가 소스에 Ambiguous 문자가 다시
-들어오지 못하게 막습니다.
+Filenames containing ambiguous characters cannot be avoided, so **anything ambiguous is counted as two columns.** A gap is better than an overflow that breaks the screen. `tests/test_width_safety.py` keeps ambiguous characters from creeping back into the source.
 
-## 동작 방식
+## How it works
 
-- **발견** — 2초마다 UDP 브로드캐스트로 자기 존재를 알리고, 6초간 소식이 없는 상대는 목록에서 지웁니다.
-- **연결** — 요청을 받으면 상대 화면에 승인 창이 뜹니다. 30초 안에 승인하지 않으면 거부로 처리합니다.
-- **전송** — `.part` 파일로 받은 뒤 완료 시점에 이름을 바꿉니다. 중간에 끊겨도 반쪽 파일이 남지 않습니다.
+- **Discovery** — a UDP broadcast every 2 seconds announces this node; a peer unheard from for 6 seconds drops off the list. The announcement goes out **once per interface** (see below).
+- **Connection** — an incoming request raises an approval dialog on the peer's screen. No answer within 30 seconds counts as a refusal.
+- **Transfer** — data lands in a `.part` file that is renamed on completion, so a broken transfer never leaves a half file behind.
 
-## 보안 범위
+## Android
 
-같은 공유기 내부를 전제로 만들었습니다. 그 선을 넘는 보호는 없습니다.
+The Android client lives in a **separate repository**. It speaks the same protocol, so a
+phone is a full peer: it can browse, download from and upload to a PC, and a PC can do the
+same to the phone.
 
-- 연결에는 **상대의 명시적 승인**이 필요합니다. PIN·비밀번호는 없습니다.
-- 상대가 볼 수 있는 범위는 **등록한 공유 폴더 안쪽**입니다. 목록에 없는 이름, `../..`, 밖을 가리키는 심링크는 모두 거부합니다.
-- 상대는 공유 폴더 자체를 지울 수 없습니다. 목록에서 빼는 것은 내 쪽에서만 합니다.
-- **전송 내용은 암호화되지 않습니다.** 신뢰할 수 없는 네트워크(카페·공용 와이파이)에서는 쓰지 마세요.
-- **F8 삭제는 원격에도 적용됩니다.** 승인한 상대는 내 공유 폴더 **안의** 파일을 지울 수 있습니다. 공유 폴더 자체와 그 밖은 지울 수 없습니다.
+- Shared folders are picked with the system folder picker (Storage Access Framework).
+  Only the folders you pick are opened, and nothing outside them can be reached.
+- A foreground service keeps the listener alive so a PC can fetch files while the app is
+  in the background. Approval is asked with a notification when the app is not on screen.
+- The cross-check vectors the two implementations share live in the Android repository.
+  When the wire format changes, keep both checkouts side by side, regenerate with
+  `python3 tools/gen-golden.py --out <android>/app/src/test/resources/golden`, and run
+  both test suites.
 
-## 방화벽
+The wire format both implementations follow is written down in [PROTOCOL.md](PROTOCOL.md).
 
-서로를 찾지 못하면 방화벽을 확인하세요.
+## Folder tree (MCD)
 
-- **UDP 9601** — 발견용. 막히면 `n` 목록이 비어 있습니다.
-- **TCP 9600** — 세션용. 막히면 연결 요청이 실패합니다.
+`4` turns **that pane into a tree.** No window opens — the pane itself changes, as it did in MDir and NC. Press `4` again to get the listing back.
 
-macOS 는 첫 실행 때 들어오는 연결을 허용할지 묻습니다. 회사망처럼 브로드캐스트가 차단된 곳에서는 자동 발견이 동작하지 않습니다.
+```
+- Users
+ - inka
+  - Works
+   + apps
+   - docs
+```
 
-### 포트 허용 — Windows 는 앱이 물어봅니다
+- **`>`** expands, **`<`** collapses (climbs to the parent when already collapsed)
+- **`Enter`** opens that folder and returns to the listing
+- It starts at the disk root with only the ancestors of your current folder expanded, cursor on where you are
 
-Windows 에서 시작할 때 허용 규칙이 없으면 앱이 한 번 묻습니다. 동의하면 Windows 동의(UAC) 창이 뜨고, 규칙이 들어가면 다음 실행부터는 묻지 않습니다. 규칙 변경은 Windows 가 관리자 전용으로 못박아 두었으므로 동의 창 없이 조용히 여는 길은 없습니다.
+**It reads as you expand.** Walking the whole disk up front freezes the screen for seconds even on a home directory. The `+` on a collapsed folder is drawn without knowing whether it has children — finding out means reading, and that is the thing being avoided.
 
-`python.exe` 를 막는 **차단 규칙**이 있으면 그 목록을 보여주고 동의를 받은 뒤에만 지웁니다. Windows 는 차단 규칙을 허용 규칙보다 먼저 보므로, 이것이 남아 있으면 포트를 열어도 효과가 없습니다. 처음 실행 때 뜨는 "이 앱의 일부 기능이 차단되었습니다" 창에서 취소를 누르면 이 규칙이 만들어집니다.
+File actions are refused while a pane is a tree: tree rows are folders only, so there is nothing well-defined to copy.
 
-### 포트를 손으로 허용하기
+The peer's pane cannot be a tree. The protocol has a `tree` request, but deep folders exceed the response timeout.
+
+## Mouse
+
+The mouse works, as it did in MDir (POSIX terminals only).
+
+- **Click** — moves the cursor to that row; clicking the other pane moves the focus too
+- **Double-click** — opens (same as `Enter`)
+- **Wheel** — scrolls the pane under the pointer, without moving the focus
+- **Click on the function-key bar** — runs that key
+
+Turning the mouse on stops some terminals from letting you **select text by dragging**. You can turn it off under `Options` in the `9` menu, and the choice is remembered across runs.
+
+It is never enabled on Windows: console input is read a different way there and these sequences never arrive.
+
+## Archives
+
+`.zip`, `.tar`, `.tar.gz`, `.tgz`, `.tar.bz2`, and `.tar.xz` can be **entered like folders** (a feature MDir had). `Enter` steps in, `..` steps out. Inside, `F3` views a file and `5` extracts to the other pane.
+
+**Read-only.** You cannot put anything into an archive, nor move or delete what is inside. Sending straight to the peer is not supported either — extract to your PC first.
+
+The LZH, ARJ, and RAR formats MDir handled are not supported; only what the standard library can read.
+
+If a name inside the archive **points outside it** (`../../somewhere`), the entry is hidden from the listing and the count of hidden entries is reported. Archives like that are used to write files outside the destination.
+
+## AWS S3
+
+**Connect to AWS S3** in the `Commands` menu points the right pane at an S3 bucket. Once attached it behaves exactly like a peer PC — `Enter` opens a folder, `F3` views the head of a file, `5` uploads or downloads, and `6`/`7`/`8` rename, make a folder, or delete.
+
+```
+> 자격증명            직접 입력             (credentials: typed in)
+  리전                ap-northeast-2        (region)
+  액세스 키 ID        AKIA................  (access key id)
+  시크릿 액세스 키    ********************  (secret access key)
+  버킷 (비우면 전체)  my-bucket             (bucket, blank = all)
+  시크릿 키 저장      아니오                (keep the secret: no)
+
+  [ 연결 ]                                  (connect)
+
+Space 바꾸기   Tab 이동   Enter 다음 줄   Esc 취소
+```
+
+`Space` on the top `자격증명` row switches to an **aws CLI profile**. The two key fields disappear and a profile field takes their place — leaving unused fields greyed out gives no clue why they do nothing.
+
+```
+> 자격증명            AWS 프로필 (~/.aws)
+  프로필              일하는계정
+  리전                ap-northeast-2
+  버킷 (비우면 전체)  my-bucket
+
+  [ 연결 ]
+```
+
+`Space` on the `프로필` row opens the list.
+
+```
+AWS 프로필 선택
+--------------------------------------
+  default              us-east-1
+> 일하는계정           ap-northeast-2
+  회사SSO              SSO 프로필입니다
+  역할위임             역할을 위임받는 프로필입니다
+Enter 선택   Esc 취소
+```
+
+`~/.aws/credentials` and `~/.aws/config` are read directly with `configparser`; the aws CLI is never invoked. A region recorded in the profile fills the region field too.
+
+**Only profiles with static keys can be used.** SSO, `credentials_process`, and assumed roles (`role_arn`) each have their own token-fetching dance that reading files cannot do. Those profiles are still **listed, with the reason they cannot be used** — dropping them silently just raises "where did my profile go". Temporary credentials carrying `aws_session_token` do work.
+
+A profile leaves nothing to keep, so the `시크릿 키 저장` row does not appear — the aws CLI already holds the key.
+
+`Tab` or `↑` `↓` moves between rows. The secret key is masked with `*` on screen.
+
+**Connecting happens only on the bottom `[ 연결 ]` row.** In an input field `Enter` just steps down a row — so a stray `Enter` while typing the secret key cannot fire off a half-filled connection. If a required field (region, access key id, secret key) is empty, the cursor is taken back to it and told what is missing.
+
+**`Space` on the region field opens a region list.** It shows the code alongside a readable name and opens on the current value if that is one of them. A region not on the list can still be typed into the field.
+
+```
+리전 선택
+------------------------------------
+  ap-northeast-1   아시아 태평양 (도쿄)
+> ap-northeast-2   아시아 태평양 (서울)
+  ap-northeast-3   아시아 태평양 (오사카)
+  ...
+  아래로 17개 더
+Enter 선택   Esc 취소
+```
+
+The list holds commercial regions only. China (`amazonaws.com.cn`) and GovCloud use a different endpoint shape and are not supported.
+
+**Leave the bucket blank** and every bucket in the account is listed at the virtual root like folders (this needs `ListBuckets`). Name one bucket and only that bucket appears, with no `ListBuckets` needed — keys scoped to a single bucket are common enough to be worth the case.
+
+**Connecting reads a listing once.** A wrong key or the wrong region is reported right there. When the region is wrong, S3 tells us the correct one and that is what you see.
+
+**A peer connection and an S3 connection are not used at the same time.** There is only one right pane, so with both attached there is no telling which one you are looking at. Approving a peer while on S3 lets go of S3 and says so.
+
+### Worth knowing
+
+- **S3 has no folders.** `7` writes an empty object whose name ends in `/`. That is the convention the console and other tools share. Empty folders are carried across the same way.
+- **Rename is a copy followed by a delete,** because S3 has no rename. For a folder, every object under it is moved one at a time, so a large folder takes a while.
+- **Files over 5GB cannot be uploaded,** because multipart upload is not implemented. Rather than fail halfway up, it is refused before sending.
+- Buckets themselves are neither created nor deleted here. Use the AWS console.
+- `boto3` is not used. SigV4 signing and the REST calls are done with the standard library (`mdirnet/s3.py`).
+
+### Certificates
+
+Traffic to S3 is HTTPS and **the certificate is always verified.** There is no way to turn that off.
+
+The catch: the python.org build of Python on macOS ships with an empty CA bundle until `Install Certificates.command` is run once. In that state no HTTPS works at all. This program's PC-to-PC connections use self-signed certificates and skip verification, which is why it never showed up before.
+
+Asking every user to install certificates is no answer, so when Python has no bundle of its own, **the OS bundle is located directly.**
+
+1. Whatever Python carries
+2. `certifi`, if installed
+3. The OS bundle — `/etc/ssl/cert.pem` (macOS), `/etc/ssl/certs/ca-certificates.crt` (Debian/Ubuntu), `/etc/pki/tls/certs/ca-bundle.crt` (RHEL/Fedora), `/etc/ssl/ca-bundle.pem` (openSUSE)
+
+These are the same files `curl` reads. On Windows Python already loads the system store, so it never gets this far.
+
+**If nothing is found the connection simply fails.** Verification is never skipped to get past it; the screen says what to do instead (`SSL_CERT_FILE` can also point at a bundle directly).
+
+### When it will not connect
+
+The screen boils an error down to one sentence. When that is not enough, a tool dumps everything that went over the wire.
+
+```bash
+python3 tools/s3-probe.py --region ap-northeast-2 --bucket my-bucket
+```
+
+It prints how many CA certificates were found, the request line, the signed headers, the HTTP status, and the raw response body. It asks for the keys, and **the secret key is never printed**, so the output is safe to paste as-is.
+
+### Where the keys end up
+
+The region, access key id, and bucket go into `~/.mdirnet/settings.json` to prefill the fields next time. **That file is plain text, so the secret key never goes in it.**
+
+The secret key is kept only if you turn on the `시크릿 키 저장` row with `Space`, and then it goes to **the OS secret store**. It is handed over only after a connection succeeds; turning it off also removes whatever was kept before.
+
+| | |
+|---|---|
+| **macOS** | login keychain (`/usr/bin/security`) |
+| **Windows** | DPAPI — ciphertext in `~/.mdirnet/s3-secrets.json` |
+| **Elsewhere** | not stored; the row does not appear at all |
+
+In both, **the decryption key derives from the user's login credentials.** Copying the file to another machine, or another user on the same one, does not open it.
+
+**With nowhere safe to put it, nothing is stored.** Deriving a key from machine identifiers and encrypting a file was deliberately not done. If the app can unlock it without asking anything, so can anything else running as that user, and the recipe is in the source. That is obfuscation, not encryption, and "it's encrypted" reassures more than it protects.
+
+Stored or not, **a key scoped in IAM to that one bucket** is a far bigger defence.
+
+## Security scope
+
+This was built for the inside of one router. There is no protection beyond that line.
+
+- A connection requires the **peer's explicit approval.** There is no PIN or password.
+- What the peer can reach is **inside the registered shared folders.** A name not on the list, `../..`, and symlinks pointing outward are all refused.
+- The peer cannot delete a shared folder itself. Removing it from the list happens only on my side.
+- **Transfers are encrypted with TLS 1.3.** Capturing packets on the same network reveals nothing. The certificate is generated at start-up and never stored.
+- **But the peer is not authenticated.** The certificate is self-signed, so there is no chain to verify and an active man-in-the-middle (ARP spoofing and the like) is not stopped. To check, compare the **device fingerprint** shown on both screens. Do not use this on a network you do not trust (a café, public Wi-Fi).
+- **F8 delete applies remotely too.** An approved peer can delete files **inside** my shared folders. The shared folder itself, and anything outside it, cannot be deleted.
+- **The S3 secret key is never written to the settings file.** That holds only the region, access key id, and bucket. If you choose to keep it, it goes to the OS secret store (macOS keychain, Windows DPAPI). Where there is no such store it is not kept at all and gets typed each time.
+- **Traffic to S3 is HTTPS with the certificate always verified.** There is no way to turn that off. If Python has no CA bundle the OS one is used; if there is none either, the connection fails.
+
+## Firewall
+
+If the two sides cannot find each other, check the firewall.
+
+- **UDP 9601** — discovery. Blocked, and the `n` list stays empty.
+- **TCP 9600** — sessions. Blocked, and connection requests fail.
+
+macOS asks on first run whether to accept incoming connections. On a network that blocks broadcast, such as many corporate networks, automatic discovery will not work.
+
+### Opening the ports — on Windows the app offers
+
+On Windows, if the allow rules are missing at startup, the app asks once. Agree and a Windows consent (UAC) prompt appears; once the rules are in, it stops asking. Changing firewall rules is administrator-only by Windows design, so there is no way to open them silently.
+
+If a **block rule** for `python.exe` exists, the app lists it and removes it only after you agree. Windows evaluates block rules ahead of allow rules, so while one remains, opening the ports has no effect. That rule is what gets created when you press Cancel on the "Windows Defender Firewall has blocked some features of this app" prompt.
+
+### Opening the ports by hand
 
 ```powershell
-# Windows — PowerShell 을 관리자로 실행
-.\tools\allow-firewall.ps1          # 허용 (되돌리기: -Remove)
+# Windows — run PowerShell as administrator
+.\tools\allow-firewall.ps1          # allow (undo with -Remove)
 ```
 
 ```sh
 # macOS
-sh tools/allow-firewall.sh          # 허용 (되돌리기: --remove)
+sh tools/allow-firewall.sh          # allow (undo with --remove)
 ```
 
-Windows 쪽은 들어오는 TCP 9600~9609(세션 포트가 쓰이는 중이면 하나씩 올라갑니다)와 UDP 9601 을 **개인·도메인** 프로필에만 엽니다. 전송이 암호화되지 않으므로 공용 네트워크 프로필은 일부러 뺐습니다.
+On Windows this opens inbound TCP 9600–9609 (the session port climbs by one if it is taken) and UDP 9601, for the **private and domain** profiles only. Transfers are encrypted but the peer is not authenticated, so the public profile is deliberately left out.
 
-macOS 방화벽은 포트가 아니라 실행 파일 단위로 판정하므로, 앱을 돌리는 python 실행 파일을 허용 목록에 넣습니다. 다른 python 으로 바꿔 실행하면 다시 실행하세요.
+The macOS firewall decides per executable rather than per port, so the script adds the python binary that runs the app to the allow list. Run it again if you switch to a different python.
 
-### 한쪽만 상대를 찾는 경우
+### When only one side finds the other
 
-발견 알림은 인터페이스마다 따로 보냅니다. Hyper-V, WSL, VirtualBox, VPN 가상 어댑터가 있는 Windows PC 에서 브로드캐스트가 LAN 대신 가상 어댑터로만 나가던 문제 때문입니다. 그래도 한쪽만 상대를 찾는다면 이 순서로 보세요.
+Discovery announcements are sent per interface. A single `sendto("255.255.255.255")` leaves through **one** interface chosen by the routing table, and on a Windows PC with Hyper-V, WSL, VirtualBox, or VPN adapters that interface is often not the LAN — while receiving works on every interface, which is exactly why the traffic looked one-way. If one side still cannot see the other:
 
-1. **찾지 못하는 쪽의 들어오는 UDP 9601** 이 막혔는지 — Windows Defender 방화벽의 인바운드 규칙, macOS 는 시스템 설정 > 네트워크 > 방화벽.
-2. **두 PC 가 같은 서브넷인지** — 게스트 와이파이나 확장기(리피터)를 거치면 브로드캐스트가 넘어오지 않는 공유기가 있습니다.
-3. 찾는 쪽에서 연결을 걸면 됩니다. 연결은 대칭이라 어느 쪽이 요청해도 양쪽 모두 상대를 탐색할 수 있습니다. IP 를 직접 입력해 연결하는 길은 아직 없습니다.
+1. **Check inbound UDP 9601 on the side that cannot see** — inbound rules in Windows Defender Firewall; on macOS, System Settings > Network > Firewall.
+2. **Check that both PCs are on the same subnet** — guest Wi-Fi and range extenders sit behind routers that do not carry broadcast across.
+3. Let the side that *can* see start the connection. Sessions are symmetric, so it does not matter who asks. Connecting by typing an IP directly is not supported yet.
 
-## 테스트
+## Tests
 
 ```bash
 python3 -m unittest discover -s tests -t . -v
 ```
 
-576개 테스트가 프레이밍 왕복, 경로 탈출 차단, 승인 핸드셰이크, 양방향 동시 전송, 인터페이스별 발견 알림, 화면 폭 계산을 확인합니다. `tests/test_integration.py` 는 실제 TCP·UDP 로 두 노드를 세워 발견부터 재귀 복사까지 통과시킵니다.
+597 tests cover frame round-trips, path-escape refusals, the approval handshake, simultaneous transfers in both directions, per-interface discovery announcements, and column-width arithmetic. `tests/test_integration.py` stands up two nodes over real TCP and UDP and drives them from discovery through a recursive copy.
 
-## 확인된 환경
+## Verified environments
 
-macOS(Apple Silicon, Python 3.14)에서 두 프로세스를 실제로 띄워 발견 → 승인 → 한글 이름이 섞인 중첩 디렉터리 재귀 복사까지 검증했습니다. Linux 는 같은 POSIX 경로를 쓰므로 동일하게 동작합니다.
+On macOS (Apple Silicon, Python 3.14) two processes were run for real: discovery → approval → recursive copy of nested directories with Korean names. Linux takes the same POSIX paths and behaves the same.
 
-**Windows 는 코드 경로만 갖췄고 실제로 돌려보지는 않았습니다.** `msvcrt` 로 키를 읽고 `ctypes` 로 ANSI 처리를 켜도록 되어 있으며, Windows Terminal 이나 Windows 10 이후의 콘솔이 필요합니다.
+**Windows has the code paths but has not been run.** Keys are read through `msvcrt` and ANSI handling is enabled with `ctypes`; it needs Windows Terminal or a Windows 10-or-later console. The firewall helper and the UAC prompt are likewise untested on real hardware.

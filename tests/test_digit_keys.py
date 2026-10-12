@@ -89,8 +89,18 @@ class TestDigitsCallTheSameActions(DigitTestCase):
         self.app._on_key("3")
         self.assertIsInstance(self.app.modal, app_module.ViewerDialog)
 
-    def test_4_opens_share_manager(self):
+    def test_4_opens_the_folder_tree(self):
+        """`4폴더` 라는 라벨이 실제로 폴더를 보여주는 자리여야 한다.
+
+        전에는 공유 폴더 관리였다. 바에 적힌 '폴더' 를 보고 폴더 트리를 기대한
+        사람이 실제로 헷갈렸다. 공유 관리는 `o` 로 옮겼다.
+        """
         self.app._on_key("4")
+        self.assertIsNotNone(self.app.focus.tree, "패널이 트리로 바뀌지 않았다")
+        self.assertIsNone(self.app.modal, "트리는 창이 아니라 패널이다")
+
+    def test_o_opens_share_manager(self):
+        self.app._on_key("o")
         self.assertIsInstance(self.app.modal, app_module.ShareDialog)
 
     def test_5_starts_copy_flow(self):
@@ -222,7 +232,8 @@ class TestDigitsAreInputModeProof(DigitTestCase):
     def test_digits_work_the_same_regardless_of_hangul_mode(self):
         """IME 는 글자 키만 바꾼다. 숫자는 승인 창을 먹통으로 만든 문제가 없다."""
         self.app._on_key("4")
-        self.assertIsInstance(self.app.modal, app_module.ShareDialog)
+        self.assertIsNotNone(self.app.focus.tree, "패널이 트리로 바뀌지 않았다")
+        self.assertIsNone(self.app.modal, "트리는 창이 아니라 패널이다")
 
 
 class TestHelpMentionsDigits(DigitTestCase):
@@ -261,6 +272,9 @@ class TestHelpMentionsDigits(DigitTestCase):
 class _StubSession:
     peer_name = "stub-pc"
     peer_host = "127.0.0.1"
+
+    def notify_shares_changed(self):
+        pass
 
     def close(self, reason=None):
         pass

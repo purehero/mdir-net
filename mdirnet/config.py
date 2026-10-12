@@ -1,7 +1,7 @@
 # 포트, 청크 크기, 타임아웃 등 프로그램 전역 상수를 모아둔 모듈
 
 APP_NAME = "MDirNet"
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 
 # 네트워크 포트
 TCP_PORT = 9600  # 세션용 TCP
@@ -26,3 +26,9 @@ REQUEST_TIMEOUT = 30.0  # 일반 요청-응답
 
 # UI
 UI_TICK = 0.05  # 초. 키 입력 폴링 간격
+
+# 켤 때 이만큼으로 창을 키운다. 터미널 기본값 80x24 의 두 배다.
+# 이보다 넓은 창은 줄이지 않고, 끝낼 때 원래 크기로 돌려놓는다.
+# 듣지 않는 터미널에서는 아무 일도 일어나지 않는다
+WINDOW_COLS = 160
+WINDOW_ROWS = 48

@@ -4,10 +4,11 @@ import itertools
 import os
 import queue
 import socket
+import ssl
 import threading
 from pathlib import Path
 
-from . import config, fsops, protocol, shares as shares_mod
+from . import config, fingerprint as fingerprint_mod, fsops, protocol, secure, shares as shares_mod
 
 
 class SessionError(Exception):
@@ -52,6 +53,9 @@ class Session:
     """
 
     def __init__(self, sock, peer_name, peer_host, shares, events):
+        #: 상대 인증서의 지문. **거는 쪽만** 갖는다 - 서버만 인증서를 내밀기 때문이다.
+        #: 받는 쪽은 자기 지문(Server.fingerprint)을 띄운다 (PROTOCOL.md 2.5절)
+        self.peer_fingerprint = None
         self._sock = sock
         self.peer_name = peer_name
         self.peer_host = peer_host
@@ -130,6 +134,13 @@ class Session:
                 if kind == "bye":
                     reason = "%s 가 연결을 종료했습니다" % self.peer_name
                     break
+
+                # 알림은 대화가 아니다. `q` 규칙보다 **먼저** 걸러야 한다 -
+                # `q` 가 없으므로 그냥 두면 "내가 시작한 대화의 응답" 으로 취급돼
+                # 우편함을 찾다가 조용히 버려진다 (PROTOCOL.md 5.1)
+                if kind in _NOTICES:
+                    _NOTICES[kind](self)
+                    continue
 
                 if header.get("q"):
                     self._route_peer_initiated(kind, header, blob)
@@ -306,7 +317,14 @@ class Session:
         except fsops.PathDenied as exc:
             self._reply_err(req_id, str(exc))
         except protocol.ProtocolError as exc:
-            self.close("프로토콜 오류: %s" % exc)
+            # 여기까지 온 ProtocolError 는 **내 응답을 담지 못한 것**이다. 읽다
+            # 난 오류는 읽기 루프에서 처리되고 여기 오지 않는다. 직렬화 단계에서
+            # 막힌 것이라 선에는 아무것도 나가지 않았고 위치도 잃지 않았다 -
+            # 끊지 말고 답한다 (PROTOCOL.md 5.2)
+            #
+            # "연결이 끊어졌다" 는 뜻으로 말하면 안 된다. 연결은 멀쩡하고
+            # 사용자는 네트워크를 의심하기 시작한다. 무엇을 하면 되는지 말한다
+            self._reply_err(req_id, "%s - 하위 폴더를 나눠서 골라보세요" % exc)
         except Exception as exc:  # noqa: BLE001
             # 어떤 예외가 나더라도 **반드시 답을 보낸다.** 답이 없으면 상대는
             # 요청 타임아웃(30초)까지 그대로 멈춰 있게 된다. 예상 못한 버그가
@@ -320,6 +338,10 @@ class Session:
             self._send({"t": "err", "id": req_id, "msg": msg})
         except SessionError:
             pass  # 오류를 알려주려는 순간 연결이 끊겼다면 더 할 수 있는 게 없다
+        except protocol.ProtocolError:
+            # 오류 메시지조차 프레임에 담기지 못했다. 여기서 조용히 넘어가면
+            # 상대는 답을 기다리다 30초 뒤에야 포기한다. 끊어서 곧바로 알린다
+            self.close("응답을 보낼 수 없습니다")
 
     def _safe(self, raw_path):
         """원격이 보낸 상대 경로를 실제 경로로 바꾼다. 목록 밖은 거부된다."""
@@ -479,6 +501,29 @@ class Session:
 
 
 # 상대가 시작한 대화의 첫 프레임 타입. 여기 없으면 후속 프레임으로 취급한다
+    # --- 알림 (응답 없음) ---
+
+    def _on_shares_changed(self):
+        """상대의 공유 목록이 바뀌었다. 화면이 다시 읽으면 된다."""
+        self._events.put(("peer_shares_changed", None))
+
+    def notify_shares_changed(self):
+        """내 공유 목록이 바뀌었다고 알린다. 답을 기다리지 않는다.
+
+        이것이 없으면 상대는 손으로 새로고침할 때까지 낡은 목록을 본다.
+        보내다 실패해도 넘어간다 - 알림 하나 때문에 세션을 끊을 이유가 없다.
+        """
+        try:
+            self._send({"t": "shares.changed"})
+        except (SessionError, OSError):
+            pass
+
+
+_NOTICES = {
+    "shares.changed": Session._on_shares_changed,
+}
+
+
 _REQUESTS = {
     "home": Session._on_home,
     "list": Session._on_list,
@@ -498,7 +543,14 @@ _REQUESTS = {
 
 def connect(peer, my_name, platform, shares, events):
     """상대에게 연결을 요청하고 승인을 기다린다. 승인되면 Session 을 돌려준다."""
-    sock = socket.create_connection((peer.host, peer.port), timeout=config.CONNECT_TIMEOUT)
+    raw = socket.create_connection((peer.host, peer.port), timeout=config.CONNECT_TIMEOUT)
+    try:
+        # 프레임을 하나라도 보내기 **전에** 감싼다. hello 도 평문으로 나가면 안 된다
+        sock = secure.wrap_client(raw)
+    except (ssl.SSLError, OSError) as exc:
+        secure.close_quietly(raw)
+        raise SessionError("암호화 연결을 세우지 못했습니다: %s" % exc)
+
     try:
         protocol.send_frame(
             sock,
@@ -518,7 +570,12 @@ def connect(peer, my_name, platform, shares, events):
             raise Rejected("%s 가 연결을 거부했습니다" % peer.name)
 
         sock.settimeout(None)
+        # 상대 인증서의 지문. 받는 쪽 화면의 `이 기기 지문` 과 같아야 한다
+        der = secure.peer_certificate(sock)
+        peer_fp = fingerprint_mod.fingerprint(der) if der else None
+
         session = Session(sock, str(header.get("name") or peer.name), peer.host, shares, events)
+        session.peer_fingerprint = peer_fp
         session.start()
         return session
     except socket.timeout:
@@ -535,7 +592,11 @@ def connect(peer, my_name, platform, shares, events):
 class Server:
     """들어오는 연결을 받아 UI 에 승인을 물어보는 TCP 서버."""
 
-    def __init__(self, my_name, platform, shares, events, port=config.TCP_PORT):
+    def __init__(self, my_name, platform, shares, events, port=config.TCP_PORT, identity=None):
+        # 프로세스 한 판짜리 신원. 주지 않으면 여기서 만든다
+        self.identity = identity or secure.make_identity()
+        # 이 기기의 지문. 화면에 띄워 상대와 대조한다 (PROTOCOL.md 2.5절)
+        self.fingerprint = fingerprint_mod.fingerprint(self.identity.cert_der)
         self.my_name = my_name
         self.platform = platform
         # 목록 객체를 그대로 들고 있으므로, 앱에서 항목을 더하면 곧바로 반영된다
@@ -591,8 +652,17 @@ class Server:
                 target=self._greet, args=(client, addr[0]), name="greet", daemon=True
             ).start()
 
-    def _greet(self, sock, host):
+    def _greet(self, raw, host):
         """hello 를 읽고 UI 에 승인을 물어본 뒤 결과를 회신한다."""
+        try:
+            raw.settimeout(config.CONNECT_TIMEOUT)
+            # 첫 프레임을 읽기 **전에** 감싼다
+            sock = secure.wrap_server(raw, self.identity)
+        except (ssl.SSLError, OSError):
+            # 옛 버전이나 엉뚱한 것이 붙은 경우다. 조용히 끊는다
+            secure.close_quietly(raw)
+            return
+
         try:
             sock.settimeout(config.CONNECT_TIMEOUT)
             header, _ = protocol.FrameReader(sock).read()

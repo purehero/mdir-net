@@ -19,6 +19,9 @@ class _StubSession:
     peer_name = "stub-pc"
     peer_host = "127.0.0.1"
 
+    def notify_shares_changed(self):
+        pass
+
     def close(self, reason=None):
         pass
 
@@ -264,7 +267,7 @@ class TestShareDialog(ShareTestCase):
         self.app.local.refresh()
 
     def open_dialog(self):
-        self.app._on_key("F4")
+        self.app._on_key("o")
         self.assertIsInstance(self.app.modal, app_module.ShareDialog)
         return self.app.modal
 

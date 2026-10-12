@@ -437,7 +437,7 @@ class TestOverlayDoesNotInheritStyles(MdirListTestCase):
     """
 
     def test_splice_resets_before_the_inserted_text(self):
-        row = term.REVERSE + " note.txt   1,054 " + term.RESET
+        row = term.BAR + " note.txt   1,054 " + term.RESET
         out = screen.splice(row, 5, "| 메뉴 |")
 
         before_box = out.split("| 메뉴")[0]
@@ -447,9 +447,9 @@ class TestOverlayDoesNotInheritStyles(MdirListTestCase):
         )
 
     def test_splice_restores_the_style_after_the_box(self):
-        row = term.REVERSE + " note.txt   1,054 " + term.RESET
+        row = term.BAR + " note.txt   1,054 " + term.RESET
         out = screen.splice(row, 5, "| 메뉴 |")
-        self.assertIn(term.REVERSE, out.split("메뉴 |")[1], "뒷부분 색이 끊겼습니다")
+        self.assertIn(term.BAR, out.split("메뉴 |")[1], "뒷부분 색이 끊겼습니다")
 
     def test_menu_box_is_not_reversed_when_it_overlaps_the_cursor_row(self):
         """실제 화면 조립으로 확인한다. 커서를 상자가 걸치는 줄에 둔다."""
@@ -466,7 +466,7 @@ class TestOverlayDoesNotInheritStyles(MdirListTestCase):
                 if piece in line:
                     head = line.split(piece)[0]
                     self.assertNotIn(
-                        term.REVERSE,
+                        term.BAR,
                         head.split(term.RESET)[-1],
                         "상자가 선택색을 물려받았습니다: %r" % line[:70],
                     )
@@ -479,7 +479,7 @@ class TestOverlayDoesNotInheritStyles(MdirListTestCase):
         for line in self.app._compose((104, 30)):
             if "도움말" in line:
                 head = line.split("도움말")[0]
-                self.assertNotIn(term.REVERSE, head.split(term.RESET)[-1], line[:60])
+                self.assertNotIn(term.BAR, head.split(term.RESET)[-1], line[:60])
 
 
 class TestRightArrowEntersFolder(MdirListTestCase):
@@ -809,7 +809,7 @@ class TestMdirFrame(MdirListTestCase):
     def test_focused_pane_title_is_highlighted(self):
         self.app.focus = self.app.left
         title = self.app._compose((100, 24))[1]
-        self.assertIn(term.REVERSE, title.split("|")[0])
+        self.assertIn(term.BAR, title.split("|")[0])
 
     def test_focus_marker_moves_with_tab(self):
         self.app.session = _StubForFocus()

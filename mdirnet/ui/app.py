@@ -7,7 +7,8 @@ import queue
 import threading
 from pathlib import Path
 
-from .. import config, discovery, fsops, session, shares as shares_mod, winfw
+from .. import (archive, awscfg, config, discovery, fsops, keystore, s3 as s3_mod,
+                session, settings, shares as shares_mod, winfw)
 from . import screen, term
 
 # 테두리 문자. 폭이 정확히 1칸이고 East Asian Width 가 A(Ambiguous)가 아닌 것만
@@ -33,6 +34,60 @@ NAME_MIN = 6
 
 # 고정 칸이 차지하는 총 폭 (표시 2 + 확장자 5 + 크기 10 + 날짜 9 + 시간 7)
 FIXED_COLS = 2 + (EXT_COL + 1) + SIZE_COL + (DATE_COL + 1) + (TIME_COL + 1)
+
+# 확장자별 글자색. MDir 3.06 의 BLACK.COL(배포판 초기치)에서 확장자 64개와
+# 색 바이트 64개를 1:1 로 뽑아낸 표가 뼈대다. DOS 속성 바이트는 상위 니블이
+# 배경, 하위가 글자색이고, BLACK.COL 은 배경이 전부 0(검정)이었다.
+#
+# 각 갈래의 앞쪽이 MDir 원본 확장자, `+` 뒤가 그 시절에 없어서 같은 갈래에
+# 얹은 것이다. 갈래를 새로 만들지 않고 원본 갈래에만 얹었다.
+#
+# MSET.DOC 는 목록 색으로 앞쪽 8색(어두운 색)을 권한다. 도스로 나갈 때
+# 깜빡이는 부분이 생기기 때문이라고 한다. 문서.그림.소리.헤더가 어두운
+# 이유가 그것이고, 우리는 그 밝기를 그대로 옮겼다.
+#
+# (확장자들, 색, 밝게 할지). 여기 없는 확장자는 '나머지 파일' 로 흰색이다
+FILE_COLORS = (
+    # EXE - 밝은초록. + 요즘의 실행 가능한 알맹이들
+    (("exe", "app", "bin", "msi", "out", "appimage", "dmg"), term.GREEN, True),
+    # COM - 하늘색(밝은청록). MDir 에서 COM 만 쓰던 자리다
+    (("com",), term.CYAN, True),
+    # BAT BTM - 노랑. + 요즘의 스크립트. .command 도 여기다
+    (("bat", "btm", "cmd", "sh", "bash", "zsh", "fish", "ps1", "command"),
+     term.YELLOW, True),
+    # 압축 - 밝은자홍
+    (("lzh", "zip", "arj", "arc", "ice", "lha", "omp", "zoo", "uc2", "sqz", "rar", "hpk",
+      "7z", "gz", "tgz", "bz2", "xz", "tar", "zst", "lz4", "cab", "iso", "jar"),
+     term.MAGENTA, True),
+    # 문서 - 청록(어두움)
+    (("doc", "hwp", "gwp", "txt", "cap", "lst", "1st", "me",
+      "md", "rst", "pdf", "docx", "rtf", "odt", "xls", "xlsx", "ppt", "pptx",
+      "csv", "tsv", "log", "nfo"),
+     term.CYAN, False),
+    # 백업.임시 - 빨강(어두움). 우리 전송 중간 파일 .part 도 여기가 맞다
+    (("bak", "$$$", "tmp", "olz", "swp", "swo", "orig", "rej", "old", "part"),
+     term.RED, False),
+    # 소스 - 밝은파랑. + 요즘 언어와 설정 파일
+    (("pas", "c", "cpp", "asm", "bas", "cbl",
+      "py", "js", "mjs", "ts", "jsx", "tsx", "java", "kt", "kts", "swift", "rs",
+      "go", "rb", "pl", "php", "cs", "lua", "sql", "dart", "hs", "scala",
+      "json", "xml", "yml", "yaml", "toml", "ini", "cfg", "conf"),
+     term.BLUE, True),
+    # 헤더.목적.라이브러리 - 파랑(어두움)
+    (("h", "obj", "lib", "hpp", "hh", "hxx", "o", "a", "so", "dylib", "dll",
+      "pyc", "pyo", "class", "node"),
+     term.BLUE, False),
+    # 그림.동영상 - 초록(어두움)
+    (("gif", "pcx", "jpg", "fli", "anm", "bmp", "lbm", "ico", "mpg", "flc",
+      "jpeg", "png", "webp", "heic", "heif", "tif", "tiff", "svg", "psd",
+      "mp4", "mkv", "mov", "avi", "wmv", "webm", "m4v", "flv"),
+     term.GREEN, False),
+    # 소리.음악 - 갈색(어두운 노랑)
+    (("ims", "stm", "rol", "bnk", "voc", "mod", "nst", "mid", "wrk", "pcm",
+      "okp", "cmf", "wav", "s3m", "sop", "okm", "oka",
+      "mp3", "flac", "aac", "ogg", "opus", "m4a", "wma", "aiff", "midi", "xm", "it"),
+     term.YELLOW, False),
+)
 
 
 class Transfer:
@@ -95,19 +150,29 @@ class Pane:
         self.message = ""
         self.sort_mode = fsops.SORT_NAME
         self._generation = 0  # 늦게 도착한 조회 결과를 버리기 위한 세대 번호
+        # 압축 안을 보고 있으면 (압축 파일 경로, 안쪽 상대 경로). 아니면 None.
+        # 경로 공간이 하나 더 있는 셈이라 path 에 섞지 않고 따로 둔다
+        self.archive = None
+        # 트리 모드면 FolderTree. 패널이 목록 대신 트리를 보여준다 (MDir 의 MCD)
+        self.tree = None
 
     @property
     def label(self):
         """패널 이름. 왼쪽은 늘 내 PC, 오른쪽은 늘 상대다."""
         if not self.is_remote:
             return "내 PC"
-        return self.app.session.peer_name if self.app.session else "상대"
+        return self.app.link.peer_name if self.app.link else "상대"
 
     @property
     def location(self):
         """지금 보고 있는 위치."""
-        if self.is_remote and not self.app.session:
+        if self.is_remote and not self.app.link:
             return "(연결되지 않음)"
+        if self.tree:
+            return str(self.tree.node_at(self.cursor))
+        if self.archive:
+            box, inner = self.archive
+            return "%s/%s" % (box, inner) if inner else str(box)
         return shares_mod.display(self.path) if self.is_remote else str(self.path)
 
     @property
@@ -116,17 +181,24 @@ class Pane:
 
     @property
     def active(self):
-        return not self.is_remote or self.app.session is not None
+        return not self.is_remote or self.app.link is not None
 
     @property
     def at_top(self):
         """더 위로 올라갈 수 없는 지점인가."""
+        if self.tree:
+            return True  # 트리에는 `..` 이 없다. 뿌리가 이미 화면에 있다
+        if self.archive:
+            return False  # 압축 안에서는 늘 밖으로 나갈 길이 있다
         if self.is_remote:
             return shares_mod.normalize(self.path) == shares_mod.ROOT
         return self.path == self.path.parent
 
     def child(self, name):
         """이 패널의 경로 공간에서 하위 항목의 경로를 만든다."""
+        if self.archive:
+            box, inner = self.archive
+            return (box, "%s/%s" % (inner, name) if inner else name)
         if self.is_remote:
             return shares_mod.join(self.path, name)
         return self.path / name
@@ -134,10 +206,66 @@ class Pane:
     def up(self):
         return shares_mod.parent(self.path) if self.is_remote else self.path.parent
 
+    # --- 트리 ---
+
+    def enter_tree(self):
+        """패널을 트리로 바꾼다. 압축 안에서는 나온 뒤에 연다."""
+        if self.archive:
+            self.leave_archive()
+        self.tree = FolderTree(self.path)
+        self.cursor = self.tree.at
+        self.offset = 0
+        self.selected.clear()
+
+    def leave_tree(self, go_to=None):
+        """트리를 접는다. `go_to` 를 주면 그 폴더를 연다."""
+        self.tree = None
+        if go_to is None:
+            self.cursor = 0
+            self.offset = 0
+            self.refresh()
+        else:
+            self.navigate(go_to)
+
+    # --- 압축 ---
+
+    def enter_archive(self, box, inner=""):
+        self.archive = (Path(box), inner)
+        self.cursor = 0
+        self.offset = 0
+        self.selected.clear()
+        self.refresh()
+
+    def leave_archive(self):
+        """압축 밖으로. 그 압축 파일이 있던 폴더로 돌아간다."""
+        box, _ = self.archive
+        self.archive = None
+        self.navigate(box.parent)
+
+    def archive_up(self):
+        """압축 안에서 한 칸 위로. 맨 위였으면 압축 밖으로 나간다."""
+        box, inner = self.archive
+        if not inner:
+            self.leave_archive()
+            return
+        self.enter_archive(box, "/".join(inner.split("/")[:-1]))
+
     def rows(self):
         """'..' 항목을 앞에 붙인 표시용 목록."""
         if not self.active:
             return []
+        if self.tree:
+            return [
+                {
+                    "name": str(node) if node == self.tree.root else node.name,
+                    "is_dir": True,
+                    "size": 0,
+                    "depth": depth,
+                    "open": node in self.tree.expanded,
+                    "path": node,
+                }
+                for node, depth in self.tree.rows
+            ]
         items = []
         if not self.at_top:
             items.append({"name": "..", "is_dir": True, "size": 0, "up": True})
@@ -168,6 +296,8 @@ class Pane:
         self.refresh()
 
     def navigate(self, path):
+        self.archive = None
+        self.tree = None
         self.path = path if self.is_remote else Path(path)
         self.cursor = 0
         self.offset = 0
@@ -180,9 +310,30 @@ class Pane:
             self.entries = []
             return
 
+        if self.tree:
+            return  # 트리는 자기 상태를 갖는다. 목록을 읽을 것이 없다
+
         self._generation += 1
         generation = self._generation
         side = "remote" if self.is_remote else "local"
+
+        if self.archive:
+            box, inner = self.archive
+            try:
+                self.entries = fsops.sort_entries(
+                    self._visible(archive.list_dir(box, inner)), self.sort_mode
+                )
+                # 감춘 것이 있으면 감췄다고 말한다. 조용히 지우면 사용자는
+                # 압축이 온전한 줄 안다
+                hidden = archive.escaping_count(box)
+                self.message = (
+                    "압축 밖을 가리키는 항목 %d개를 감췄습니다" % hidden if hidden else ""
+                )
+            except archive.ArchiveError as exc:
+                self.entries = []
+                self.message = "압축을 읽지 못했습니다: %s" % exc
+            self._clamp()
+            return
 
         if not self.is_remote:
             try:
@@ -197,7 +348,7 @@ class Pane:
             return
 
         self.message = "불러오는 중..."
-        active = self.app.session
+        active = self.app.link
 
         def work():
             try:
@@ -307,12 +458,17 @@ class InputDialog(Dialog):
         self._prompt = prompt if isinstance(prompt, list) else [prompt]
         self._on_submit = on_submit
 
-    def _rendered(self, inner):
-        """커서 자리의 글자를 반전시켜 보여준다. 끝이면 빈칸을 반전시킨다."""
-        head = self.text[: self.cursor]
-        at = self.text[self.cursor : self.cursor + 1] or " "
-        tail = self.text[self.cursor + 1 :]
-        body = term.BOLD + head + term.RESET + term.REVERSE + at + term.RESET
+    def _rendered(self, inner, text=None):
+        """커서 자리의 글자를 반전시켜 보여준다. 끝이면 빈칸을 반전시킨다.
+
+        `text` 를 주면 그것을 대신 그린다. 시크릿 키를 `*` 로 가려 보여주면서도
+        커서는 제자리에 두려는 것이다 (가린 글자도 길이가 1:1 이라 자리가 맞는다).
+        """
+        text = self.text if text is None else text
+        head = text[: self.cursor]
+        at = text[self.cursor : self.cursor + 1] or " "
+        tail = text[self.cursor + 1 :]
+        body = term.BOLD + head + term.RESET + term.BAR + at + term.RESET
         body += term.BOLD + tail + term.RESET
         return screen.pad(body, inner)
 
@@ -320,7 +476,7 @@ class InputDialog(Dialog):
         return (
             self._prompt
             + ["", self._rendered(inner), ""]
-            + [term.FG_GRAY + "Enter 확인   Esc 취소   < > Home End 이동" + term.RESET]
+            + [term.DIM + "Enter 확인   Esc 취소   < > Home End 이동" + term.RESET]
         )
 
     def key(self, key):
@@ -355,6 +511,436 @@ class InputDialog(Dialog):
     def _insert(self, text):
         self.text = self.text[: self.cursor] + text + self.text[self.cursor :]
         self.cursor += len(text)
+
+
+class RegionDialog(Dialog):
+    """S3 리전을 고른다. 코드를 외우고 있을 이유가 없다."""
+
+    title = "리전 선택"
+    VISIBLE = 12  # 한 번에 보여줄 줄 수. 화면이 낮으면 이보다 줄어든다
+
+    def __init__(self, current, on_choose):
+        # 지금 값이 목록에 있으면 그 자리에서 열린다. 다시 고를 때 처음부터
+        # 훑어 내려갈 이유가 없다
+        self.cursor = s3_mod.region_index(current)
+        self.offset = 0
+        self._on_choose = on_choose
+
+    def _visible(self):
+        """보여줄 줄 수. 상자가 화면보다 커지면 안내줄이 통째로 잘린다."""
+        return max(min(self.VISIBLE, (self.max_body or 18) - 2), 1)
+
+    def lines(self, inner):
+        visible = self._visible()
+        if self.cursor < self.offset:
+            self.offset = self.cursor
+        elif self.cursor >= self.offset + visible:
+            self.offset = self.cursor - visible + 1
+        self.offset = max(0, min(self.offset, max(len(s3_mod.REGIONS) - visible, 0)))
+
+        out = []
+        for index in range(self.offset, min(self.offset + visible, len(s3_mod.REGIONS))):
+            code, name = s3_mod.REGIONS[index]
+            text = screen.pad("  %-16s %s" % (code, name), inner)
+            out.append(term.BAR + text + term.RESET if index == self.cursor else text)
+
+        more = len(s3_mod.REGIONS) - self.offset - visible
+        out.append(term.DIM + ("  아래로 %d개 더" % more if more > 0 else "") + term.RESET)
+        out.append(term.DIM + "Enter 선택   Esc 취소" + term.RESET)
+        return out
+
+    def key(self, key):
+        last = len(s3_mod.REGIONS) - 1
+        visible = self._visible()
+
+        if key in (term.UP, "k"):
+            self.cursor = max(0, self.cursor - 1)
+        elif key in (term.DOWN, "j"):
+            self.cursor = min(last, self.cursor + 1)
+        elif key == term.PGUP:
+            self.cursor = max(0, self.cursor - visible)
+        elif key == term.PGDN:
+            self.cursor = min(last, self.cursor + visible)
+        elif key == term.HOME_KEY:
+            self.cursor = 0
+        elif key == term.END_KEY:
+            self.cursor = last
+        elif key == term.ENTER:
+            self._on_choose(s3_mod.REGIONS[self.cursor][0])
+            return True
+        elif key in (term.ESC, "q"):
+            self._on_choose(None)  # 고르지 않았다. 폼은 그대로 다시 연다
+            return True
+        return False
+
+
+class ProfileDialog(Dialog):
+    """aws CLI 프로필을 고른다.
+
+    쓸 수 없는 프로필도 보여주되 이유를 적는다. 목록에서 조용히 빼버리면
+    "내 프로필이 왜 없지" 가 된다.
+    """
+
+    title = "AWS 프로필 선택"
+    VISIBLE = 12
+
+    def __init__(self, profiles, current, on_choose):
+        self.profiles = list(profiles)
+        self.cursor = next(
+            (i for i, p in enumerate(self.profiles) if p.name == current), 0
+        )
+        self.offset = 0
+        self.error = ""
+        self._on_choose = on_choose
+
+    def _visible(self):
+        return max(min(self.VISIBLE, (self.max_body or 18) - 2), 1)
+
+    def lines(self, inner):
+        if not self.profiles:
+            return [
+                term.DIM + "~/.aws 에서 프로필을 찾지 못했습니다." + term.RESET,
+                "",
+                term.DIM + "Esc 로 돌아가 직접 입력하세요" + term.RESET,
+            ]
+
+        visible = self._visible()
+        if self.cursor < self.offset:
+            self.offset = self.cursor
+        elif self.cursor >= self.offset + visible:
+            self.offset = self.cursor - visible + 1
+        self.offset = max(0, min(self.offset, max(len(self.profiles) - visible, 0)))
+
+        out = []
+        for index in range(self.offset, min(self.offset + visible, len(self.profiles))):
+            profile = self.profiles[index]
+            note = profile.reason or profile.region or ""
+            # `%-20s` 는 글자 수로 채운다. 한글 이름은 한 글자가 두 칸이라
+            # 칸이 밀린다. 폭을 세는 pad 를 쓴다
+            text = screen.pad("  %s %s" % (screen.pad(profile.name, 20), note), inner)
+            if index == self.cursor:
+                out.append(term.BAR + text + term.RESET)
+            elif not profile.usable:
+                out.append(term.DIM + text + term.RESET)
+            else:
+                out.append(text)
+
+        more = len(self.profiles) - self.offset - visible
+        out.append(term.DIM + ("  아래로 %d개 더" % more if more > 0 else "") + term.RESET)
+        if self.error:
+            out.append(term.BAD + screen.fit(self.error, inner) + term.RESET)
+        out.append(term.DIM + "Enter 선택   Esc 취소" + term.RESET)
+        return out
+
+    def key(self, key):
+        if key in (term.ESC, "q"):
+            self._on_choose(None)
+            return True
+        if not self.profiles:
+            return False
+
+        last = len(self.profiles) - 1
+        visible = self._visible()
+
+        if key in (term.UP, "k"):
+            self.cursor = max(0, self.cursor - 1)
+        elif key in (term.DOWN, "j"):
+            self.cursor = min(last, self.cursor + 1)
+        elif key == term.PGUP:
+            self.cursor = max(0, self.cursor - visible)
+        elif key == term.PGDN:
+            self.cursor = min(last, self.cursor + visible)
+        elif key == term.HOME_KEY:
+            self.cursor = 0
+        elif key == term.END_KEY:
+            self.cursor = last
+        elif key == term.ENTER:
+            picked = self.profiles[self.cursor]
+            if not picked.usable:
+                # 닫고 나서 연결에 실패하면 무엇이 문제였는지 알기 어렵다.
+                # 고를 수 없는 이유를 그 자리에서 말한다
+                self.error = "%s - 쓸 수 없습니다" % picked.reason
+                return False
+            self._on_choose(picked.name)
+            return True
+        else:
+            return False
+        self.error = ""
+        return False
+
+
+class S3ConnectDialog(InputDialog):
+    """AWS S3 접속 정보를 받는다. 줄이 여럿이라 Tab 으로 옮겨 다닌다.
+
+    한 줄 입력창을 물려받아 편집 키(< > Home End Backspace Delete)를 그대로
+    쓴다. `text` 는 늘 '지금 고치는 칸' 의 내용이고, 칸을 옮길 때 `values` 로
+    옮겨 담는다. 입력 처리를 두 벌 갖지 않으려는 것이다.
+
+    **붙는 것은 맨 아래 `연결` 줄에서만** 한다. 입력 칸에서 Enter 는 다음 줄로
+    내려갈 뿐이다 - 시크릿 키를 치다 Enter 가 눌려 반쯤 채운 채로 연결을
+    시도하는 일이 없다.
+
+    자격증명은 두 갈래다. 직접 입력이면 키 두 칸이 나오고, aws CLI 프로필이면
+    프로필 한 칸이 대신 나온다. **줄 구성 자체가 달라진다** - 쓰지 않는 칸을
+    회색으로 남겨두면 왜 안 먹는지 알 길이 없다.
+    """
+
+    # (키, 라벨, 가릴지)
+    TYPED = (
+        ("access_key", "액세스 키 ID", False),
+        ("secret_key", "시크릿 액세스 키", True),
+    )
+    COMMON_HEAD = (("region", "리전", False),)
+    COMMON_TAIL = (("bucket", "버킷 (비우면 전체)", False),)
+
+    def __init__(self, on_submit, initial=None, on_regions=None, keep="",
+                 on_profiles=None):
+        initial = initial or {}
+        self.values = {
+            key: str(initial.get(key) or "")
+            for key, _, _ in self.TYPED + self.COMMON_HEAD + self.COMMON_TAIL
+        }
+        self.values["profile"] = str(initial.get("profile") or "")
+        # 프로필을 고를 수 있을 때만 자격증명 줄이 생긴다
+        self._on_profiles = on_profiles
+        self.use_profile = bool(initial.get("use_profile")) and bool(on_profiles)
+        # 맡길 곳의 이름 ("키체인" 등). 비면 저장 줄이 없다
+        self.keep = str(keep or "")
+        self.remember = bool(initial.get("remember"))
+        self.at = 0
+        self.error = ""
+        self._on_regions = on_regions
+        InputDialog.__init__(self, "AWS S3 연결", [], on_submit, initial="")
+        self._load(0)
+
+    # --- 줄 ---
+
+    def fields(self):
+        """지금 보이는 입력 칸들. 자격증명 갈래에 따라 달라진다."""
+        middle = () if self.use_profile else self.TYPED
+        return self.COMMON_HEAD + middle + self.COMMON_TAIL
+
+    def rows(self):
+        """지금 화면에 있는 줄 이름들."""
+        names = []
+        if self._on_profiles:
+            names.append("source")
+        if self.use_profile:
+            names.append("profile")
+        names += [key for key, _, _ in self.fields()]
+        if self.keep and not self.use_profile:
+            # 프로필을 쓰면 맡길 시크릿이 없다. aws CLI 가 이미 갖고 있다
+            names.append("remember")
+        names.append("submit")
+        return names
+
+    def submit_at(self):
+        return len(self.rows()) - 1
+
+    def required(self):
+        """비울 수 없는 칸들."""
+        if self.use_profile:
+            return ("region",)
+        return ("region", "access_key", "secret_key")
+
+    def _label_of(self, key):
+        for name, label, _ in self.TYPED + self.COMMON_HEAD + self.COMMON_TAIL:
+            if name == key:
+                return label
+        return key
+
+    def _field(self, row):
+        """그 줄이 입력 칸이면 (키, 라벨, 가릴지), 아니면 None."""
+        return next((f for f in self.fields() if f[0] == row), None)
+
+    def _snapshot(self):
+        return dict(
+            self.values,
+            use_profile=self.use_profile,
+            remember=self.remember and not self.use_profile,
+        )
+
+    # --- 줄 옮기기 ---
+
+    def _store(self):
+        field = self._field(self.rows()[self.at])
+        if field:
+            self.values[field[0]] = self.text
+
+    def _load(self, index):
+        """그 줄로 자리를 옮기고 그 칸의 값을 편집 버퍼에 싣는다."""
+        rows = self.rows()
+        self.at = index % len(rows)
+        field = self._field(rows[self.at])
+        self.text = self.values[field[0]] if field else ""
+        self.cursor = len(self.text)
+
+    def _go(self, index):
+        """다른 줄로 옮긴다. 떠나기 전에 쳐 넣던 것을 반드시 담아둔다.
+
+        담는 일을 부르는 쪽에 맡겼더니 `_go` 를 직접 부르는 자리에서 빠뜨려
+        입력이 사라졌다. 옮기는 길이 하나뿐이므로 여기서 한다. 처음 열 때는
+        담을 것이 없으므로 `_load` 만 부른다 - 빈 버퍼로 첫 칸을 덮어쓴다.
+        """
+        self._store()
+        self._load(index)
+
+    def _move(self, delta):
+        self._go(self.at + delta)
+
+    def _jump_to(self, key):
+        rows = self.rows()
+        if key in rows:
+            self._go(rows.index(key))
+
+    # --- 그리기 ---
+
+    def _labels(self):
+        wide = [label for _, label, _ in self.TYPED + self.COMMON_HEAD + self.COMMON_TAIL]
+        wide += ["자격증명", "프로필", "시크릿 키 저장"]
+        return max(screen.width(label) for label in wide) + 2
+
+    def _line(self, index, label, body, label_col, inner):
+        head = ("> " if index == self.at else "  ") + screen.pad(label, label_col)
+        return screen.pad(head + body, inner)
+
+    def lines(self, inner):
+        label_col = self._labels()
+        out = ["접속 정보를 입력하세요.", ""]
+
+        for index, row in enumerate(self.rows()):
+            here = index == self.at
+            if row == "source":
+                answer = "AWS 프로필 (~/.aws)" if self.use_profile else "직접 입력"
+                out.append(self._line(index, "자격증명",
+                                      answer if here else term.DIM + answer + term.RESET,
+                                      label_col, inner))
+                continue
+            if row == "profile":
+                shown = self.values["profile"] or "(고르지 않음)"
+                out.append(self._line(index, "프로필",
+                                      shown if here else term.DIM + shown + term.RESET,
+                                      label_col, inner))
+                continue
+            if row == "remember":
+                answer = "예 - %s에 맡깁니다" % self.keep if self.remember else "아니오"
+                out.append(self._line(index, "시크릿 키 저장",
+                                      answer if here else term.DIM + answer + term.RESET,
+                                      label_col, inner))
+                continue
+            if row == "submit":
+                button = "[ 연결 ]"
+                out.append("")
+                out.append(self._line(
+                    index, "", term.BAR + button + term.RESET if here else button,
+                    0, inner,
+                ))
+                continue
+
+            key, label, secret = self._field(row)
+            value = self.text if here else self.values[key]
+            shown = "*" * len(value) if secret else value
+            room = max(inner - screen.width("  " + screen.pad(label, label_col)), 1)
+            body = (
+                self._rendered(room, shown)
+                if here
+                else term.DIM + screen.pad(screen.fit_left(shown, room), room) + term.RESET
+            )
+            out.append(self._line(index, label, body, label_col, inner))
+
+        out.append("")
+        if self.error:
+            out.append(term.BAD + screen.fit(self.error, inner) + term.RESET)
+        out.append(term.DIM + self._hint() + term.RESET)
+        return out
+
+    def _hint(self):
+        """키 안내는 지금 있는 줄에 맞춘다."""
+        here = self.rows()[self.at]
+        head = ""
+        if here == "source":
+            head = "Space 바꾸기   "
+        elif here == "profile":
+            head = "Space 프로필 목록   "
+        elif here == "region" and self._on_regions:
+            head = "Space 리전 목록   "
+        elif here == "remember":
+            head = "Space 켜고 끄기   "
+        tail = "Enter 연결" if here == "submit" else "Enter 다음 줄"
+        return "%sTab 이동   %s   Esc 취소" % (head, tail)
+
+    # --- 입력 ---
+
+    def _connect(self):
+        """`연결` 줄에서 Enter. 빈 칸이 있으면 그 칸으로 데려간다."""
+        self._store()
+        if self.use_profile and not self.values["profile"]:
+            self.error = "프로필을 고르세요"
+            self._jump_to("profile")
+            return False
+
+        missing = next(
+            (key for key in self.required() if not self.values[key].strip()), ""
+        )
+        if missing:
+            # 닫아버리면 쳐 넣은 것이 사라진다. 열어둔 채로 그 칸으로 옮겨준다
+            self.error = "%s 칸이 비었습니다" % self._label_of(missing)
+            self._jump_to(missing)
+            return False
+
+        self._on_submit(self._snapshot())
+        return True
+
+    def _toggle_source(self):
+        """직접 입력 <-> 프로필. 줄 구성이 바뀌므로 자리를 다시 잡는다.
+
+        바꾸기 **전에** 담는다. 바꾸고 나면 지금 줄이 어느 칸이었는지 알 수 없다.
+        """
+        self._store()
+        self.use_profile = not self.use_profile
+        self.error = ""
+        self._go(self.rows().index("source"))
+
+    def key(self, key):
+        if key == term.ESC:
+            return True
+
+        here = self.rows()[self.at]
+
+        if key == term.ENTER:
+            if here != "submit":
+                self._move(1)  # 입력 칸에서는 다음 줄로 내려갈 뿐이다
+                return False
+            return self._connect()
+
+        if key == term.SPACE:
+            if here == "source":
+                self._toggle_source()
+                return False
+            if here == "profile":
+                self._store()
+                self._on_profiles(self._snapshot())
+                return True  # 목록 창이 이 창을 대신한다
+            # 리전 이름에는 공백이 없다. 그 칸에서만 Space 를 목록 여는 키로 쓴다
+            if here == "region" and self._on_regions:
+                self._store()
+                self._on_regions(self._snapshot())
+                return True
+            if here == "remember":
+                self.remember = not self.remember
+                return False
+
+        if key in (term.TAB, term.DOWN):
+            self._move(1)
+            return False
+        if key == term.UP:
+            self._move(-1)
+            return False
+
+        self.error = ""
+        if not self._field(here):
+            return False  # 입력 칸이 아닌 줄에는 고칠 글자가 없다
+        return InputDialog.key(self, key)
 
 
 class ViewerDialog(Dialog):
@@ -393,7 +979,7 @@ class ViewerDialog(Dialog):
 
         out = []
         for index in range(self.offset, min(self.offset + height, len(self.body))):
-            number = term.FG_GRAY + "%5d " % (index + 1) + term.RESET
+            number = term.DIM + "%5d " % (index + 1) + term.RESET
             out.append(number + screen.fit(self.body[index].rstrip("\r"), inner - 6))
         while len(out) < height:
             out.append("")
@@ -406,8 +992,8 @@ class ViewerDialog(Dialog):
             note += " (앞 %s 만)" % fsops.human_size(self.shown_bytes)
 
         out += [
-            term.FG_GRAY + BOX_H * inner + term.RESET,
-            term.FG_GRAY
+            term.DIM + BOX_H * inner + term.RESET,
+            term.DIM
             + screen.pad("%s   %d/%d 줄   ^v PgUp/PgDn 스크롤   q 닫기" % (
                 note, min(self.offset + height, len(self.body)), len(self.body)), inner)
             + term.RESET,
@@ -459,14 +1045,14 @@ class MessageDialog(Dialog):
         if not self.scrollable:
             return [self._color + line + term.RESET for line in self._body] + [
                 "",
-                term.FG_GRAY + "아무 키나 누르면 닫힙니다" + term.RESET,
+                term.DIM + "아무 키나 누르면 닫힙니다" + term.RESET,
             ]
 
         self.offset = max(0, min(self.offset, len(self._body) - room))
         window = self._body[self.offset : self.offset + room]
         return [self._color + line + term.RESET for line in window] + [
             "",
-            term.FG_GRAY
+            term.DIM
             + "%d-%d / %d줄   위아래로 스크롤   q 닫기"
             % (self.offset + 1, self.offset + len(window), len(self._body))
             + term.RESET,
@@ -509,14 +1095,14 @@ class ConfirmDialog(Dialog):
 
     def lines(self, inner_width):
         def button(text, chosen):
-            style = term.REVERSE if chosen else term.FG_GRAY
+            style = term.BAR if chosen else term.DIM
             return style + "  %s  " % text + term.RESET
 
         return self._body + [
             "",
             button("진행(Y)", self.proceed) + "   " + button("취소(N)", not self.proceed),
             "",
-            term.FG_GRAY + "< > 선택   Enter 확정   Esc 취소" + term.RESET,
+            term.DIM + "< > 선택   Enter 확정   Esc 취소" + term.RESET,
         ]
 
     def key(self, key):
@@ -553,19 +1139,19 @@ class ApprovalDialog(Dialog):
 
     def lines(self, inner_width):
         def button(text, chosen):
-            style = term.REVERSE if chosen else term.FG_GRAY
+            style = term.BAR if chosen else term.DIM
             return style + "  %s  " % text + term.RESET
 
         return [
             term.BOLD + self.request.name + term.RESET,
-            term.FG_GRAY + "%s . %s" % (self.request.host, self.request.platform) + term.RESET,
+            term.DIM + "%s . %s" % (self.request.host, self.request.platform) + term.RESET,
             "",
             "이 PC 의 공유 폴더를 열어줍니다.",
             "",
             button("수락(Y)", self.accept) + "   " + button("거부(N)", not self.accept),
             "",
-            term.FG_GRAY + self._deadline_text() + term.RESET,
-            term.FG_GRAY + "< > 선택   Enter 확정   Esc 거부" + term.RESET,
+            term.DIM + self._deadline_text() + term.RESET,
+            term.DIM + "< > 선택   Enter 확정   Esc 거부" + term.RESET,
         ]
 
     def _deadline_text(self):
@@ -625,7 +1211,10 @@ class MenuBar(Dialog):
             ]
 
         left = pane_menu(app.local)
-        left += [("드라이브 바꾸기", "\\", app._open_drive_picker)]
+        left += [
+            ("폴더 트리", "4", app._open_tree),
+            ("드라이브 바꾸기", "\\", app._open_drive_picker),
+        ]
 
         right = [
             (
@@ -636,7 +1225,10 @@ class MenuBar(Dialog):
             sep,
         ] + pane_menu(app.remote)
         if not app.right.is_remote:
-            right += [("드라이브 바꾸기", "\\", app._open_drive_picker)]
+            right += [
+                ("폴더 트리", "4", app._open_tree),
+                ("드라이브 바꾸기", "\\", app._open_drive_picker),
+            ]
 
         return [
             ("Left", left),
@@ -645,6 +1237,7 @@ class MenuBar(Dialog):
                 [
                     ("파일 보기", "3", app._view_file),
                     ("복사", "5", app._start_copy),
+                    ("이동", "x", app._start_move),
                     ("이름 바꾸기", "6", app._ask_rename),
                     ("폴더 만들기", "7", app._ask_mkdir),
                     ("삭제", "8", app._ask_delete),
@@ -657,9 +1250,10 @@ class MenuBar(Dialog):
                 "Commands",
                 [
                     ("연결할 PC 찾기", "n", app._open_peer_dialog),
+                    ("AWS S3 연결", "", app._open_s3_dialog),
                     ("연결 끊기", "d", app._disconnect),
                     sep,
-                    ("공유 폴더 관리", "4", app._open_share_manager),
+                    ("공유 폴더 관리", "o", app._open_share_manager),
                 ],
             ),
             (
@@ -669,6 +1263,16 @@ class MenuBar(Dialog):
                         ("숨김 파일 감추기" if app.show_hidden else "숨김 파일 보기"),
                         ".",
                         app.toggle_hidden,
+                    ),
+                    (
+                        ("파란 바닥으로" if term.theme() == "black" else "검은 바닥으로"),
+                        "",
+                        app.toggle_theme,
+                    ),
+                    (
+                        ("마우스 안 쓰기" if app.use_mouse else "마우스 쓰기"),
+                        "",
+                        app.toggle_mouse,
                     ),
                 ],
             ),
@@ -682,7 +1286,7 @@ class MenuBar(Dialog):
         parts = [" "]
         for index, (title, _) in enumerate(self.menus):
             chunk = "  %s  " % title
-            parts.append(term.REVERSE + chunk + term.RESET if index == self.menu else chunk)
+            parts.append(term.BAR + chunk + term.RESET if index == self.menu else chunk)
         return screen.pad("".join(parts), cols)
 
     def _bar_offset(self):
@@ -706,7 +1310,7 @@ class MenuBar(Dialog):
                 continue
             text = " " + label + " " * max(width - screen.width(label) - len(hint) - 2, 1) + hint
             text = screen.pad(text, width)
-            body = term.REVERSE + text + term.RESET if index == self.item else text
+            body = term.BAR + text + term.RESET if index == self.item else text
             rows.append(BOX_V + body + BOX_V)
         rows.append(BOX_BL + BOX_H * width + BOX_BR)
         return rows
@@ -720,7 +1324,7 @@ class MenuBar(Dialog):
             if target >= rows:
                 break
             lines[target] = screen.pad(
-                screen.splice(lines[target], left, term.FG_CYAN + row + term.RESET), cols
+                screen.splice(lines[target], left, term.DIM + row + term.RESET), cols
             )
 
     # --- 조작 ---
@@ -768,7 +1372,7 @@ class ShareDialog(Dialog):
     """
 
     title = "공유 폴더 관리"
-    VISIBLE = 8
+    VISIBLE = 8  # 화면이 낮으면 이보다 줄어든다
 
     def __init__(self, app):
         self.app = app
@@ -778,21 +1382,27 @@ class ShareDialog(Dialog):
     def shares(self):
         return list(self.app.shares)
 
+    def _visible(self):
+        """실제로 보여줄 공유 줄 수. 낮은 화면에서 아래쪽이 잘리지 않게 줄인다."""
+        # 안내와 가로줄 2줄, 아래 가로줄과 키 안내 2줄을 뺀 자리가 목록 몫이다
+        return max(min(self.VISIBLE, (self.max_body or 18) - 4), 1)
+
     def lines(self, inner):
         shares = self.shares
+        visible = self._visible()
         out = [
             "상대에게는 이 목록이 최상위 폴더로 보입니다.",
-            term.FG_GRAY + BOX_H * inner + term.RESET,
+            term.DIM + BOX_H * inner + term.RESET,
         ]
 
         if not shares:
-            out.append(term.FG_YELLOW + "  아직 공유하는 폴더가 없습니다." + term.RESET)
-            out += [""] * (self.VISIBLE - 1)
+            out.append(term.MARK + "  아직 공유하는 폴더가 없습니다." + term.RESET)
+            out += [""] * (visible - 1)
         else:
             self.cursor = max(0, min(self.cursor, len(shares) - 1))
-            start = max(0, min(self.cursor - self.VISIBLE + 1, len(shares) - self.VISIBLE))
+            start = max(0, min(self.cursor - visible + 1, len(shares) - visible))
             start = max(start, 0)
-            for index in range(start, min(start + self.VISIBLE, len(shares))):
+            for index in range(start, min(start + visible, len(shares))):
                 share = shares[index]
                 # 외장 디스크를 빼면 경로가 없어진다. 지우지 않고 표시만 해준다.
                 # 표시가 경로 뒤에 붙으면 잘려 사라지므로 이름 옆에 둔다
@@ -801,17 +1411,17 @@ class ShareDialog(Dialog):
                 path_room = inner - screen.width(head)
                 label = screen.pad(head + screen.fit_left(str(share.path), path_room), inner)
                 if index == self.cursor:
-                    out.append(term.REVERSE + label + term.RESET)
+                    out.append(term.BAR + label + term.RESET)
                 elif not share.exists:
-                    out.append(term.FG_RED + label + term.RESET)
+                    out.append(term.BAD + label + term.RESET)
                 else:
                     out.append(label)
-            out += [""] * (self.VISIBLE - min(len(shares), self.VISIBLE))
+            out += [""] * (visible - min(len(shares), visible))
 
         out += [
-            term.FG_GRAY + BOX_H * inner + term.RESET,
+            term.DIM + BOX_H * inner + term.RESET,
             term.BOLD + "a 추가" + term.RESET
-            + term.FG_GRAY + "   d 삭제   Esc 닫기" + term.RESET,
+            + term.DIM + "   d 삭제   Esc 닫기" + term.RESET,
         ]
         return out
 
@@ -851,7 +1461,7 @@ class ShareDialog(Dialog):
             "공유 폴더 제거",
             [
                 term.BOLD + share.name + term.RESET,
-                term.FG_GRAY + str(share.path) + term.RESET,
+                term.DIM + str(share.path) + term.RESET,
                 "",
                 "목록에서만 빼냅니다. 폴더와 파일은 그대로 남습니다.",
             ],
@@ -871,16 +1481,16 @@ class DriveDialog(Dialog):
 
     def lines(self, inner):
         if not self.drives:
-            return [term.FG_GRAY + "고를 수 있는 드라이브가 없습니다." + term.RESET]
+            return [term.DIM + "고를 수 있는 드라이브가 없습니다." + term.RESET]
 
         self.cursor = max(0, min(self.cursor, len(self.drives) - 1))
         out = []
         for index, drive in enumerate(self.drives):
             kind = (" . %s" % drive["kind"]) if drive["kind"] else ""
             label = screen.pad("  %-4s %s%s" % (drive["label"], drive["path"], kind), inner)
-            out.append(term.REVERSE + label + term.RESET if index == self.cursor else label)
+            out.append(term.BAR + label + term.RESET if index == self.cursor else label)
 
-        out += ["", term.FG_GRAY + "Enter 이동   Esc 취소" + term.RESET]
+        out += ["", term.DIM + "Enter 이동   Esc 취소" + term.RESET]
         return out
 
     def key(self, key):
@@ -896,6 +1506,101 @@ class DriveDialog(Dialog):
         return False
 
 
+class FolderTree:
+    """폴더 트리의 상태. 그리는 일은 패널이 한다 (MDir 의 MCD).
+
+    **펼칠 때 읽는다.** 통째로 훑으면 홈 폴더만 해도 화면이 몇 초씩 멈추고, 깊고
+    넓은 디스크에서는 몇 분이 걸린다. 한 번에 한 단계만 읽으므로 어느 깊이에서도
+    즉시 반응한다.
+    """
+
+    def __init__(self, start):
+        start = Path(start)
+        self.root = self._disk_root(start)
+        self.children = {}   # 이미 읽은 폴더 -> 하위 폴더 목록
+        self.expanded = set()
+        self.message = ""
+
+        # 지금 폴더까지의 조상만 펼친다. MCD 도 그렇게 열렸다
+        for parent in reversed([start] + list(start.parents)):
+            if parent == start:
+                break
+            self.expand(parent)
+
+        self.reflow()
+        self.at = max(0, self.index_of(start))
+
+    @staticmethod
+    def _disk_root(path):
+        """이 경로가 속한 디스크의 뿌리. POSIX 는 `/`, Windows 는 `C:\\`."""
+        node = Path(path)
+        while not fsops.is_filesystem_root(node) and node.parent != node:
+            node = node.parent
+        return node
+
+    def read(self, path):
+        """하위 폴더 목록. 한 번 읽으면 기억한다."""
+        if path in self.children:
+            return self.children[path]
+        try:
+            names = [e["name"] for e in fsops.list_dir(path) if e["is_dir"]]
+            self.message = ""
+        except OSError as exc:
+            # 권한이 없는 폴더는 흔하다. 트리 전체가 죽으면 안 된다
+            names = []
+            self.message = "읽을 수 없습니다: %s" % exc
+        self.children[path] = [path / name for name in names]
+        return self.children[path]
+
+    def expand(self, path):
+        self.read(path)
+        self.expanded.add(path)
+
+    def reflow(self):
+        """펼침 상태를 (경로, 깊이) 목록으로 펼친다."""
+        rows = []
+
+        def walk(node, depth):
+            rows.append((node, depth))
+            if node in self.expanded:
+                for child in self.children.get(node, ()):
+                    walk(child, depth + 1)
+
+        walk(self.root, 0)
+        self.rows = rows
+
+    def index_of(self, path):
+        for index, (node, _) in enumerate(self.rows):
+            if node == path:
+                return index
+        return 0
+
+    def node_at(self, index):
+        return self.rows[index][0] if 0 <= index < len(self.rows) else self.root
+
+    def open_at(self, index):
+        node = self.node_at(index)
+        if node in self.expanded:
+            return
+        self.expand(node)
+        self.reflow()
+
+    def close_at(self, index):
+        """접는다. 이미 접혀 있으면 부모로 올라간다. 새 커서 자리를 돌려준다."""
+        node = self.node_at(index)
+        if node in self.expanded:
+            self.expanded.discard(node)
+            self.reflow()
+            return index
+
+        parent = node.parent
+        if node == self.root or parent == node:
+            return index
+        self.expanded.discard(parent)
+        self.reflow()
+        return self.index_of(parent)
+
+
 class FolderDialog(Dialog):
     """공유할 폴더를 고르는 선택상자.
 
@@ -906,7 +1611,7 @@ class FolderDialog(Dialog):
     """
 
     title = "공유할 폴더 선택"
-    VISIBLE = 10  # 한 번에 보여줄 폴더 수
+    VISIBLE = 10  # 한 번에 보여줄 폴더 수. 화면이 낮으면 이보다 줄어든다
 
     DRIVE_ROW = "[드라이브]"
 
@@ -941,53 +1646,78 @@ class FolderDialog(Dialog):
         # 최상위에서는 '..' 대신 드라이브 목록으로 나가는 문을 둔다
         return ([self.DRIVE_ROW] if self._on_drives else []) + self.entries
 
+    def _layout(self):
+        """(목록 줄 수, 여유 줄을 지킬지).
+
+        10줄로 고정해 그리면 상자가 화면보다 커져 **아래쪽이 잘린다.** 그러면 맨
+        아래 안내줄이 통째로 사라져서, 폴더를 결정하는 키가 무엇인지 알 방법이
+        없어진다. 폰의 터미널처럼 낮은 화면에서 실제로 그런 일이 있었다.
+
+        그래서 화면이 낮으면 목록을 줄이고, 그것으로도 좁으면 자리만 지키던
+        줄(개수와 빈 줄)까지 목록에 내준다. 안내줄은 어느 높이에서도 남는다.
+        """
+        room = (self.max_body or 18) - 3  # 경로, 가로줄, 안내줄을 뺀 자리
+        if room - 3 >= 4:
+            return min(self.VISIBLE, room - 3), True
+        return max(room, 1), False
+
     def lines(self, inner):
         rows = self.rows()
+        visible, roomy = self._layout()
 
         if self.cursor < self.offset:
             self.offset = self.cursor
-        elif self.cursor >= self.offset + self.VISIBLE:
-            self.offset = self.cursor - self.VISIBLE + 1
+        elif self.cursor >= self.offset + visible:
+            self.offset = self.cursor - visible + 1
 
         out = [
             term.BOLD + screen.fit_left(str(self.path), inner) + term.RESET,
-            term.FG_GRAY + BOX_H * inner + term.RESET,
+            term.DIM + BOX_H * inner + term.RESET,
         ]
 
+        shown = 0
         if not rows:
-            out.append(term.FG_GRAY + "  (하위 폴더가 없습니다)" + term.RESET)
-        for index in range(self.offset, min(self.offset + self.VISIBLE, len(rows))):
+            out.append(term.DIM + "  (하위 폴더가 없습니다)" + term.RESET)
+            shown = 1
+        for index in range(self.offset, min(self.offset + visible, len(rows))):
             name = rows[index]
             plain = name in ("..", self.DRIVE_ROW)
             label = screen.pad("  " + (name if plain else name + "/"), inner)
             if index == self.cursor:
-                out.append(term.REVERSE + label + term.RESET)
+                out.append(term.BAR + label + term.RESET)
             elif name == self.DRIVE_ROW:
-                out.append(term.FG_YELLOW + label + term.RESET)
+                out.append(term.MARK + label + term.RESET)
             else:
-                out.append(term.FG_CYAN + label + term.RESET)
+                out.append(term.BOLD + label + term.RESET)  # 폴더는 패널과 같은 색
+            shown += 1
 
         # 목록이 짧아도 상자 높이를 유지해 다이얼로그가 들썩이지 않게 한다
-        for _ in range(self.VISIBLE - max(len(rows), 1)):
+        for _ in range(visible - shown):
             out.append(" " * inner)
 
-        # 아래 두 줄은 내용이 없어도 자리를 지킨다. 폴더를 옮길 때마다 상자
-        # 높이가 달라지면 화면이 들썩여 눈에 거슬린다
-        if len(rows) > self.VISIBLE:
-            out.append(term.FG_GRAY + "  (%d/%d)" % (self.cursor + 1, len(rows)) + term.RESET)
-        else:
-            out.append(" " * inner)
-        out.append(
-            term.FG_RED + screen.fit(self.message, inner) + term.RESET
-            if self.message
-            else " " * inner
-        )
+        if roomy:
+            # 아래 두 줄은 내용이 없어도 자리를 지킨다. 폴더를 옮길 때마다 상자
+            # 높이가 달라지면 화면이 들썩여 눈에 거슬린다
+            if len(rows) > visible:
+                out.append(term.DIM + "  (%d/%d)" % (self.cursor + 1, len(rows)) + term.RESET)
+            else:
+                out.append(" " * inner)
+            out.append(
+                term.BAD + screen.fit(self.message, inner) + term.RESET
+                if self.message
+                else " " * inner
+            )
+            out.append("")
+        elif self.message:
+            # 자리만 지키던 줄은 내줬지만 읽지 못한 이유는 그래도 알려야 한다
+            out.append(term.BAD + screen.fit(self.message, inner) + term.RESET)
 
         drive_hint = "   \\ 드라이브" if self._on_drives else ""
         out += [
-            "",
-            term.BOLD + "Ctrl-D 이 폴더로 결정" + term.RESET
-            + term.FG_GRAY
+            # Ctrl 이 없는 자판(폰의 터미널, 일부 블루투스 키보드)에서도 결정할 수
+            # 있어야 한다. 그래서 Space 를 앞에 세운다. Ctrl-D 도 그대로 받는다
+            term.BOLD + "Space 이 폴더로 결정" + term.RESET
+            + term.DIM
             + "   Enter 열기   < 상위%s   %s" % (drive_hint, self.cancel_hint)
             + term.RESET,
         ]
@@ -995,20 +1725,21 @@ class FolderDialog(Dialog):
 
     def key(self, key):
         rows = self.rows()
+        visible = self._layout()[0]
 
         if key in (term.UP, "k"):
             self.cursor = max(0, self.cursor - 1)
         elif key in (term.DOWN, "j"):
             self.cursor = min(len(rows) - 1, self.cursor + 1) if rows else 0
         elif key == term.PGUP:
-            self.cursor = max(0, self.cursor - self.VISIBLE)
+            self.cursor = max(0, self.cursor - visible)
         elif key == term.PGDN:
-            self.cursor = min(len(rows) - 1, self.cursor + self.VISIBLE) if rows else 0
+            self.cursor = min(len(rows) - 1, self.cursor + visible) if rows else 0
         elif key == term.ENTER:
             self._descend(rows)
         elif key in (term.LEFT, "h"):
             self._go_up()
-        elif key == "CTRL-D":
+        elif key in (term.SPACE, term.INSERT, "CTRL-D"):
             self._on_choose(self.path)
             return True
         elif key == "\\" and self._on_drives:
@@ -1055,14 +1786,14 @@ class PeerDialog(Dialog):
             return [
                 term.BOLD + self.waiting + term.RESET + " 에게 연결을 요청했습니다.",
                 "",
-                term.FG_YELLOW + "상대가 승인할 때까지 기다리는 중..." + term.RESET,
-                term.FG_GRAY + "최대 %d초" % config.APPROVAL_TIMEOUT + term.RESET,
+                term.MARK + "상대가 승인할 때까지 기다리는 중..." + term.RESET,
+                term.DIM + "최대 %d초" % config.APPROVAL_TIMEOUT + term.RESET,
             ]
 
         self.peers = self.app.discovery.peers() if self.app.discovery else []
         if not self.peers:
             return [
-                term.FG_GRAY + "같은 네트워크에서 아직 아무도 찾지 못했습니다." + term.RESET,
+                term.DIM + "같은 네트워크에서 아직 아무도 찾지 못했습니다." + term.RESET,
                 "",
                 "상대 PC 에서도 MDirNet 을 실행했는지 확인하세요.",
                 "방화벽이 UDP %d 를 막고 있을 수도 있습니다." % config.UDP_PORT,
@@ -1071,11 +1802,11 @@ class PeerDialog(Dialog):
         self.cursor = min(self.cursor, len(self.peers) - 1)
         out = []
         for index, peer in enumerate(self.peers):
-            mark = term.REVERSE if index == self.cursor else ""
+            mark = term.BAR if index == self.cursor else ""
             out.append(
                 mark + screen.pad("  %s   %s" % (peer.name, peer.host), inner_width) + term.RESET
             )
-        out += ["", term.FG_GRAY + "Enter 연결 요청   Esc 취소" + term.RESET]
+        out += ["", term.DIM + "Enter 연결 요청   Esc 취소" + term.RESET]
         return out
 
     def key(self, key):
@@ -1110,13 +1841,13 @@ class ProgressDialog(Dialog):
         bar = "#" * filled + "." * (bar_width - filled)
         return [
             screen.fit(t.label, inner_width),
-            term.FG_GRAY + screen.fit(t.current, inner_width) + term.RESET,
+            term.DIM + screen.fit(t.current, inner_width) + term.RESET,
             "",
-            term.FG_GREEN + bar + term.RESET + " %3d%%" % int(t.ratio * 100),
+            term.GOOD + bar + term.RESET + " %3d%%" % int(t.ratio * 100),
             "%s / %s   %s"
             % (fsops.human_size(t.done), fsops.human_size(t.total), t.rate_text()),
             "",
-            term.FG_GRAY
+            term.DIM
             + ("취소하는 중..." if t.cancelled else "Esc 취소")
             + term.RESET,
         ]
@@ -1156,6 +1887,8 @@ class App:
         self.right = self.remote
 
         self.session = None
+        # S3 에 붙어 있으면 S3Link. 피어 세션과 자리를 나눠 쓴다 (link 를 보라)
+        self.s3 = None
         self.modal = None
         self.status = "n 을 눌러 연결할 PC 를 찾습니다"
         self.transfer = None
@@ -1173,8 +1906,32 @@ class App:
         )
         self.renderer = screen.Renderer()
         self._body_height = 10  # 화면을 그리며 실제 높이로 갱신된다
+        self._geometry = (80, 24)  # 마우스 좌표를 되돌릴 때 쓴다
+        self._left_width = 39
+        self._last_click = (0.0, -1, -1)  # 더블클릭 판정용 (시각, 행, 열)
+        self.use_mouse = settings.load_mouse()
         # Windows 에서만 방화벽을 묻는다. 다른 OS 는 물어볼 것이 없다
         self._firewall_asked = not winfw.available()
+
+    # --- 원격 상대 ---
+
+    @property
+    def link(self):
+        """오른쪽 패널이 실제로 말을 거는 상대. 없으면 None.
+
+        피어 세션과 S3 는 `remote_list` / `pull_file` 같은 같은 이름들을 내놓는다.
+        패널과 복사 경로는 이 자리만 보고 상대가 누구인지는 모른다. 그래서 S3 를
+        더하면서 전송 로직을 건드리지 않았다.
+
+        둘은 동시에 붙지 않는다. 오른쪽 패널이 하나뿐이라 둘 다 붙으면 어느 쪽을
+        보고 있는지 알 수 없다. 연결하는 자리에서 서로를 막는다.
+        """
+        return self.s3 or self.session
+
+    @property
+    def top_name(self):
+        """원격 패널의 최상위를 부르는 말. 안내문이 상대에 맞게 나가야 한다."""
+        return "버킷" if self.s3 else "공유 폴더"
 
     # --- 실행 ---
 
@@ -1189,7 +1946,8 @@ class App:
 
         self.local.refresh()
 
-        with term.Terminal() as terminal:
+        with term.Terminal(want_size=(config.WINDOW_COLS, config.WINDOW_ROWS)) as terminal:
+            terminal.use_mouse(self.use_mouse)
             while self.running:
                 self._drain_events()
                 self._notice_new_peers()
@@ -1198,8 +1956,13 @@ class App:
                     self._ask_firewall()
                 self.renderer.render(self._compose(term.size()), term.size())
 
+                # 메뉴에서 껐다 켰을 수 있다. 매 프레임 맞춘다 (같은 값이면 아무 일도 없다)
+                terminal.use_mouse(self.use_mouse)
+
                 key = terminal.read_key(config.UI_TICK)
-                if key is not None:
+                if isinstance(key, term.Mouse):
+                    self.handle_mouse(key)
+                elif key is not None:
                     self._on_key(key)
 
         self.shutdown()
@@ -1235,8 +1998,8 @@ class App:
                 body.append("      ~ 외 %d개" % (len(state.blocks) - 5))
         body += [
             "",
-            term.FG_GRAY + "관리자 권한이 필요해 Windows 동의 창이 한 번 뜹니다." + term.RESET,
-            term.FG_GRAY + "공용 네트워크 프로필은 열지 않습니다." + term.RESET,
+            term.DIM + "관리자 권한이 필요해 Windows 동의 창이 한 번 뜹니다." + term.RESET,
+            term.DIM + "공용 네트워크 프로필은 열지 않습니다." + term.RESET,
             "",
             "지금 허용할까요?",
         ]
@@ -1286,18 +2049,29 @@ class App:
         try:
             share = self.shares.add(path)
         except ValueError as exc:
-            self.modal = MessageDialog("추가할 수 없습니다", str(exc), term.FG_RED)
+            self.modal = MessageDialog("추가할 수 없습니다", str(exc), term.BAD)
             return None
 
         if self.persist:
             self._save_shares()
+        self._tell_peer_shares_changed()
         self.status = "공유 폴더 추가: %s" % share.name
         return share
 
     def remove_share(self, name):
         if self.shares.remove(name) and self.persist:
             self._save_shares()
+        self._tell_peer_shares_changed()
         self.status = "공유 폴더 제거: %s" % name
+
+    def _tell_peer_shares_changed(self):
+        """목록이 바뀌었다고 상대에게 알린다 (PROTOCOL.md 7절).
+
+        이것이 없으면 상대는 손으로 새로고침할 때까지 낡은 목록을 본다. 방금 뺀
+        공유로 들어가려다 거부당하고 나서야 알게 된다.
+        """
+        if self.session:
+            self.session.notify_shares_changed()
 
     def _save_shares(self):
         try:
@@ -1310,6 +2084,160 @@ class App:
 
     def _open_peer_dialog(self):
         self.modal = PeerDialog(self)
+
+    # --- AWS S3 ---
+
+    def _open_s3_dialog(self):
+        """Commands > AWS S3 연결. 저장해 둔 프로필로 칸을 미리 채운다."""
+        if self.session:
+            self.status = "%s 와 연결되어 있습니다. 먼저 연결을 끊으세요" % (
+                self.session.peer_name
+            )
+            return
+        self._show_s3_dialog(self._s3_profile())
+
+    def _s3_profile(self):
+        """폼을 채울 값. 맡겨둔 시크릿 키가 있으면 그것까지 꺼내온다.
+
+        꺼내다 실패해도 그냥 비워둔다. 저장소가 잠겼거나 다른 사용자의 것일 수
+        있는데, 그걸로 연결을 막을 이유는 없다 - 치면 된다.
+        """
+        if not self.persist:
+            # 저장을 하지 않는 실행이면 읽지도 않는다. 테스트가 사람의 설정
+            # 파일과 키체인을 건드리지 않게 하는 선이기도 하다
+            return {"region": "", "access_key": "", "bucket": "", "remember": False}
+
+        profile = settings.load_s3_profile()
+        profile["remember"] = False
+        profile["use_profile"] = bool(profile.get("aws_profile"))
+        profile["profile"] = profile.get("aws_profile") or awscfg.preferred()
+        if not profile["access_key"] or not keystore.available():
+            return profile
+
+        try:
+            kept = keystore.load(profile["access_key"])
+        except keystore.KeystoreError:
+            return profile
+        if kept:
+            profile["secret_key"] = kept
+            # 이미 맡겨둔 것이 있으면 계속 맡기는 것이 뜻에 맞는다
+            profile["remember"] = True
+        return profile
+
+    def _show_s3_dialog(self, values):
+        """접속 폼을 연다. 리전 목록을 다녀와도 쳐 넣은 값을 잃지 않는다."""
+
+        def pick_region(current):
+            def chosen(code):
+                # 취소하면 code 가 None 이다. 그때는 리전을 그대로 두고 되돌아간다
+                self._show_s3_dialog(dict(current, region=code or current["region"]))
+
+            self.modal = RegionDialog(current["region"], chosen)
+
+        def pick_profile(current):
+            def chosen(name):
+                # 취소하면 name 이 None 이다. 고르던 것을 그대로 두고 되돌아간다
+                picked = dict(current, profile=name or current.get("profile", ""))
+                found = awscfg.get(picked["profile"]) if name else None
+                if found and found.region and not picked.get("region"):
+                    # 프로필이 리전을 갖고 있으면 채워준다. 두 번 고를 이유가 없다
+                    picked["region"] = found.region
+                self._show_s3_dialog(picked)
+
+            self.modal = ProfileDialog(
+                awscfg.profiles(), current.get("profile", ""), chosen
+            )
+
+        self.modal = S3ConnectDialog(
+            self._connect_s3,
+            values,
+            on_regions=pick_region,
+            keep=keystore.label() if self.persist else "",
+            on_profiles=pick_profile if awscfg.available() else None,
+        )
+
+    def _connect_s3(self, values):
+        """받은 자격증명으로 붙어본다.
+
+        목록을 한 번 읽어보는 것이 곧 검증이다. 키가 틀렸거나 리전이 다르면
+        여기서 걸러져, 패널이 붙은 뒤에야 오류를 만나는 일이 없다.
+        """
+        access, secret, token = values["access_key"], values["secret_key"], ""
+        if values.get("use_profile"):
+            found = awscfg.get(values.get("profile", ""))
+            if found is None or not found.usable:
+                why = found.reason if found else "프로필을 찾지 못했습니다"
+                self.modal = MessageDialog("연결 실패", why, term.BAD)
+                return
+            access, secret, token = found.access_key, found.secret_key, found.session_token
+
+        link = s3_mod.S3Link(
+            values["region"].strip(),
+            access.strip(),
+            secret.strip(),
+            values["bucket"].strip(),
+            session_token=token,
+        )
+        # 어느 프로필로 붙었는지 기억해 두었다가 다음에 그대로 연다
+        link.aws_profile = values.get("profile", "") if values.get("use_profile") else ""
+        self.status = "S3 에 연결하는 중..."
+
+        def work():
+            try:
+                # 버킷을 정했으면 그 안을 읽어본다. 루트 목록은 버킷 하나를
+                # 그대로 되돌려주므로 네트워크를 지나지 않아 검증이 안 된다
+                link.remote_list(link.bucket or shares_mod.ROOT)
+            except session.SessionError as exc:
+                # 여러 줄짜리 안내가 올 수 있다. 한 줄로 붙이면 상자 폭에 잘린다
+                self.events.put(
+                    ("error", ["S3 에 연결하지 못했습니다."] + str(exc).split("\n"))
+                )
+                return
+            self.events.put(("s3_connected", link, bool(values.get("remember"))))
+
+        threading.Thread(target=work, name="s3-connect", daemon=True).start()
+
+    def _on_s3_connected(self, link, remember=False):
+        self.s3 = link
+        # 연결했다는 것은 그쪽을 보겠다는 뜻이다. 피어 연결과 같은 자리다
+        self.right.is_remote = True
+        self.right.navigate(shares_mod.ROOT)
+        self.status = "%s 에 연결되었습니다" % link.peer_name
+
+        if not self.persist:
+            return
+        used = getattr(link, "aws_profile", "")
+        try:
+            # 설정 파일은 평문이다. 시크릿 키는 여기에 넣지 않는다
+            settings.save_s3_profile(
+                link.region, "" if used else link.access_key, link.bucket, used
+            )
+        except OSError as exc:
+            self.status = "접속 정보를 저장하지 못했습니다: %s" % exc
+        if used:
+            # aws CLI 가 이미 키를 갖고 있다. 우리가 또 맡아둘 이유가 없다
+            return
+        self._keep_secret(link, remember)
+
+    def _keep_secret(self, link, remember):
+        """시크릿 키를 OS 비밀 저장소에 맡기거나 거기서 뺀다.
+
+        맡기지 않기로 했으면 **전에 맡긴 것도 지운다.** 껐는데 옛것이 남아 있으면
+        끈 것이 아니다.
+
+        실패해도 연결은 이미 됐다. 상태줄에만 남긴다 - 다 된 일을 오류 상자로
+        막을 이유가 없다.
+        """
+        if not keystore.available():
+            return
+        try:
+            if remember:
+                keystore.save(link.access_key, link.secret_key)
+                self.status += " (시크릿 키를 %s에 맡겼습니다)" % keystore.label()
+            else:
+                keystore.delete(link.access_key)
+        except keystore.KeystoreError as exc:
+            self.status = "연결했지만 시크릿 키를 저장하지 못했습니다: %s" % exc
 
     def _open_menu(self):
         self.modal = MenuBar(self)
@@ -1328,19 +2256,35 @@ class App:
         고르는 것과 같은 자리다.
         """
         going_remote = not self.right.is_remote
-        if going_remote and not self.session:
-            self.status = "연결된 상대가 없습니다. n 으로 먼저 연결하세요"
+        if going_remote and not self.link:
+            self.status = "연결된 곳이 없습니다. n 으로 PC 를, 메뉴에서 S3 를 연결합니다"
             return
 
         self.right.set_remote(going_remote)
-        self.status = "오른쪽 패널: %s" % ("상대" if going_remote else "내 PC")
+        self.status = "오른쪽 패널: %s" % (self.link.peer_name if going_remote else "내 PC")
 
     def toggle_hidden(self):
         self.show_hidden = not self.show_hidden
         self.status = "숨김 파일 %s" % ("보임" if self.show_hidden else "감춤")
         self.local.refresh()
-        if self.session:
+        if self.link:
             self.remote.refresh()
+
+    def toggle_theme(self):
+        """색상셋을 바꾼다. MDir 배포판에 든 두 가지를 번갈아 쓴다."""
+        name = "blue" if term.theme() == "black" else "black"
+        term.use_theme(name)
+        # 이전 프레임과 비교해 바뀐 줄만 다시 쓰는 렌더러이므로, 색만 바뀐
+        # 프레임은 글자가 같아 그대로 지나간다. 통째로 다시 그리게 만든다
+        self.renderer.invalidate()
+        self.status = "색상셋: %s 바닥" % ("검정" if name == "black" else "파랑")
+
+        if not self.persist:
+            return
+        try:
+            settings.save_theme(name)
+        except OSError as exc:
+            self.status = "색상셋을 저장하지 못했습니다: %s" % exc
 
     def _open_share_manager(self):
         """F4. 연결 중에도 열린다.
@@ -1390,7 +2334,9 @@ class App:
         """
         pane = self.focus
         if pane.is_remote:
-            self.status = "상대 쪽은 공유 폴더 안으로 제한됩니다. 드라이브를 바꿀 수 없습니다"
+            self.status = "오른쪽 패널은 %s 안으로 제한됩니다. 드라이브를 바꿀 수 없습니다" % (
+                self.top_name
+            )
             return
 
         drives = fsops.list_drives()
@@ -1454,8 +2400,11 @@ class App:
         elif kind == "connected":
             self._on_connected(payload[0])
 
+        elif kind == "s3_connected":
+            self._on_s3_connected(*payload)
+
         elif kind == "connect_failed":
-            self.modal = MessageDialog("연결 실패", payload[0], term.FG_RED)
+            self.modal = MessageDialog("연결 실패", payload[0], term.BAD)
 
         elif kind == "disconnected":
             self._on_disconnected(payload[0])
@@ -1474,18 +2423,21 @@ class App:
             self.transfer = None
             if isinstance(self.modal, ProgressDialog):
                 self.modal = None
-            self.status = "전송을 취소했습니다 (이미 보낸 파일은 남아 있습니다)"
+            self.status = "취소했습니다 (이미 보낸 것은 남고, 원본은 지우지 않았습니다)"
             self._refresh_panes()
 
         elif kind == "copy_done":
             self.transfer = None
             if isinstance(self.modal, ProgressDialog):
                 self.modal = None
-            count, errors = payload
+            count, errors, move, moved = payload
+            what = "이동" if move else "전송"
             if errors:
                 self.modal = MessageDialog(
-                    "전송 완료 (오류 %d건)" % len(errors), errors[:8], term.FG_YELLOW
+                    "%s 완료 (오류 %d건)" % (what, len(errors)), errors[:8], term.MARK
                 )
+            elif move:
+                self.status = "%d개 항목을 옮겼습니다" % moved
             else:
                 self.status = "%d개 항목을 전송했습니다" % count
             self._refresh_panes()
@@ -1499,12 +2451,17 @@ class App:
             self.status = payload[0]
             self.focus.refresh()
 
+        elif kind == "peer_shares_changed":
+            # 상대의 공유 목록이 바뀌었다. 가상 루트를 보고 있으면 곧바로 반영된다
+            if self.remote.active:
+                self.remote.refresh()
+
         elif kind == "remote_changed":
             # 상대가 내 쪽 파일을 바꿨다. 그 폴더를 보고 있는 패널을 다시 읽는다
             self._refresh_local_panes(Path(payload[0]))
 
         elif kind == "error":
-            self.modal = MessageDialog("오류", payload[0], term.FG_RED)
+            self.modal = MessageDialog("오류", payload[0], term.BAD)
 
     def _refresh_panes(self):
         """두 패널을 갱신한다. 원격은 세션이 있을 때만, 로컬은 언제나.
@@ -1513,7 +2470,7 @@ class App:
         보고 있고 연결이 없으면 복사한 파일이 화면에 안 나타났다.
         """
         for pane in (self.left, self.right):
-            if pane.is_remote and not self.session:
+            if pane.is_remote and not self.link:
                 continue
             pane.refresh()
 
@@ -1530,9 +2487,15 @@ class App:
         if self.session:
             new_session.close("이미 다른 연결이 있습니다")
             return
+        # S3 를 보고 있었다면 놓는다. 승인한 쪽이 사용자이므로 거절하지 않고
+        # 자리를 내준다. 조용히 바뀌면 헷갈리니 상태줄에 남긴다
+        dropped = self.s3.peer_name if self.s3 else ""
+        self.s3 = None
 
         self.session = new_session
         self.status = "%s 와 연결되었습니다" % new_session.peer_name
+        if dropped:
+            self.status += " (%s 연결은 놓았습니다)" % dropped
         if isinstance(self.modal, (PeerDialog, ApprovalDialog)):
             self.modal = None
 
@@ -1549,14 +2512,21 @@ class App:
 
         threading.Thread(target=load_home, name="remote-home", daemon=True).start()
 
+    def _clear_remote_pane(self):
+        """상대가 사라졌을 때 오른쪽 패널을 비운다.
+
+        오른쪽이 내 PC 를 보고 있으면 끊겼다고 지울 이유가 없다.
+        """
+        if not self.right.is_remote:
+            return
+        self.right.entries = []
+        self.right.selected.clear()
+        self.focus = self.local
+
     def _on_disconnected(self, reason):
         self.session = None
         self.transfer = None
-        # 오른쪽이 내 PC 를 보고 있으면 끊겼다고 지울 이유가 없다
-        if self.right.is_remote:
-            self.right.entries = []
-            self.right.selected.clear()
-            self.focus = self.local
+        self._clear_remote_pane()
         if isinstance(self.modal, ProgressDialog):
             self.modal = None
         self.status = reason
@@ -1644,13 +2614,17 @@ class App:
             self._ask_mask(add=False)
         elif key in ("F5", "c"):
             self._start_copy()
+        elif key == "x":
+            self._start_move()
         elif key == "F2":
             self.status = "%s 정렬: %s 기준" % (self.focus.label, self.focus.cycle_sort())
         elif key == "n":
             self._open_peer_dialog()
         elif key in ("F3", "v"):
             self._view_file()
-        elif key in ("F4", "o"):
+        elif key in ("F4", "t"):
+            self._open_tree()
+        elif key == "o":
             self._open_share_manager()
         elif key == "F6":
             self._ask_rename()
@@ -1680,36 +2654,94 @@ class App:
             self.focus = self.left
 
     def _enter(self):
-        item = self.focus.current_item()
+        pane = self.focus
+        item = pane.current_item()
         if not item:
             return
+        if pane.tree:
+            # 고른 폴더를 열고 트리를 접는다. 트리에 머물면 파일을 다룰 수 없다
+            pane.leave_tree(go_to=item["path"])
+            return
         if item.get("up"):
-            self._go_up(self.focus)
+            self._go_up(pane)
+        elif pane.archive:
+            if item["is_dir"]:
+                pane.enter_archive(pane.archive[0], pane.child(item["name"])[1])
+            else:
+                self._view_file()
         elif item["is_dir"]:
-            self.focus.navigate(self.focus.child(item["name"]))
-        elif not self.focus.is_remote and fsops.is_executable(self.focus.child(item["name"])):
+            pane.navigate(pane.child(item["name"]))
+        elif self._enter_archive_if_it_is_one(pane, item):
+            return
+        elif not pane.is_remote and fsops.is_executable(pane.child(item["name"])):
             self._run_file(item["name"])
         else:
             # 실행 파일이 아니면 보기다. 듀얼 패널 관습이고, 아무 반응이 없으면
             # 사용자는 키가 먹지 않았다고 생각한다
             self._view_file()
 
+    def _enter_archive_if_it_is_one(self, pane, item):
+        """압축 파일이면 폴더처럼 들어간다 (MDir 에 있던 기능). 들어갔으면 True.
+
+        이름만 보고 판정하므로 실제로 못 여는 것이 걸릴 수 있다. 그때는 조용히
+        평소 경로(보기)로 돌려보낸다 - 확장자만 맞는 파일을 열려다 실패했다고
+        알리면 오히려 성가시다.
+        """
+        if pane.is_remote or not archive.looks_like_archive(item["name"]):
+            return False
+
+        box = pane.child(item["name"])
+        try:
+            archive.list_dir(box)
+        except archive.ArchiveError:
+            return False
+
+        pane.enter_archive(box)
+        return True
+
     def _enter_dir_only(self):
         """오른쪽 화살표. 폴더면 들어가고 파일이면 아무 일도 하지 않는다.
 
         `..` 도 무시한다. 위로 가는 것은 왼쪽 화살표의 몫이고, 오른쪽 화살표가
         위로 올라가면 방향과 어긋난다.
+
+        트리에서는 펼치기다.
         """
-        item = self.focus.current_item()
-        if item and item["is_dir"] and not item.get("up"):
-            self.focus.navigate(self.focus.child(item["name"]))
+        pane = self.focus
+        if pane.tree:
+            pane.tree.open_at(pane.cursor)
+            return
+        item = pane.current_item()
+        if not (item and not item.get("up")):
+            return
+        if item["is_dir"]:
+            if pane.archive:
+                pane.enter_archive(pane.archive[0], pane.child(item["name"])[1])
+            else:
+                pane.navigate(pane.child(item["name"]))
+        else:
+            self._enter_archive_if_it_is_one(pane, item)
 
     def _go_up(self, pane):
+        if pane.tree:
+            # 접는다. 이미 접혀 있으면 부모로 - 깊이 들어갔을 때 나오는 길이다
+            pane.cursor = pane.tree.close_at(pane.cursor)
+            return
+        if pane.archive:
+            pane.archive_up()
+            return
         # 원격의 최상위는 공유 목록(가상 루트)이다. 그 위는 없다
         if not pane.at_top:
             pane.navigate(pane.up())
 
     def _disconnect(self):
+        """붙어 있는 쪽을 놓는다. S3 와 피어는 함께 붙지 않으므로 헷갈릴 것이 없다."""
+        if self.s3:
+            name = self.s3.peer_name
+            self.s3 = None
+            self._clear_remote_pane()
+            self.status = "%s 연결을 끊었습니다" % name
+            return
         if not self.session:
             self.status = "연결된 상대가 없습니다"
             return
@@ -1733,7 +2765,7 @@ class App:
             "선택 마스크" if add else "선택 해제 마스크",
             [
                 "패턴에 맞는 항목을 한꺼번에 %s합니다." % ("선택" if add else "해제"),
-                term.FG_GRAY + "예) *.txt   보고서*   *.jp*g" + term.RESET,
+                term.DIM + "예) *.txt   보고서*   *.jp*g" + term.RESET,
             ],
             apply,
             initial="*.",
@@ -1743,7 +2775,7 @@ class App:
 
     def _run_remote(self, work, on_done):
         """원격 요청은 응답을 기다리므로 반드시 워커 스레드에서 돌린다."""
-        active = self.session
+        active = self.link
 
         def runner():
             try:
@@ -1765,7 +2797,7 @@ class App:
         try:
             fsops.launch(self.focus.child(name))
         except OSError as exc:
-            self.modal = MessageDialog("실행할 수 없습니다", str(exc), term.FG_RED)
+            self.modal = MessageDialog("실행할 수 없습니다", str(exc), term.BAD)
             return
         self.status = "%s 를 실행했습니다" % name
 
@@ -1783,18 +2815,28 @@ class App:
         path = pane.child(item["name"])
         limit = config.MAX_VIEW_BYTES
 
+        if pane.archive:
+            box, inner = path
+            try:
+                _, data = archive.read_head(box, inner, limit)
+            except archive.ArchiveError as exc:
+                self.modal = MessageDialog("열 수 없습니다", str(exc), term.BAD)
+                return
+            self.modal = ViewerDialog(item["name"], data, item["size"])
+            return
+
         if not pane.is_remote:
             try:
                 data = fsops.read_head(path, limit)
             except OSError as exc:
-                self.modal = MessageDialog("열 수 없습니다", str(exc), term.FG_RED)
+                self.modal = MessageDialog("열 수 없습니다", str(exc), term.BAD)
                 return
             self.modal = ViewerDialog(item["name"], data, item["size"])
             return
 
         # 원격 파일은 앞부분만 받아온다. 통째로 내려받지 않는다
         self.status = "%s 를 불러오는 중..." % item["name"]
-        active = self.session
+        active = self.link
 
         def work():
             try:
@@ -1812,12 +2854,12 @@ class App:
         if not pane.active:
             return
         if pane.is_remote and pane.at_top:
-            self.status = "공유 목록에는 폴더를 만들 수 없습니다. 안으로 들어가세요"
+            self.status = "%s 목록에는 폴더를 만들 수 없습니다. 안으로 들어가세요" % self.top_name
             return
 
         def create(name):
             if "/" in name or "\\" in name:
-                self.modal = MessageDialog("이름이 잘못되었습니다", "경로 구분자는 쓸 수 없습니다", term.FG_RED)
+                self.modal = MessageDialog("이름이 잘못되었습니다", "경로 구분자는 쓸 수 없습니다", term.BAD)
                 return
 
             target = pane.child(name)
@@ -1831,7 +2873,7 @@ class App:
                 self.status = "폴더를 만들었습니다: %s" % name
                 pane.refresh()
             except OSError as exc:
-                self.modal = MessageDialog("만들 수 없습니다", str(exc), term.FG_RED)
+                self.modal = MessageDialog("만들 수 없습니다", str(exc), term.BAD)
 
         self.modal = InputDialog(
             "폴더 만들기",
@@ -1851,7 +2893,11 @@ class App:
             self.status = "이름을 바꿀 항목에 커서를 두세요"
             return
         if pane.is_remote and pane.at_top:
-            self.status = "공유 폴더 이름은 상대가 목록에서 정합니다"
+            self.status = (
+                "버킷 이름은 AWS 콘솔에서 바꿉니다"
+                if self.s3
+                else "공유 폴더 이름은 상대가 목록에서 정합니다"
+            )
             return
 
         old = item["name"]
@@ -1861,7 +2907,7 @@ class App:
                 return
             if "/" in new_name or "\\" in new_name or new_name in (".", ".."):
                 self.modal = MessageDialog(
-                    "이름이 잘못되었습니다", "경로 구분자는 쓸 수 없습니다", term.FG_RED
+                    "이름이 잘못되었습니다", "경로 구분자는 쓸 수 없습니다", term.BAD
                 )
                 return
 
@@ -1876,7 +2922,7 @@ class App:
             # 덮어쓰지 않는다. POSIX 의 rename 은 대상이 있으면 조용히 지운다
             if target.exists() or target.is_symlink():
                 self.modal = MessageDialog(
-                    "바꿀 수 없습니다", "같은 이름이 이미 있습니다: %s" % new_name, term.FG_RED
+                    "바꿀 수 없습니다", "같은 이름이 이미 있습니다: %s" % new_name, term.BAD
                 )
                 return
             try:
@@ -1885,12 +2931,12 @@ class App:
                 pane.selected.discard(old)
                 pane.refresh()
             except OSError as exc:
-                self.modal = MessageDialog("바꿀 수 없습니다", str(exc), term.FG_RED)
+                self.modal = MessageDialog("바꿀 수 없습니다", str(exc), term.BAD)
 
         self.modal = InputDialog(
             "이름 바꾸기",
             [
-                term.FG_GRAY + screen.fit_left(pane.location, 46) + term.RESET,
+                term.DIM + screen.fit_left(pane.location, 46) + term.RESET,
                 "",
                 "%s 의 새 이름을 입력하세요." % old,
             ],
@@ -1905,7 +2951,11 @@ class App:
         if not pane.active:
             return
         if pane.is_remote and pane.at_top:
-            self.status = "공유 폴더는 상대가 목록에서 빼야 합니다 (여기서는 못 지웁니다)"
+            self.status = (
+                "버킷은 AWS 콘솔에서 지웁니다 (여기서는 못 지웁니다)"
+                if self.s3
+                else "공유 폴더는 상대가 목록에서 빼야 합니다 (여기서는 못 지웁니다)"
+            )
             return
 
         items = pane.targets()
@@ -1913,7 +2963,7 @@ class App:
             self.status = "지울 항목을 고르세요 (Space 로 선택)"
             return
 
-        where = self.session.peer_name if pane.is_remote else "내 PC"
+        where = self.link.peer_name if pane.is_remote else "내 PC"
         names = [i["name"] + ("/" if i["is_dir"] else "") for i in items]
         has_dir = any(i["is_dir"] for i in items)
 
@@ -1921,13 +2971,13 @@ class App:
             term.BOLD + "%s 에서 %d개 항목을 지웁니다." % (where, len(items)) + term.RESET,
             "",
         ]
-        body += [term.FG_YELLOW + "  " + n + term.RESET for n in names[:6]]
+        body += [term.MARK + "  " + n + term.RESET for n in names[:6]]
         if len(names) > 6:
-            body.append(term.FG_GRAY + "  ~ 외 %d개" % (len(names) - 6) + term.RESET)
+            body.append(term.DIM + "  ~ 외 %d개" % (len(names) - 6) + term.RESET)
         body += [""]
         if has_dir:
-            body.append(term.FG_RED + "폴더는 안에 든 것까지 함께 지워집니다." + term.RESET)
-        body.append(term.FG_RED + "되돌릴 수 없습니다." + term.RESET)
+            body.append(term.BAD + "폴더는 안에 든 것까지 함께 지워집니다." + term.RESET)
+        body.append(term.BAD + "되돌릴 수 없습니다." + term.RESET)
 
         self.modal = ConfirmDialog(
             "삭제", body, lambda ok: self._do_delete(pane, items) if ok else None
@@ -1954,41 +3004,17 @@ class App:
         pane.selected.clear()
         pane.refresh()
         if failed:
-            self.modal = MessageDialog("일부를 지우지 못했습니다", failed[:8], term.FG_YELLOW)
+            self.modal = MessageDialog("일부를 지우지 못했습니다", failed[:8], term.MARK)
         else:
             self.status = "%d개 항목을 지웠습니다" % len(paths)
 
     # --- 복사 ---
 
     def _start_copy(self):
-        if self.transfer:
-            self.status = "이미 전송 중입니다"
+        picked = self._pick_for_transfer("복사")
+        if picked is None:
             return
-
-        source, dest = self.focus, (self.right if self.focus is self.left else self.left)
-
-        # 양쪽 모두 내 PC 라면 세션이 필요없다. 그냥 로컬 복사다
-        needs_session = source.is_remote or dest.is_remote
-        if needs_session and not self.session:
-            self.status = "먼저 n 으로 상대에 연결하세요"
-            return
-        if source is dest:
-            self.status = "같은 패널로는 복사할 수 없습니다"
-            return
-
-        # 가상 루트에는 파일을 둘 수 없다. 파일마다 오류를 내는 것보다
-        # 미리 알려주는 편이 낫다
-        if dest.is_remote and dest.at_top:
-            self.status = "상대의 공유 폴더 안으로 들어가세요 (Enter)"
-            return
-        if source.is_remote and source.at_top:
-            self.status = "공유 폴더 안으로 들어가 파일을 고르세요 (Enter)"
-            return
-
-        items = source.targets()
-        if not items:
-            self.status = "복사할 항목을 고르세요 (Space 로 선택)"
-            return
+        source, dest, items = picked
 
         names = ", ".join(i["name"] for i in items[:3]) + (" 외" if len(items) > 3 else "")
 
@@ -1997,14 +3023,14 @@ class App:
             "",
             screen.fit(names, 50),
             "",
-            term.FG_GRAY + "대상: %s" % dest.location + term.RESET,
+            term.DIM + "대상: %s" % dest.location + term.RESET,
         ]
 
         # 매번 뜨는 경고는 아무도 읽지 않는다. 실제로 겹칠 때만 알린다
         clashes = self._clashing_names(dest, items)
         if clashes:
             body.append(
-                term.FG_RED
+                term.BAD
                 + "기존 %d개를 덮어씁니다: %s"
                 % (len(clashes), screen.fit(", ".join(clashes), 36))
                 + term.RESET
@@ -2013,6 +3039,211 @@ class App:
         self.modal = ConfirmDialog(
             "복사", body, lambda ok: self._run_copy(source, dest, items) if ok else None
         )
+
+    # --- 마우스 ---
+
+    #: 클릭 두 번을 한 번으로 볼 시간.
+    DOUBLE_CLICK = 0.4
+
+    def handle_mouse(self, event):
+        """마우스 한 번을 동작으로. 배치는 `_compose` 가 기억해 둔 값을 쓴다.
+
+        모달이 떠 있으면 무시한다. 상자 안의 자리까지 좌표로 되돌리려면 모든
+        다이얼로그가 자기 배치를 알려줘야 하는데, 그 값에 비해 품이 크다.
+        """
+        if self.modal is not None:
+            return
+
+        cols, rows = self._geometry
+        row = event.row - 1  # 터미널은 1부터 센다
+        col = event.col - 1
+
+        top = 3                      # 머리글 1 + 제목 1 + 가로줄 1
+        bottom = top + self._body_height
+
+        if event.kind in (term.Mouse.WHEEL_UP, term.Mouse.WHEEL_DOWN):
+            pane = self._pane_at(col)
+            if top <= row < bottom:
+                pane.move(-3 if event.kind == term.Mouse.WHEEL_UP else 3, self._body_height)
+            return
+
+        if event.kind != term.Mouse.PRESS:
+            return
+
+        if row == rows - 1:
+            self._click_fkey_bar(col, cols)
+            return
+
+        if top <= row < bottom:
+            self._click_list(row - top, col)
+
+    def _pane_at(self, col):
+        return self.left if col < self._left_width else self.right
+
+    def _click_list(self, offset_row, col):
+        pane = self._pane_at(col)
+        if not pane.active:
+            return
+
+        # 다른 패널을 눌렀으면 먼저 초점을 옮긴다. 옮기지 않으면 눌린 줄과
+        # 커서가 다른 패널에 놓여 무엇이 선택된 것인지 알 수 없다
+        self.focus = pane
+
+        index = pane.offset + offset_row
+        if not 0 <= index < len(pane.rows()):
+            return
+
+        double = self._is_double_click(offset_row, col)
+        pane.cursor = index
+        if double:
+            self._enter()
+
+    def _is_double_click(self, row, col):
+        now = time.monotonic()
+        was_at, last = (self._last_click[1], self._last_click[2]), self._last_click[0]
+        self._last_click = (now, row, col)
+        return now - last <= self.DOUBLE_CLICK and was_at == (row, col)
+
+    def _click_fkey_bar(self, col, cols):
+        """하단 바를 누르면 그 기능을 실행한다. 좁아서 접힌 경우는 건너뛴다."""
+        cell = cols // len(_FKEYS)
+        if cell < 7:
+            return
+        index = col // cell
+        if 0 <= index < len(_FKEYS):
+            self._on_key(_FKEYS[index][0])
+
+    def toggle_mouse(self):
+        self.use_mouse = not self.use_mouse
+        try:
+            settings.save_mouse(self.use_mouse)
+        except OSError:
+            pass  # 저장 못 해도 이번 실행에는 적용된다
+        self.status = "마우스: %s" % ("씀" if self.use_mouse else "안 씀")
+
+    def _open_tree(self):
+        """패널을 폴더 트리로 바꾼다 (MDir 의 MCD). 다시 누르면 되돌아간다.
+
+        창을 띄우지 않는다. **패널 자체가 트리가 된다** - MDir 도 NC 도 그랬다.
+        """
+        pane = self.focus
+        if pane.tree:
+            pane.leave_tree()
+            return
+        if pane.is_remote:
+            # 프로토콜에 tree 요청이 있긴 하지만 깊은 트리는 REQUEST_TIMEOUT 에
+            # 걸린다. 되는 척하다 멈추는 것보다 못 한다고 말하는 편이 낫다
+            self.status = "상대 폴더는 트리로 볼 수 없습니다"
+            return
+
+        pane.enter_tree()
+        self.status = "폴더 트리 - Enter 로 그 폴더를 엽니다 (4 로 되돌아감)"
+
+    def _start_move(self):
+        """반대 패널로 옮긴다. MDir 에 있던 이동이다.
+
+        복사와 다른 점은 원본이 사라진다는 것뿐이라, 검사와 계획은 그대로 쓴다.
+        """
+        picked = self._pick_for_transfer("이동")
+        if picked is None:
+            return
+        source, dest, items = picked
+
+        # 공유 폴더(S3 면 버킷) 자체는 옮길 수 없다. 지우는 것과 같은 규칙이다
+        if source.is_remote and source.at_top:
+            self.status = "%s 자체는 옮길 수 없습니다" % self.top_name
+            return
+
+        # 내 PC 안이면 rename 으로 즉시 끝난다. 그때는 진행률 창을 띄우지 않는다
+        if not source.is_remote and not dest.is_remote:
+            if self._rename_move(source, dest, items):
+                return
+
+        names = ", ".join(i["name"] for i in items[:3]) + (" 외" if len(items) > 3 else "")
+        body = [
+            "%s > %s" % (source.label, dest.label),
+            "",
+            screen.fit(names, 50),
+            "",
+            term.DIM + "대상: %s" % dest.location + term.RESET,
+            "",
+            term.BAD + "원본은 옮긴 뒤 지워집니다." + term.RESET,
+        ]
+        clashes = self._clashing_names(dest, items)
+        if clashes:
+            body.append(
+                term.BAD
+                + "기존 %d개를 덮어씁니다: %s"
+                % (len(clashes), screen.fit(", ".join(clashes), 36))
+                + term.RESET
+            )
+
+        self.modal = ConfirmDialog(
+            "이동",
+            body,
+            lambda ok: self._run_copy(source, dest, items, move=True) if ok else None,
+        )
+
+    def _rename_move(self, source, dest, items):
+        """내 PC 안에서 같은 디스크면 이름만 바꿔 옮긴다. 처리했으면 True.
+
+        폴더째 즉시 옮겨지고 중간 상태가 없다. 하나라도 못 옮기면 손대지 않은
+        것처럼 되돌리지 않고, 되는 것만 옮긴 뒤 나머지는 평소 경로로 넘긴다.
+        """
+        done = []
+        for item in items:
+            if fsops.rename_within_disk(source.child(item["name"]), dest.child(item["name"])):
+                done.append(item["name"])
+
+        if len(done) != len(items):
+            return False  # 남은 것이 있으면 복사 + 삭제로 처리한다
+
+        source.selected.clear()
+        self.status = "%d개 항목을 옮겼습니다" % len(done)
+        self._refresh_panes()
+        return True
+
+    def _pick_for_transfer(self, what):
+        """복사와 이동이 함께 쓰는 사전 검사. (원본, 대상, 항목들) 또는 None."""
+        if self.transfer:
+            self.status = "이미 전송 중입니다"
+            return None
+
+        source, dest = self.focus, (self.right if self.focus is self.left else self.left)
+
+        if source.tree or dest.tree:
+            self.status = "트리 상태에서는 파일을 다룰 수 없습니다 (4 로 되돌아가세요)"
+            return None
+
+        # 압축은 읽기 전용이다. 안에 쓰거나 압축 안의 것을 옮길 수는 없다
+        if dest.archive:
+            self.status = "압축 안에는 넣을 수 없습니다"
+            return None
+        if source.archive and what != "복사":
+            self.status = "압축에서는 꺼내기(복사)만 됩니다"
+            return None
+        if source.archive and dest.is_remote:
+            self.status = "압축에서 상대로 바로 보낼 수는 없습니다. 먼저 내 PC 로 꺼내세요"
+            return None
+
+        if (source.is_remote or dest.is_remote) and not self.link:
+            self.status = "먼저 연결하세요 (n 으로 PC, 메뉴에서 S3)"
+            return None
+        if source is dest:
+            self.status = "같은 패널로는 %s할 수 없습니다" % what
+            return None
+        if dest.is_remote and dest.at_top:
+            self.status = "%s 안으로 들어가세요 (Enter)" % self.top_name
+            return None
+        if source.is_remote and source.at_top:
+            self.status = "%s 안으로 들어가 파일을 고르세요 (Enter)" % self.top_name
+            return None
+
+        items = source.targets()
+        if not items:
+            self.status = "%s할 항목을 고르세요 (Space 로 선택)" % what
+            return None
+        return source, dest, items
 
     @staticmethod
     def _clashing_names(dest, items):
@@ -2028,12 +3259,17 @@ class App:
             }
         return [i["name"] for i in items if i["name"] in existing]
 
-    def _run_copy(self, source, dest, items):
-        """전송 계획을 세우고 워커 스레드에서 실행한다."""
+    def _run_copy(self, source, dest, items, move=False):
+        """전송 계획을 세우고 워커 스레드에서 실행한다.
+
+        `move` 면 **오류 없이 끝난 항목만** 원본을 지운다. 이동이 데이터를 잃는
+        경우는 "복사가 반쯤 실패했는데 원본을 지웠을 때" 뿐이라, 항목 단위로
+        판정한다. 취소하면 아무것도 지우지 않는다.
+        """
         transfer = Transfer("%d개 항목" % len(items), 0)
         self.transfer = transfer
         self.modal = ProgressDialog(transfer)
-        active = self.session
+        active = self.link
 
         def work():
             errors = []
@@ -2052,13 +3288,21 @@ class App:
                     except (session.SessionError, OSError):
                         pass  # 이미 있으면 그만이다
 
+                failed = set()  # 원본을 지우면 안 되는 최상위 항목 이름
                 for rel, src_path, size in plan:
                     if transfer.cancelled:
                         break
                     transfer.current = rel
                     dest_path = dest.child(rel)
                     try:
-                        if source.is_remote:
+                        if source.archive:
+                            box, inner = src_path
+                            # 압축 안의 이름은 만든 쪽이 정한다. 목적지 밖을
+                            # 가리키는지 여기서 반드시 걸러야 한다 (zip slip)
+                            archive.safe_join(dest.path, rel)
+                            archive.extract(box, inner, dest_path)
+                            transfer.done += size
+                        elif source.is_remote:
                             active.pull_file(
                                 src_path, dest_path, on_progress=_adder(transfer)
                             )
@@ -2071,16 +3315,46 @@ class App:
                             fsops.copy_file(
                                 src_path, dest_path, on_progress=_adder(transfer)
                             )
-                    except (session.SessionError, OSError) as exc:
+                    except (session.SessionError, OSError, archive.ArchiveError, ValueError) as exc:
                         errors.append("%s - %s" % (rel, exc))
+                        failed.add(rel.split("/", 1)[0])
+
                 if transfer.cancelled:
                     self.events.put(("copy_cancelled", None))
                 else:
-                    self.events.put(("copy_done", len(plan), errors))
+                    moved = 0
+                    if move:
+                        moved = self._drop_sources(source, items, failed, active, errors)
+                    self.events.put(
+                        ("copy_done", len(plan), errors, move, moved if move else None)
+                    )
             except (session.SessionError, OSError) as exc:
-                self.events.put(("copy_done", 0, ["%s" % exc]))
+                self.events.put(("copy_done", 0, ["%s" % exc], move, None))
 
         threading.Thread(target=work, name="copy", daemon=True).start()
+
+    @staticmethod
+    def _drop_sources(source, items, failed, active, errors):
+        """오류가 없었던 항목만 원본을 지운다. 지운 개수를 돌려준다.
+
+        이동이 데이터를 잃는 유일한 경우가 "복사가 반쯤 실패했는데 원본을
+        지웠을 때" 다. 그래서 실패한 항목은 원본을 그대로 둔다 - 양쪽에 남는
+        것은 사용자가 고칠 수 있지만, 사라진 것은 고칠 수 없다.
+        """
+        gone = 0
+        for item in items:
+            name = item["name"]
+            if name in failed:
+                continue
+            try:
+                if source.is_remote:
+                    active.remote_delete(source.child(name))
+                else:
+                    fsops.remove_tree(source.child(name))
+                gone += 1
+            except (session.SessionError, OSError) as exc:
+                errors.append("%s 원본을 지우지 못했습니다 - %s" % (name, exc))
+        return gone
 
     def _build_plan(self, source, items, active):
         """전송할 파일을 (상대경로, 원본경로, 크기) 목록으로 펼친다.
@@ -2092,6 +3366,19 @@ class App:
         for item in items:
             name = item["name"]
             src = source.child(name)
+
+            if source.archive:
+                box, inner = src
+                if not item["is_dir"]:
+                    plan.append((name, src, item["size"]))
+                    continue
+                # 압축 안의 폴더는 그 아래 파일들을 통째로 펼친다. 압축은
+                # 평평한 목록이라 tree 를 물어볼 상대가 없다
+                dirs.append(name)
+                base = len(inner) + 1
+                for full, size in archive.walk(box, inner):
+                    plan.append(("%s/%s" % (name, full[base:]), (box, full), size))
+                continue
 
             if not item["is_dir"]:
                 plan.append((name, src, item["size"]))
@@ -2123,6 +3410,9 @@ class App:
         cols, rows = size
         # 머리글 1 + 패널 + 상태줄 1 + 힌트줄 1 = 화면 높이
         pane_height = max(rows - 3, 4)
+        # 마우스가 좌표를 행으로 되돌리려면 배치를 알아야 한다. 그리는 쪽에서
+        # 기억해 두는 편이 낫다 - 다른 곳에서 다시 계산하면 둘이 어긋난다
+        self._geometry = (cols, rows)
 
         lines = [self._header(cols)]
         lines += self._panes(cols, pane_height)
@@ -2142,15 +3432,15 @@ class App:
 
         # 좁은 터미널에서도 연결 상태는 보여야 한다. 긴 형태부터 시도해
         # 들어가는 것을 고른다
-        if self.session:
-            color, variants = term.FG_GREEN, [
-                "* %s 연결됨" % self.session.peer_name,
-                "* %s" % self.session.peer_name,
+        if self.link:
+            color, variants = term.GOOD, [
+                "* %s 연결됨" % self.link.peer_name,
+                "* %s" % self.link.peer_name,
                 "*",
             ]
         else:
             found = len(self.discovery.peers()) if self.discovery else 0
-            color, variants = term.FG_GRAY, [
+            color, variants = term.DIM, [
                 "o 연결 없음 . 발견 %d대 . 포트 %d" % (found, self.port),
                 "o 발견 %d대" % found,
                 "o",
@@ -2177,6 +3467,7 @@ class App:
         content = cols - 1  # 가운데 구분선 한 칸만 뺀다
         left_width = content // 2
         right_width = content - left_width
+        self._left_width = left_width
 
         left, right = self.left, self.right
         body_height = max(height - 4, 1)  # 제목 + 가로줄 + 본문 + 가로줄 + 요약
@@ -2184,9 +3475,9 @@ class App:
         for pane in (left, right):
             pane.scroll_into_view(body_height)
 
-        wall = term.FG_GRAY + BOX_V + term.RESET
+        wall = term.DIM + BOX_V + term.RESET
         rule = (
-            term.FG_GRAY
+            term.DIM
             + PANE_RULE * left_width
             + "+"
             + PANE_RULE * right_width
@@ -2220,7 +3511,7 @@ class App:
         room = width - 2 - screen.width(label) - 2
         title = "%s  %s" % (label, screen.fit_left(pane.location, max(room, 0)))
 
-        style = term.REVERSE if focused else term.BOLD
+        style = term.BAR if focused else term.BOLD
         return style + screen.pad(title, width) + term.RESET
 
     def _pane_row(self, pane, index, width):
@@ -2230,14 +3521,31 @@ class App:
         if position >= len(rows):
             # 항목이 없으면 본문이 통째로 백지라 '로딩 중' 과 구분되지 않는다
             if pane.active and not pane.entries and not pane.message and position == len(rows):
-                return term.FG_GRAY + screen.pad(" (빈 폴더)", width) + term.RESET
+                return term.DIM + screen.pad(" (빈 폴더)", width) + term.RESET
             return " " * width
 
+        if pane.tree:
+            return self._tree_line(pane, rows[position], position, width)
         return self._entry_line(pane, rows[position], position, width, pane is self.focus)
+
+    def _tree_line(self, pane, item, position, inner):
+        """트리 한 줄. 들여쓰기 + 펼침 표시 + 이름.
+
+        펼친 것은 `-`, 아직 안 펼친 것은 `+` 다. 자식이 있는지는 읽어봐야 아는데
+        그것 때문에 미리 읽으면 트리가 느려진다.
+        """
+        mark = "-" if item["open"] else "+"
+        text = " " * item["depth"] + mark + " " + item["name"]
+
+        if position == pane.cursor:
+            style = term.BAR if pane is self.focus else term.BOLD
+        else:
+            style = term.BOLD  # 폴더 색과 같은 자리다
+        return style + screen.pad(screen.fit(text, inner), inner) + term.RESET
 
     def _pane_foot(self, pane, width):
         text = pane.message or self._pane_summary(pane)
-        return term.FG_GRAY + screen.pad(screen.fit(text, width), width) + term.RESET
+        return term.DIM + screen.pad(screen.fit(text, width), width) + term.RESET
 
     @staticmethod
     def _columns(inner):
@@ -2285,14 +3593,25 @@ class App:
         else:
             base, ext = item["name"], ""
 
+        # 폴더는 확장자가 없으니 그 칸까지 이름에 내준다. 크기 칸부터는 자리가
+        # 그대로라 [ SubDir ] 과 날짜.시간은 파일 줄과 계속 맞춰 선다.
+        # 확장자 없는 파일(Makefile 같은)은 지금 그대로 둔다 - 폴더만 넓힌다
+        name_takes_ext = show_ext and (item["is_dir"] or is_up)
+
         # 선택 표시 한 칸 + 고정 칸들. 양쪽 패널 모두 0번 칸에서 시작한다
-        used = 1 + SIZE_COL + (EXT_COL + 1 if show_ext else 0)
+        used = 1 + SIZE_COL
+        if show_ext:
+            # 확장자 칸을 이름에 내줄 때도 한 칸은 남긴다. [ SubDir ] 이 크기 칸을
+            # 꽉 채우므로, 긴 이름이 거기에 붙어버리면 읽기 나쁘다
+            used += 1 if name_takes_ext else (EXT_COL + 1)
         used += (DATE_COL + 1) if show_date else 0
         used += (TIME_COL + 1) if show_time else 0
         name_width = max(inner - used, NAME_MIN)
 
         parts = ["*" if picked else " ", screen.pad(base, name_width)]
-        if show_ext:
+        if show_ext and name_takes_ext:
+            parts.append(" ")
+        elif show_ext:
             parts.append(" " + screen.pad(ext.upper(), EXT_COL))
         parts.append(screen.rjust(size_text, SIZE_COL))
         if show_date:
@@ -2302,22 +3621,37 @@ class App:
 
         text = screen.pad("".join(parts), inner)
 
+        color, bright = self._entry_color(item, ext, picked)
+
+        # 커서 줄은 그 항목의 글자색을 바탕으로 깔고 글자를 뒤집는다.
+        # 한 색으로 고정하면 커서가 놓인 순간 종류를 알 수 없게 된다
         if is_cursor and focused:
-            return term.REVERSE + text + term.RESET
+            return term.bar(color, bright) + text + term.RESET
+        # 초점이 없는 쪽도 커서 자리는 보여야 한다. 색은 그대로 두고 밝게만 한다
         if is_cursor:
-            return term.BOLD + text + term.RESET
+            return term.ink(color, bright=True) + text + term.RESET
+        return term.ink(color, bright) + text + term.RESET
+
+    @staticmethod
+    def _entry_color(item, ext, picked):
+        """(글자색, 밝게 할지). 커서 줄의 바탕색도 이 색에서 나온다."""
         if picked:
-            return term.FG_YELLOW + text + term.RESET
+            return term.YELLOW, True
+        # 폴더는 밝은빨강. BLACK.COL 의 '디렉토리명' 슬롯이 0c(밝은빨강 on 검정)이고
+        # BLUE.COL 에서 1c 로 배경만 바뀐다. MSET.DOC 가 디렉토리명을 파일목록
+        # 배경 묶음에 넣어 설명하는 것과 맞아떨어진다
         if item["is_dir"]:
-            return term.FG_CYAN + text + term.RESET
-        # MDir 은 실행 파일을 따로 물들였다
-        if ext.lower() in ("exe", "com", "bat", "sh", "app"):
-            return term.FG_GREEN + text + term.RESET
-        return text
+            return term.RED, True
+        low = ext.lower()
+        for extensions, color, bright in FILE_COLORS:
+            if low in extensions:
+                return color, bright
+        return term.WHITE, False  # '나머지 파일' - BLACK.COL 의 07
 
     def _pane_summary(self, pane):
         if not pane.active:
-            return "n 으로 연결하세요"
+            # 붙을 수 있는 곳이 둘이다. PC 는 키 하나로, S3 는 메뉴로 연다
+            return "n 또는 메뉴에서 연결하세요"
         if pane.selected:
             total = sum(e["size"] for e in pane.entries if e["name"] in pane.selected)
             return "%d개 선택 . %s" % (len(pane.selected), fsops.human_size(total))
@@ -2350,16 +3684,16 @@ class App:
         if cell < 7:
             # 손으로 적으면 키를 옮길 때마다 어긋난다. 늘 _FKEYS 에서 만든다
             picked = [n + l for n, l in _FKEYS if n in ("1", "2", "3", "5", "9", "0")]
-            return term.FG_GRAY + screen.pad(" " + " ".join(picked), cols) + term.RESET
+            return term.DIM + screen.pad(" " + " ".join(picked), cols) + term.RESET
 
         parts = []
         for number, label in _FKEYS:
-            # 번호는 흐리게, 라벨은 반전. 옛 화면의 그 모양이다
+            # 번호는 파란 바닥에 밝은 흰색, 라벨은 청록 바닥. 옛 화면의 그 모양이다
             parts.append(
-                term.FG_GRAY
+                term.BOLD
                 + number
                 + term.RESET
-                + term.REVERSE
+                + term.BAR
                 + screen.pad(label, cell - len(number) - 1)
                 + term.RESET
                 + " "
@@ -2378,7 +3712,7 @@ class App:
 
         content = [
             term.BOLD + screen.fit(self.modal.title, inner) + term.RESET,
-            term.FG_GRAY + BOX_H * inner + term.RESET,
+            term.DIM + BOX_H * inner + term.RESET,
         ] + body
 
         box = [BOX_TL + BOX_H * (box_width - 2) + BOX_TR]
@@ -2388,14 +3722,28 @@ class App:
 
         left = max((cols - box_width) // 2, 0)
         start = max((rows - len(box)) // 2, 0)
+        # 상자가 화면보다 크면 아래쪽이 잘린다. 표시가 없으면 거기까지가 전부인 줄
+        # 안다. 다이얼로그마다 높이를 줄여 맞추지만 최소 높이 아래로는 방법이 없다
+        cut = start + len(box) > rows
+
         for index, line in enumerate(box):
             row = start + index
             if 0 <= row < rows:
                 while len(lines) <= row:
                     lines.append("")
                 lines[row] = screen.pad(
-                    screen.splice(lines[row], left, term.FG_CYAN + line + term.RESET), cols
+                    screen.splice(lines[row], left, term.DIM + line + term.RESET), cols
                 )
+                if cut and row == rows - 1:
+                    # 오른쪽 테두리는 남기고 그 앞에 표시만 얹는다
+                    lines[row] = screen.pad(
+                        screen.splice(
+                            lines[row],
+                            max(left + box_width - 3, 0),
+                            term.MARK + "~~" + term.RESET,
+                        ),
+                        cols,
+                    )
 
 
 # 상단 숫자열 > 기능키. 키패드는 application 모드에서 이스케이프 시퀀스를 보내므로
@@ -2455,12 +3803,14 @@ _HELP_LINES = [
     "맥에서는 F 키에 fn 이 필요하니 숫자가 편합니다.",
     "",
     "1 . F1  도움말              2 . F2  정렬 바꾸기 (s)",
-    "3 . F3  파일 보기 (v)       4 . F4  공유 폴더 관리 (o)",
+    "3 . F3  파일 보기 (v)       4 . F4  폴더 트리 (t)",
     "5 . F5  복사 (c)            6 . F6  이름 바꾸기",
     "7 . F7  폴더 만들기 (m)     8 . F8  삭제 (Delete)",
     "9 . F9  상단 메뉴 (/)       0 . F10 종료 (q)",
     "",
     "n             연결할 PC 찾기      d   연결 끊기",
+    "o             공유 폴더 관리 - 상대에게 열어줄 폴더 목록",
+    "x             반대 패널로 이동 (옮긴 뒤 원본을 지웁니다)",
     "=             오른쪽 패널을 내 PC / 상대 로 전환",
     ".             숨김 파일 보기/감추기",
     "r             새로고침            \\   드라이브",
